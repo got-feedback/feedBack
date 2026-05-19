@@ -1,5 +1,6 @@
 pytest>=8.0
 httpx>=0.27.0
+jsonschema>=4.0
 # Required by tests/test_lyrics_transcribe.py for the vocals_has_signal
 # RMS-gate tests (silent vs loud WAV generation). Without these the
 # soundfile-backed tests are silently skipped via pytest.importorskip

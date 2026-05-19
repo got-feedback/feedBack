@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a feature, behaviour change, or new plugin contract.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! For **plugin features**, open the issue in the plugin's own repository unless the change requires new core API.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: "Lead with the user/contributor pain — the solution shape often falls out of a sharp problem statement."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: "What you'd like to see. UI mockups, code sketches, config examples all welcome."
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface does this touch?
+      multiple: true
+      options:
+        - Server (FastAPI / lib/)
+        - Frontend (static/)
+        - Plugin contract (new field / event / API)
+        - Sloppak format
+        - WebSocket protocol
+        - Diagnostics
+        - Docs only
+        - Other (describe in proposal)
+
+  - type: textarea
+    id: plugin_impact
+    attributes:
+      label: Plugin author impact
+      description: "Does this require existing plugins to change? Add a new optional field? Break a contract? Be specific so the maintainer can size compatibility work."
+
+  - type: checkboxes
+    id: license
+    attributes:
+      label: License compatibility
+      options:
+        - label: If suggesting third-party code, it's AGPL-3.0-compatible (see CONTRIBUTING.md curated list)
+          required: true

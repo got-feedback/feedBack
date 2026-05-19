@@ -3,7 +3,7 @@ name: Sync VERSION from desktop release
 # Updates the VERSION file in this repo whenever slopsmith-desktop
 # publishes a new tagged release. slopsmith-desktop's build.yml
 # dispatches the `desktop-released` event at the end of a successful
-# tag build (see docs in CLAUDE.md). A `workflow_dispatch` trigger is
+# tag build (see Versioning section in AGENTS.md). A `workflow_dispatch` trigger is
 # kept for manual testing / recovery.
 #
 # Related issue: #81.

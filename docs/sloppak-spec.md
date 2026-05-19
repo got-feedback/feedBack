@@ -435,7 +435,7 @@ Always use `yaml.safe_dump` (not `yaml.dump`) and pass `sort_keys=False` so the 
 
 ### 4.3. Reading (JavaScript, plugin-side)
 
-Plugins typically don't read the sloppak file directly — they consume the `/ws/highway/{filename}` WebSocket stream (see `CLAUDE.md` for the message protocol), which produces the same shapes. If you specifically need raw manifest access from the browser, expose it through a custom backend route in your plugin's `routes.py` and fetch it.
+Plugins typically don't read the sloppak file directly — they consume the `/ws/highway/{filename}` WebSocket stream (see [`websocket-protocol.md`](websocket-protocol.md) for the message protocol), which produces the same shapes. If you specifically need raw manifest access from the browser, expose it through a custom backend route in your plugin's `routes.py` and fetch it.
 
 ---
 
@@ -935,5 +935,5 @@ The full pytest suite (`pytest`) must stay green before any PR.
 | Drum tab vocabulary and wire helpers | [lib/drums.py](../lib/drums.py) |
 | Notation vocabulary and wire helpers | [lib/notation.py](../lib/notation.py) |
 | Live streaming over WebSocket (consumes the same shapes) | `server.py` (`/ws/highway/{filename}`) |
-| The plugin system (where new viz consumers go) | [CLAUDE.md](../CLAUDE.md) — Plugin System section |
+| The plugin system (where new viz consumers go) | [docs/PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md) + [docs/plugin-visualization-contracts.md](plugin-visualization-contracts.md) |
 | Tests | [tests/test_sloppak.py](../tests/test_sloppak.py), [tests/test_sloppak_convert.py](../tests/test_sloppak_convert.py) |

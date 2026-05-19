@@ -26,7 +26,7 @@ If you forget to sign off, amend the most recent commit with `git commit --amend
 
 ## Plugin licensing
 
-Plugins live in their own repositories and are loaded at runtime — see the [Plugin System section in CLAUDE.md](CLAUDE.md) for the technical contract, and [Plugin Best Practices](CLAUDE.md) for the conventions every plugin should follow (v2/v3 player chrome, the visualization contracts, and the **performance rules** — no per-frame DOM queries or broad `document.body` `MutationObserver`s — that keep the 60 fps highway smooth). Plugins are not subject to AGPL by being loaded into Slopsmith (the loader runs them as separate Python modules / browser scripts), but for the **curated plugin list** to accept your plugin we ask that it be released under an AGPL-3.0-compatible license:
+Plugins live in their own repositories and are loaded at runtime — see [`docs/PLUGIN_AUTHORING.md`](docs/PLUGIN_AUTHORING.md) for the technical contract and [`schema/plugin.schema.json`](schema/plugin.schema.json) for the manifest schema. Plugins are not subject to AGPL by being loaded into Slopsmith (the loader runs them as separate Python modules / browser scripts), but for the **curated plugin list** to accept your plugin we ask that it be released under an AGPL-3.0-compatible license:
 
 - AGPL-3.0-only or AGPL-3.0-or-later
 - GPL-3.0-only or GPL-3.0-or-later
@@ -41,7 +41,7 @@ Plugins under GPL-2.0-only, LGPL-2.1-only, CDDL, EPL, or proprietary terms will 
 
 ## Workflow
 
-Standard PR workflow described in [CLAUDE.md → Git Workflow](CLAUDE.md):
+Standard PR workflow described in [AGENTS.md → Git workflow](AGENTS.md#git-workflow):
 - Never push directly to `main`.
 - Create a feature branch on your fork.
 - Open a PR against `got-feedback/feedback:main`.

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "Repo-default Claude Code settings for Slopsmith contributors. Hooks are intentionally empty by default — see commented example below.",
+
+  "hooks": {},
+
+  "_commented_example_hooks": {
+    "_comment": "Copy the block below into the empty `hooks` object above if you want plugin.json edits to be auto-validated against schema/plugin.schema.json on save. Per-user opt-in; not enabled by default because hooks run in every Claude Code session that loads this repo.",
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "command": "if echo \"$CLAUDE_TOOL_INPUT_FILE_PATH\" | grep -qE '^plugins/[^/]+/plugin\\.json$'; then python -c \"import json,sys,jsonschema; s=json.load(open('schema/plugin.schema.json')); m=json.load(open('$CLAUDE_TOOL_INPUT_FILE_PATH')); jsonschema.validate(m,s); print('OK','$CLAUDE_TOOL_INPUT_FILE_PATH')\"; fi"
+      }
+    ]
+  }
+}

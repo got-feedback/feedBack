@@ -1,0 +1,85 @@
+name: Bug report
+description: Report something broken in Slopsmith core (server, frontend, library, player).
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Before submitting:
+        - For **plugin** issues, please open the issue in the plugin's own repository instead — plugins under `plugins/` are separate projects.
+        - For sensitive logs, redact paths/credentials. The `docs/diagnostics-bundle-spec.md` describes the redaction surface used by Export Diagnostics.
+
+  - type: input
+    id: version
+    attributes:
+      label: Slopsmith version
+      description: "Contents of the `VERSION` file at the root, or what the navbar badge shows."
+      placeholder: "e.g. 0.2.8"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running Slopsmith?
+      options:
+        - Docker Compose (docker-compose.yml)
+        - Bare Python (python main.py)
+        - Proxmox CT (build-proxmox-ct.sh)
+        - slopsmith-desktop bundle
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Host OS / browser
+      placeholder: "e.g. macOS 15.4 + Chrome 134; Linux + Firefox 142"
+    validations:
+      required: true
+
+  - type: input
+    id: plugins
+    attributes:
+      label: Plugins enabled
+      description: "List the plugins active when the bug happened. Most bugs reproduce only with certain plugins."
+      placeholder: "highway_3d, fretboard, note_detect"
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: "Numbered steps. Include song format (PSARC / sloppak / loose) and arrangement type if relevant."
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs. actual behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / diagnostics
+      description: |
+        Either paste relevant log lines (set `LOG_LEVEL=DEBUG` or `LOG_FORMAT=json` if useful) **or** attach an Export Diagnostics bundle. See `docs/diagnostics-bundle-spec.md` for what's inside the bundle and what's redacted.
+      render: text
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and didn't find a duplicate
+          required: true
+        - label: This is a core bug, not a plugin bug
+          required: true

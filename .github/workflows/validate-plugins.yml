@@ -1,0 +1,70 @@
+name: Validate plugins
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/**/plugin.json'
+      - 'schema/plugin.schema.json'
+      - 'CONTRIBUTING.md'
+      - 'tests/test_plugin_schema.py'
+      - '.github/workflows/validate-plugins.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'plugins/**/plugin.json'
+      - 'schema/plugin.schema.json'
+      - 'CONTRIBUTING.md'
+      - 'tests/test_plugin_schema.py'
+      - '.github/workflows/validate-plugins.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install jsonschema
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+
+      - name: Validate every in-tree plugin.json against schema
+        run: |
+          python - <<'PY'
+          import glob, json, sys
+          import jsonschema
+
+          schema_path = "schema/plugin.schema.json"
+          with open(schema_path) as f:
+              schema = json.load(f)
+
+          # Validate the schema itself is a well-formed JSON Schema.
+          jsonschema.Draft202012Validator.check_schema(schema)
+
+          manifests = sorted(glob.glob("plugins/*/plugin.json"))
+          if not manifests:
+              print("No plugin manifests found under plugins/*/plugin.json")
+              sys.exit(0)
+
+          failures = []
+          for path in manifests:
+              with open(path) as f:
+                  manifest = json.load(f)
+              try:
+                  jsonschema.validate(manifest, schema)
+                  print(f"OK   {path}")
+              except jsonschema.ValidationError as e:
+                  failures.append((path, e))
+                  print(f"FAIL {path}: {e.message} (at {list(e.absolute_path)})")
+          if failures:
+              sys.exit(1)
+          PY
+
+      - name: Run schema sanity tests
+        run: pytest tests/test_plugin_schema.py -v

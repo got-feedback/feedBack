@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/byrongamatos/slopsmith/blob/main/schema/plugin.schema.json",
+  "title": "Slopsmith plugin manifest",
+  "description": "Schema for plugins/<id>/plugin.json. See docs/plugin-manifest.md for prose. License enum mirrors the curated-plugin allowlist in CONTRIBUTING.md (keep them in sync; tests/test_plugin_schema.py asserts subset).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "description": "Snake-case identifier. Used to namespace localStorage, the plugin screen id (plugin-<id>), the backend logger (slopsmith.plugin.<id>), and the diagnostics bundle directory. Reverse-DNS form (com.example.foo) is supported via the load_sibling encoding."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name shown in UI surfaces."
+    },
+    "version": {
+      "type": "string",
+      "description": "Plain semver string. Advisory only; the plugin loader does not consume this."
+    },
+    "private": {
+      "type": "boolean",
+      "description": "Advisory metadata for plugin authors. Not consumed by the loader."
+    },
+    "bundled": {
+      "type": "boolean",
+      "description": "True for plugins shipped in-tree with Slopsmith. Used by tooling that distinguishes built-in plugins from user-installed ones."
+    },
+    "type": {
+      "type": "string",
+      "enum": ["visualization"],
+      "description": "Role hint (slopsmith#36). 'visualization' makes the plugin eligible for the viz picker; must pair with a window.slopsmithViz_<id> factory."
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX identifier. For curated plugins, must match CONTRIBUTING.md's allowlist.",
+      "enum": [
+        "AGPL-3.0-only",
+        "AGPL-3.0-or-later",
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "LGPL-3.0-only",
+        "LGPL-3.0-or-later",
+        "MIT",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "Apache-2.0",
+        "ISC",
+        "Unlicense",
+        "CC0-1.0",
+        "0BSD"
+      ]
+    },
+    "nav": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "screen"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "screen": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" }
+      },
+      "description": "Adds a navbar entry that calls showScreen(<screen>). Typically screen is 'plugin-<id>'."
+    },
+    "screen": {
+      "type": "string",
+      "description": "Relative path to HTML mounted at #plugin-<id>."
+    },
+    "script": {
+      "type": "string",
+      "description": "Relative path to JS loaded in global scope on page load. Wrap your code in an IIFE."
+    },
+    "routes": {
+      "type": "string",
+      "description": "Relative path to Python module exporting setup(app, context). See docs/plugin-manifest.md."
+    },
+    "tour": {
+      "type": "string",
+      "description": "Relative path to tour JSON for the in-app onboarding tour."
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "html": {
+          "type": "string",
+          "description": "Relative path to settings-panel HTML."
+        },
+        "server_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "not": { "pattern": "^/|^[a-zA-Z]:|\\\\|(^|/)\\.\\.(/|$)" },
+            "description": "Relpath under context['config_dir']. No abs paths, no '..', no backslashes. Trailing '/' denotes a directory (recurse)."
+          },
+          "uniqueItems": true,
+          "description": "Opt-in for Settings export/import (slopsmith#113). Files included in user-triggered backups. See docs/plugin-manifest.md."
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "server_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "not": { "pattern": "^/|^[a-zA-Z]:|\\\\|(^|/)\\.\\.(/|$)" }
+          },
+          "uniqueItems": true,
+          "description": "Files copied verbatim into plugins/<id>/<relpath> inside the diagnostics bundle."
+        },
+        "callable": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "<module>:<function> resolved via load_sibling at export time. Called with {'plugin_id', 'config_dir'} dict; return dict/list/bytes/str."
+        }
+      },
+      "description": "Opt-in for the Export Diagnostics bundle (slopsmith#166). See docs/plugin-diagnostics.md."
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "type=visualization requires a script (the window.slopsmithViz_<id> factory)",
+      "if": { "properties": { "type": { "const": "visualization" } }, "required": ["type"] },
+      "then": { "required": ["script"] }
+    }
+  ]
+}

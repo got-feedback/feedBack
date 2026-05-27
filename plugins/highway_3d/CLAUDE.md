@@ -6,6 +6,11 @@ The whole renderer is **one file** — `screen.js`, wrapped in an IIFE, register
 
 **Styling (slopsmith `styles` capability).** This plugin owns its Tailwind CSS: it ships `assets/plugin.css` and declares `"styles": "assets/plugin.css"` in `plugin.json`, so core's prebuilt `static/tailwind.min.css` no longer scans it (it's excluded from core's content globs). The frontend injects `assets/plugin.css` as a `<link>` when the renderer activates. This is the one maintainer-time build step: after you add/change a Tailwind class in `screen.js` or `settings.html`, run `bash build-tailwind.sh` (pinned `tailwindcss@3.4.19`, `corePlugins.preflight=false` — utilities only) and **bump the `version` in `plugin.json`** so the injected `<link>`'s `?v=` cache-buster fetches the fresh file. The generated `assets/plugin.css` is committed; end users never build. See [docs/plugin-styles.md](../../docs/plugin-styles.md).
 
+**For the contracts this plugin implements** (setRenderer, the note-state provider, the real-time scoring pipeline), see the repo-root docs:
+- [`../../docs/realtime-scoring-pipeline.md`](../../docs/realtime-scoring-pipeline.md) — end-to-end audio → lit gem trace. This plugin is one of the renderers in the final step.
+- [`../../docs/note-state-provider.md`](../../docs/note-state-provider.md) — the `bundle.getNoteState(note, chartTime)` contract this plugin consumes for hit/active/miss feedback.
+- [`../../docs/visualization-feedback-guide.md`](../../docs/visualization-feedback-guide.md) — practical "how do I add hit feedback to a viz" walkthrough, using this plugin as a case study.
+
 > **Navigation note:** This guide references functions by name and uses the existing banner comments (`/* ── Scene initialisation ─ */`, etc.) as section anchors. Line numbers are deliberately avoided so this stays correct as the file evolves. Use `Grep` for the function name or banner text to jump to a section.
 
 ## File structure at a glance

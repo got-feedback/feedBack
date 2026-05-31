@@ -65,6 +65,9 @@ function loadInspector(snapshot, options = {}) {
             playback: options.playbackSnapshot ? {
                 snapshot: () => options.playbackSnapshot,
             } : undefined,
+            jobs: options.jobsSnapshot ? {
+                snapshot: () => options.jobsSnapshot,
+            } : undefined,
         },
         navigator: { clipboard: { writeText: async () => {} } },
         document: {
@@ -112,6 +115,41 @@ test('capability inspector renders playback session route loop bridges and outco
     assert.match(content, /Route: browser-media \(active\)/);
     assert.match(content, /playback\.window-play-song:2/);
     assert.match(content, /seek:completed/);
+});
+
+test('capability inspector renders jobs support state and active domain graph', () => {
+    const snapshot = {
+        pipelines: [{ name: 'jobs', review: { lifecycle: 'active', label: 'Active contract', tone: 'clean', summary: 'Jobs control plane.' }, participants: [{ pluginId: 'core.jobs', kind: 'provider-coordinator', roles: ['owner'], commands: ['enqueue', 'list', 'inspect'], operations: ['job.enqueue'], events: ['queued', 'completed'], runtime: true, availability: 'available', ownership: 'multi-provider', safety: 'privileged' }], conflicts: [] }],
+        participants: [{ pluginId: 'core.jobs' }],
+        compatibilityShims: [],
+        expectedCompatibilityShims: [],
+    };
+    const jobsSnapshot = {
+        schema: 'slopsmith.jobs.diagnostics.v1',
+        providers: [{ providerId: 'provider.cache', label: 'Cache Builder', availability: 'available', jobTypes: ['cache-build'] }],
+        selectedProviders: [{ jobType: 'cache-build', providerId: 'provider.cache', source: 'user-selected' }],
+        jobs: {
+            active: [{ jobId: 'job-1', safeLabel: 'Build cache', providerId: 'provider.cache', state: 'running', progress: { percent: 42 } }],
+            queued: [{ jobId: 'job-2', safeLabel: 'Later cache', providerId: 'provider.cache', priority: 'background-maintenance' }],
+            paused: [],
+            recentTerminal: [{ jobId: 'job-0', safeLabel: 'Old cache', providerId: 'provider.cache', state: 'completed', terminalOutcome: { status: 'completed' } }],
+        },
+        outcomes: [{ operation: 'enqueue', status: 'queued' }, { operation: 'complete', status: 'completed' }],
+        bridgeHits: [{ bridgeId: 'jobs.legacy-plugin-queue', operation: 'enqueue', diagnosticsOnly: true }],
+    };
+    const { elements } = loadInspector(snapshot, { jobsSnapshot });
+    const content = elements.get('capability-inspector-content').innerHTML;
+    const filter = elements.get('capability-inspector-filter').innerHTML;
+
+    assert.match(content, /data-jobs-support/);
+    assert.match(content, /Providers: Cache Builder:available:cache-build/);
+    assert.match(content, /Selected: cache-build:provider.cache:user-selected/);
+    assert.match(content, /Active: Build cache:provider.cache:42%/);
+    assert.match(content, /Queued: Later cache:provider.cache:background-maintenance/);
+    assert.match(content, /Bridges: jobs.legacy-plugin-queue:enqueue:diagnostics-only/);
+    assert.match(content, /Outcomes: enqueue:queued, complete:completed/);
+    assert.match(content, /data-domain-graph="jobs"/);
+    assert.match(filter, /jobs/);
 });
 
 test('capability inspector renders shims inside their capability domain', () => {

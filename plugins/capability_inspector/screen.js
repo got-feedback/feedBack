@@ -11,7 +11,6 @@
         'ui.player-panels',
         'ui.player-overlays',
         'plugins',
-        'jobs',
         'midi-control',
         'tempo-clock',
     ]);
@@ -19,8 +18,8 @@
         Object.freeze({
             id: 'app-library',
             label: 'Application and Library',
-            summary: 'Navigation, plugin screens, settings, library sources, and tunings.',
-            domains: Object.freeze(['ui.navigation', 'ui.plugin-screens', 'settings', 'library', 'tuning']),
+            summary: 'Navigation, plugin screens, settings, library/tuning sources, and long-running jobs.',
+            domains: Object.freeze(['ui.navigation', 'ui.plugin-screens', 'settings', 'library', 'tuning', 'jobs']),
         }),
         Object.freeze({
             id: 'player-audio',
@@ -1474,6 +1473,54 @@
         catch (_) { return null; }
     }
 
+    function jobsSnapshot() {
+        const api = window.slopsmith && window.slopsmith.jobs;
+        if (!api || typeof api.snapshot !== 'function') return null;
+        try { return api.snapshot({ exportMode: 'local-inspector' }); }
+        catch (_) { return null; }
+    }
+
+    function jobsSupportPanel(jobsData) {
+        if (!jobsData || !jobsData.jobs) return '';
+        const providers = Array.isArray(jobsData.providers) ? jobsData.providers : [];
+        const selectedProviders = Array.isArray(jobsData.selectedProviders) ? jobsData.selectedProviders : [];
+        const active = Array.isArray(jobsData.jobs.active) ? jobsData.jobs.active : [];
+        const queued = Array.isArray(jobsData.jobs.queued) ? jobsData.jobs.queued : [];
+        const paused = Array.isArray(jobsData.jobs.paused) ? jobsData.jobs.paused : [];
+        const recentTerminal = Array.isArray(jobsData.jobs.recentTerminal) ? jobsData.jobs.recentTerminal : [];
+        const outcomes = Array.isArray(jobsData.outcomes) ? jobsData.outcomes.slice(-6) : [];
+        const bridgeHits = Array.isArray(jobsData.bridgeHits) ? jobsData.bridgeHits : [];
+        const unavailableProviders = providers.filter(provider => provider.availability && provider.availability !== 'available').length;
+        const terminalFailures = recentTerminal.filter(job => job && job.terminalOutcome && ['failed', 'timeout', 'provider-unavailable'].includes(job.terminalOutcome.status)).length;
+        return `<section class="mb-4 rounded-lg border border-gray-800 bg-dark-900/40 p-4" data-jobs-support>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h3 class="text-sm font-semibold text-white">Jobs</h3>
+                    <p class="mt-1 text-xs text-gray-500">Provider selection, active work, scheduling, terminal outcomes, and bridge hits from the jobs host.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    ${pill(`${providers.length} provider${providers.length === 1 ? '' : 's'}`, providers.length ? 'info' : 'muted')}
+                    ${pill(`${active.length} active`, active.length ? 'used' : 'muted')}
+                    ${pill(`${queued.length} queued`, queued.length ? 'warning' : 'muted')}
+                    ${pill(`${paused.length} paused`, paused.length ? 'warning' : 'muted')}
+                    ${pill(`${recentTerminal.length} recent terminal`, recentTerminal.length ? (terminalFailures ? 'conflict' : 'clean') : 'muted')}
+                    ${pill(`${bridgeHits.length} bridge hit${bridgeHits.length === 1 ? '' : 's'}`, bridgeHits.length ? 'used' : 'muted')}
+                    ${pill(`${unavailableProviders} unavailable provider${unavailableProviders === 1 ? '' : 's'}`, unavailableProviders ? 'warning' : 'muted')}
+                </div>
+            </div>
+            <div class="mt-3 grid gap-2 text-xs text-gray-400 md:grid-cols-2">
+                <div data-jobs-providers>Providers: ${providers.map(provider => `${text(provider.label || provider.providerId)}:${text(provider.availability || 'unknown')}:${text((provider.jobTypes || []).join('+') || 'none')}`).join(', ') || 'none'}</div>
+                <div data-jobs-selected>Selected: ${selectedProviders.map(selection => `${text(selection.jobType)}:${text(selection.providerId)}:${text(selection.source || 'stored')}`).join(', ') || 'none'}</div>
+                <div data-jobs-active>Active: ${active.map(job => `${text(job.safeLabel || job.jobId)}:${text(job.providerId)}:${text(job.progress && job.progress.percent != null ? `${job.progress.percent}%` : job.progress && job.progress.step || job.state)}`).join(', ') || 'none'}</div>
+                <div data-jobs-queued>Queued: ${queued.map(job => `${text(job.safeLabel || job.jobId)}:${text(job.providerId)}:${text(job.priority || 'normal')}`).join(', ') || 'none'}</div>
+                <div data-jobs-paused>Paused: ${paused.map(job => `${text(job.safeLabel || job.jobId)}:${text(job.providerId)}`).join(', ') || 'none'}</div>
+                <div data-jobs-terminal>Terminal: ${recentTerminal.map(job => `${text(job.safeLabel || job.jobId)}:${text(job.terminalOutcome && job.terminalOutcome.status || job.state)}${job.terminalOutcome && job.terminalOutcome.category ? `:${text(job.terminalOutcome.category)}` : ''}`).join(', ') || 'none'}</div>
+                <div data-jobs-bridges>Bridges: ${bridgeHits.map(hit => `${text(hit.bridgeId || hit.legacySurface)}:${text(hit.operation || 'unknown')}${hit.diagnosticsOnly ? ':diagnostics-only' : ''}`).join(', ') || 'none'}</div>
+                <div data-jobs-outcomes>Outcomes: ${outcomes.map(outcome => `${text(outcome.operation)}:${text(outcome.status || outcome.outcome)}`).join(', ') || 'none'}</div>
+            </div>
+        </section>`;
+    }
+
     function playbackSupportPanel(playbackData) {
         if (!playbackData || !playbackData.state) return '';
         const state = playbackData.state || {};
@@ -1642,9 +1689,10 @@
         const compatibilityShims = Array.isArray(data.compatibilityShims) ? data.compatibilityShims : [];
         if (summary) summary.innerHTML = summaryDashboard(data, pipelines, compatibilityShims);
         destroyActiveGraphs();
+        const jobsPanel = jobsSupportPanel(jobsSnapshot());
         const playbackPanel = playbackSupportPanel(playbackSnapshot());
         const audioPanel = audioDomainSupportPanel(audioSessionSnapshot());
-        content.innerHTML = playbackPanel + audioPanel + (selected
+        content.innerHTML = jobsPanel + playbackPanel + audioPanel + (selected
             ? visible.map(pipeline => domainGraphView(pipeline, shimsByCapability.get(pipeline.name) || [], expectedShimsByCapability.get(pipeline.name) || [])).join('')
             : groupedPipelines(visible).map(entry => pipelineGroupSection(entry, shimsByCapability, expectedShimsByCapability, { defaultExpanded: false })).join(''))
             || '<div class="text-gray-500 text-sm">No capability domains registered.</div>';

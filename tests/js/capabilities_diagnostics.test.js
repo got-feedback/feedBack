@@ -50,7 +50,7 @@ test('diagnostics export expected compatibility shim surfaces', () => {
     assert.equal(expected.some(entry => entry.capability === 'jobs'), false);
 });
 
-test('diagnostics include active playback but exclude deferred and documentation-only future core domains', () => {
+test('diagnostics include active playback and jobs but exclude deferred future core domains', () => {
     const window = loadCapabilities();
     const api = window.slopsmith.capabilities;
     api.registerParticipant('playback_probe', {
@@ -74,14 +74,14 @@ test('diagnostics include active playback but exclude deferred and documentation
     const playback = pipelines.find(entry => entry.name === 'playback');
     assert.ok(playback, 'playback should be part of the active runtime graph when participants register');
     assert.equal(playback.review.lifecycle, 'active');
+    const jobs = pipelines.find(entry => entry.name === 'jobs');
+    assert.ok(jobs, 'jobs should be part of the active runtime graph when participants register');
+    assert.equal(jobs.review.lifecycle, 'active');
 
     // `visualization` (cap:6 slice) and `note-detection` (spec 009 slice)
     // left this list when their domains were promoted.
     const futureDomains = [
-        'ui.navigation', 'ui.plugin-screens', 'settings',
-        'backend.routes', 'ui.player-controls',
-        'ui.player-panels', 'ui.player-overlays', 'plugins', 'jobs', 'midi-control',
-        'tempo-clock',
+        'ui.navigation', 'ui.plugin-screens', 'settings', 'backend.routes', 'ui.player-controls', 'ui.player-panels', 'ui.player-overlays', 'plugins', 'midi-control', 'tempo-clock',
     ];
 
     for (const domain of futureDomains) {

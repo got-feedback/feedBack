@@ -17,11 +17,11 @@
 
 **Purpose**: Create the jobs capability host entry points and test harness scaffolding used by all stories.
 
-- [ ] T001 Create jobs capability host shell with IIFE, event-bus access, diagnostics contribution placeholder, and public namespace in static/capabilities/jobs.js
-- [ ] T002 Load the jobs capability host after the capability runtime in static/index.html
-- [ ] T003 [P] Create jobs Node VM test harness with helpers for loading capabilities, dispatching jobs commands, capturing events, and reading diagnostics in tests/js/jobs_test_harness.js
-- [ ] T004 [P] Add jobs test file placeholders importing the harness in tests/js/jobs_domain.test.js, tests/js/jobs_scheduling.test.js, tests/js/jobs_diagnostics.test.js, and tests/js/jobs_compat.test.js
-- [ ] T005 [P] Add jobs inspector render fixture placeholders in tests/js/capability_inspector_render.test.js
+- [X] T001 Create jobs capability host shell with IIFE, event-bus access, diagnostics contribution placeholder, and public namespace in static/capabilities/jobs.js
+- [X] T002 Load the jobs capability host after the capability runtime in static/index.html
+- [X] T003 [P] Create jobs Node VM test harness with helpers for loading capabilities, dispatching jobs commands, capturing events, and reading diagnostics in tests/js/jobs_test_harness.js
+- [X] T004 [P] Add jobs test file placeholders importing the harness in tests/js/jobs_domain.test.js, tests/js/jobs_scheduling.test.js, tests/js/jobs_diagnostics.test.js, and tests/js/jobs_compat.test.js
+- [X] T005 [P] Add jobs inspector render fixture placeholders in tests/js/capability_inspector_render.test.js
 
 ---
 
@@ -31,15 +31,15 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T006 Promote `jobs` from reserved future domain to active privileged provider-coordinator review metadata in static/capabilities.js
-- [ ] T007 Add or verify the canonical jobs outcome inventory from FR-005 in capability outcome normalization in static/capabilities.js
-- [ ] T008 Implement constants for job states, outcomes, actions, priorities, limits, bridge ids, and diagnostics schema in static/capabilities/jobs.js
-- [ ] T009 Implement redaction and safe-value helpers for labels, reasons, target refs, logs, command-like text, URLs, local paths, and provider payloads in static/capabilities/jobs.js
-- [ ] T010 Implement provider, selected-provider, job, attempt, progress, outcome, history, and bridge in-memory stores with resettable test hooks in static/capabilities/jobs.js
-- [ ] T011 Implement diagnostics snapshot builder with active/queued/paused/recent terminal grouping and 64 KB budget trimming in static/capabilities/jobs.js
-- [ ] T012 Implement jobs capability owner registration with command/event declarations and diagnostics contribution in static/capabilities/jobs.js
-- [ ] T013 Add foundational harness assertions for active jobs owner registration, diagnostics schema, reset hooks, and no raw-provider-payload exposure in tests/js/jobs_domain.test.js
-- [ ] T014 [P] Add static idempotence expectations for active jobs domain and new outcomes in tests/test_plugin_runtime_idempotence.py
+- [X] T006 Promote `jobs` from reserved future domain to active privileged provider-coordinator review metadata in static/capabilities.js
+- [X] T007 Add or verify the canonical jobs outcome inventory from FR-005 in capability outcome normalization in static/capabilities.js
+- [X] T008 Implement constants for job states, outcomes, actions, priorities, limits, bridge ids, and diagnostics schema in static/capabilities/jobs.js
+- [X] T009 Implement redaction and safe-value helpers for labels, reasons, target refs, logs, command-like text, URLs, local paths, and provider payloads in static/capabilities/jobs.js
+- [X] T010 Implement provider, selected-provider, job, attempt, progress, outcome, history, and bridge in-memory stores with resettable test hooks in static/capabilities/jobs.js
+- [X] T011 Implement diagnostics snapshot builder with active/queued/paused/recent terminal grouping and 64 KB budget trimming in static/capabilities/jobs.js
+- [X] T012 Implement jobs capability owner registration with command/event declarations and diagnostics contribution in static/capabilities/jobs.js
+- [X] T013 Add foundational harness assertions for active jobs owner registration, diagnostics schema, reset hooks, and no raw-provider-payload exposure in tests/js/jobs_domain.test.js
+- [X] T014 [P] Add static idempotence expectations for active jobs domain and new outcomes in tests/test_plugin_runtime_idempotence.py
 
 **Checkpoint**: Jobs domain loads, registers as active privileged provider-coordinator, and can produce an empty redaction-safe diagnostics snapshot.
 
@@ -53,21 +53,21 @@
 
 ### Tests for User Story 1
 
-- [ ] T015 [US1] Add provider registration, re-registration idempotence, unavailable/degraded provider, and incompatible provider tests in tests/js/jobs_domain.test.js
-- [ ] T016 [US1] Add user-approved enqueue, privileged enqueue without approval returning denied/user-action-required before provider work starts, side-effect-free list/inspect, queued/running state, no-owner, unavailable, and validation-failed tests in tests/js/jobs_domain.test.js
-- [ ] T017 [US1] Add determinate progress, indeterminate progress, stale progress after terminal state, completion, and safe result summary tests in tests/js/jobs_domain.test.js
-- [ ] T018 [P] [US1] Add Capability Inspector jobs provider/progress/current-job rendering tests in tests/js/capability_inspector_render.test.js
+- [X] T015 [US1] Add provider registration, re-registration idempotence, unavailable/degraded provider, and incompatible provider tests in tests/js/jobs_domain.test.js
+- [X] T016 [US1] Add user-approved enqueue, privileged enqueue without approval returning denied/user-action-required before provider work starts, side-effect-free list/inspect, queued/running state, no-owner, unavailable, and validation-failed tests in tests/js/jobs_domain.test.js
+- [X] T017 [US1] Add determinate progress, indeterminate progress, stale progress after terminal state, completion, and safe result summary tests in tests/js/jobs_domain.test.js
+- [X] T018 [P] [US1] Add Capability Inspector jobs provider/progress/current-job rendering tests in tests/js/capability_inspector_render.test.js
 
 ### Implementation for User Story 1
 
-- [ ] T019 [US1] Implement `register-provider`, `unregister-provider`, `list-providers`, provider validation, and idempotent provider updates in static/capabilities/jobs.js
-- [ ] T020 [US1] Implement `enqueue` validation for one compatible provider, explicit user-action or approved-continuation authorization before provider dispatch, provider availability, provider operation dispatch, job creation, queued/running state, and denied/user-action-required/no-owner/no-handler/unavailable outcomes in static/capabilities/jobs.js
-- [ ] T021 [US1] Implement side-effect-free `list` and `inspect` command summaries for providers, jobs, progress, attempts, actions, timestamps, and safe reasons without invoking provider work callbacks in static/capabilities/jobs.js
-- [ ] T022 [US1] Implement provider progress and log update ingestion with determinate, indeterminate, step-only, decreasing-progress, and stale-after-terminal handling in static/capabilities/jobs.js
-- [ ] T023 [US1] Implement provider completion and failure result normalization with terminal outcomes, retryability, result summaries, and active-state cleanup in static/capabilities/jobs.js
-- [ ] T024 [US1] Emit `jobs:provider-registered`, `jobs:queued`, `jobs:started`, `jobs:progress`, `jobs:log`, `jobs:completed`, and `jobs:failed` lifecycle events in static/capabilities/jobs.js
-- [ ] T025 [US1] Render jobs provider cards, active/queued jobs, progress, action availability, and recent outcomes in plugins/capability_inspector/screen.js
-- [ ] T026 [US1] Load and smoke-check jobs host script ordering with index integration in static/index.html
+- [X] T019 [US1] Implement `register-provider`, `unregister-provider`, `list-providers`, provider validation, and idempotent provider updates in static/capabilities/jobs.js
+- [X] T020 [US1] Implement `enqueue` validation for one compatible provider, explicit user-action or approved-continuation authorization before provider dispatch, provider availability, provider operation dispatch, job creation, queued/running state, and denied/user-action-required/no-owner/no-handler/unavailable outcomes in static/capabilities/jobs.js
+- [X] T021 [US1] Implement side-effect-free `list` and `inspect` command summaries for providers, jobs, progress, attempts, actions, timestamps, and safe reasons without invoking provider work callbacks in static/capabilities/jobs.js
+- [X] T022 [US1] Implement provider progress and log update ingestion with determinate, indeterminate, step-only, decreasing-progress, and stale-after-terminal handling in static/capabilities/jobs.js
+- [X] T023 [US1] Implement provider completion and failure result normalization with terminal outcomes, retryability, result summaries, and active-state cleanup in static/capabilities/jobs.js
+- [X] T024 [US1] Emit `jobs:provider-registered`, `jobs:queued`, `jobs:started`, `jobs:progress`, `jobs:log`, `jobs:completed`, and `jobs:failed` lifecycle events in static/capabilities/jobs.js
+- [X] T025 [US1] Render jobs provider cards, active/queued jobs, progress, action availability, and recent outcomes in plugins/capability_inspector/screen.js
+- [X] T026 [US1] Load and smoke-check jobs host script ordering with index integration in static/index.html
 
 **Checkpoint**: User Story 1 is independently functional; a single provider can enqueue, progress, complete/fail, and appear in diagnostics and inspector.
 
@@ -81,20 +81,20 @@
 
 ### Tests for User Story 2
 
-- [ ] T027 [US2] Add queued cancel, running cancellation-requested, provider terminal after cancellation, late cancel stale, and unsupported cancel tests in tests/js/jobs_domain.test.js
-- [ ] T028 [US2] Add pause/resume supported, unsupported pause/resume, terminal pause/resume stale, and same-job-identity tests in tests/js/jobs_domain.test.js
-- [ ] T029 [US2] Add retryable failed/cancelled job, linked attempt, approved-continuation scope, widened-scope denial, and concurrent retry tests in tests/js/jobs_domain.test.js
-- [ ] T030 [P] [US2] Add inspector tests for cancellation-requested, paused, retryable terminal jobs, and linked attempts in tests/js/capability_inspector_render.test.js
+- [X] T027 [US2] Add queued cancel, running cancellation-requested, provider terminal after cancellation, late cancel stale, and unsupported cancel tests in tests/js/jobs_domain.test.js
+- [X] T028 [US2] Add pause/resume supported, unsupported pause/resume, terminal pause/resume stale, and same-job-identity tests in tests/js/jobs_domain.test.js
+- [X] T029 [US2] Add retryable failed/cancelled job, linked attempt, approved-continuation scope, widened-scope denial, and concurrent retry tests in tests/js/jobs_domain.test.js
+- [X] T030 [P] [US2] Add inspector tests for cancellation-requested, paused, retryable terminal jobs, and linked attempts in tests/js/capability_inspector_render.test.js
 
 ### Implementation for User Story 2
 
-- [ ] T031 [US2] Implement `cancel` command for queued immediate cancellation, running cancellation-requested, unsupported-operation, stale terminal, and provider failure outcomes in static/capabilities/jobs.js
-- [ ] T032 [US2] Implement `pause` command with provider action checks, paused state, unsupported-operation, stale terminal, and safe reason outcomes in static/capabilities/jobs.js
-- [ ] T033 [US2] Implement `resume` command returning paused jobs to queued/running state with the same job identity in static/capabilities/jobs.js
-- [ ] T034 [US2] Implement `retry` command with terminal-state checks, retryability, one active retry attempt, linked attempts, approved-continuation scope, and retry-started outcomes in static/capabilities/jobs.js
-- [ ] T035 [US2] Implement approval scope matching for provider, job type, target, requester, and inputs in static/capabilities/jobs.js
-- [ ] T036 [US2] Emit `jobs:cancellation-requested`, `jobs:cancelled`, `jobs:paused`, `jobs:resumed`, and `jobs:retried` events in static/capabilities/jobs.js
-- [ ] T037 [US2] Update Capability Inspector jobs rendering for cancellation state, pause/resume actions, retry action, and attempt history in plugins/capability_inspector/screen.js
+- [X] T031 [US2] Implement `cancel` command for queued immediate cancellation, running cancellation-requested, unsupported-operation, stale terminal, and provider failure outcomes in static/capabilities/jobs.js
+- [X] T032 [US2] Implement `pause` command with provider action checks, paused state, unsupported-operation, stale terminal, and safe reason outcomes in static/capabilities/jobs.js
+- [X] T033 [US2] Implement `resume` command returning paused jobs to queued/running state with the same job identity in static/capabilities/jobs.js
+- [X] T034 [US2] Implement `retry` command with terminal-state checks, retryability, one active retry attempt, linked attempts, approved-continuation scope, and retry-started outcomes in static/capabilities/jobs.js
+- [X] T035 [US2] Implement approval scope matching for provider, job type, target, requester, and inputs in static/capabilities/jobs.js
+- [X] T036 [US2] Emit `jobs:cancellation-requested`, `jobs:cancelled`, `jobs:paused`, `jobs:resumed`, and `jobs:retried` events in static/capabilities/jobs.js
+- [X] T037 [US2] Update Capability Inspector jobs rendering for cancellation state, pause/resume actions, retry action, and attempt history in plugins/capability_inspector/screen.js
 
 **Checkpoint**: User Story 2 is independently functional; all job control actions produce explicit outcomes and keep job state truthful.
 
@@ -108,22 +108,22 @@
 
 ### Tests for User Story 3
 
-- [ ] T038 [US3] Add exactly-one-provider auto-select, multiple-provider provider-selection-required, selected/default provider, unavailable selection, and explicit provider tests in tests/js/jobs_scheduling.test.js
-- [ ] T039 [US3] Add provider capacity, queued blocked reason, user-approved-before-background priority, FIFO within priority, and no overrun tests in tests/js/jobs_scheduling.test.js
-- [ ] T040 [US3] Add provider disappearance, provider-unavailable/orphaned state, provider rehydration no duplicates, and incompatible version tests in tests/js/jobs_scheduling.test.js
-- [ ] T041 [US3] Add reload recovery tests for persisted recoverable queued/running/paused job references, non-recoverable orphan/provider-unavailable jobs, stale persisted reference cleanup, and terminal preservation in tests/js/jobs_scheduling.test.js
-- [ ] T042 [P] [US3] Add selected/default provider persistence fallback tests in tests/js/jobs_scheduling.test.js
+- [X] T038 [US3] Add exactly-one-provider auto-select, multiple-provider provider-selection-required, selected/default provider, unavailable selection, and explicit provider tests in tests/js/jobs_scheduling.test.js
+- [X] T039 [US3] Add provider capacity, queued blocked reason, user-approved-before-background priority, FIFO within priority, and no overrun tests in tests/js/jobs_scheduling.test.js
+- [X] T040 [US3] Add provider disappearance, provider-unavailable/orphaned state, provider rehydration no duplicates, and incompatible version tests in tests/js/jobs_scheduling.test.js
+- [X] T041 [US3] Add reload recovery tests for persisted recoverable queued/running/paused job references, non-recoverable orphan/provider-unavailable jobs, stale persisted reference cleanup, and terminal preservation in tests/js/jobs_scheduling.test.js
+- [X] T042 [P] [US3] Add selected/default provider persistence fallback tests in tests/js/jobs_scheduling.test.js
 
 ### Implementation for User Story 3
 
-- [ ] T043 [US3] Implement selected/default provider state, localStorage persistence with in-memory fallback, and provider-selection-required logic in static/capabilities/jobs.js
-- [ ] T044 [US3] Implement scheduler capacity checks, queued blocked reasons, user-approved-interactive priority before background-maintenance, and FIFO ordering within priority in static/capabilities/jobs.js
-- [ ] T045 [US3] Implement start-next scheduling after enqueue, completion, cancellation, provider availability change, and resume in static/capabilities/jobs.js
-- [ ] T046 [US3] Implement provider disappearance and incompatible-provider handling that marks affected jobs provider-unavailable or orphaned with safe reasons in static/capabilities/jobs.js
-- [ ] T047 [US3] Implement provider rehydration and recoverable job reconciliation without duplicating providers, active jobs, terminal jobs, or attempts in static/capabilities/jobs.js
-- [ ] T048 [US3] Implement reload recovery hooks that persist only redaction-safe provider-declared recoverable queued/running/paused job references, restore them on reload, clean stale references, and mark non-recoverable jobs orphan/provider-unavailable in static/capabilities/jobs.js
-- [ ] T049 [US3] Emit `jobs:provider-unavailable` and `jobs:orphaned` events and scheduling-related queued/started events in static/capabilities/jobs.js
-- [ ] T050 [US3] Update Capability Inspector jobs rendering for provider selection, capacity/current load, queued blocked reason, priority, and recovery status in plugins/capability_inspector/screen.js
+- [X] T043 [US3] Implement selected/default provider state, localStorage persistence with in-memory fallback, and provider-selection-required logic in static/capabilities/jobs.js
+- [X] T044 [US3] Implement scheduler capacity checks, queued blocked reasons, user-approved-interactive priority before background-maintenance, and FIFO ordering within priority in static/capabilities/jobs.js
+- [X] T045 [US3] Implement start-next scheduling after enqueue, completion, cancellation, provider availability change, and resume in static/capabilities/jobs.js
+- [X] T046 [US3] Implement provider disappearance and incompatible-provider handling that marks affected jobs provider-unavailable or orphaned with safe reasons in static/capabilities/jobs.js
+- [X] T047 [US3] Implement provider rehydration and recoverable job reconciliation without duplicating providers, active jobs, terminal jobs, or attempts in static/capabilities/jobs.js
+- [X] T048 [US3] Implement reload recovery hooks that persist only redaction-safe provider-declared recoverable queued/running/paused job references, restore them on reload, clean stale references, and mark non-recoverable jobs orphan/provider-unavailable in static/capabilities/jobs.js
+- [X] T049 [US3] Emit `jobs:provider-unavailable` and `jobs:orphaned` events and scheduling-related queued/started events in static/capabilities/jobs.js
+- [X] T050 [US3] Update Capability Inspector jobs rendering for provider selection, capacity/current load, queued blocked reason, priority, and recovery status in plugins/capability_inspector/screen.js
 
 **Checkpoint**: User Story 3 is independently functional; providers can be selected, scheduled, recovered, and diagnosed without duplicate queues or over-capacity starts.
 
@@ -137,21 +137,21 @@
 
 ### Tests for User Story 4
 
-- [ ] T051 [US4] Add diagnostics schema, active/queued/paused/recent terminal grouping, all-active retention, five-terminal retention, and 50-entry history cap tests in tests/js/jobs_diagnostics.test.js
-- [ ] T052 [US4] Add redaction tests for paths, raw filenames, URLs, tokens, command lines, environment values, raw artifacts, media buffers, recordings, native handles, subprocess handles, and provider-private payloads in tests/js/jobs_diagnostics.test.js
-- [ ] T053 [US4] Add failure category tests for invalid-input, permission-denied, provider-unavailable, unsupported-operation, timeout, cancellation, external-dependency, storage, provider-failure, and unknown in tests/js/jobs_diagnostics.test.js
-- [ ] T054 [US4] Add compatibility bridge hit, legacy duplicate suppression, legacy queue/status/backend-route operations, and diagnostics-only bridge tests in tests/js/jobs_compat.test.js
-- [ ] T055 [P] [US4] Add inspector diagnostics tests for terminal jobs, safe failure category, bridge hits, retention limits, and redacted log messages in tests/js/capability_inspector_render.test.js
+- [X] T051 [US4] Add diagnostics schema, active/queued/paused/recent terminal grouping, all-active retention, five-terminal retention, and 50-entry history cap tests in tests/js/jobs_diagnostics.test.js
+- [X] T052 [US4] Add redaction tests for paths, raw filenames, URLs, tokens, command lines, environment values, raw artifacts, media buffers, recordings, native handles, subprocess handles, and provider-private payloads in tests/js/jobs_diagnostics.test.js
+- [X] T053 [US4] Add failure category tests for invalid-input, permission-denied, provider-unavailable, unsupported-operation, timeout, cancellation, external-dependency, storage, provider-failure, and unknown in tests/js/jobs_diagnostics.test.js
+- [X] T054 [US4] Add compatibility bridge hit, legacy duplicate suppression, legacy queue/status/backend-route operations, and diagnostics-only bridge tests in tests/js/jobs_compat.test.js
+- [X] T055 [P] [US4] Add inspector diagnostics tests for terminal jobs, safe failure category, bridge hits, retention limits, and redacted log messages in tests/js/capability_inspector_render.test.js
 
 ### Implementation for User Story 4
 
-- [ ] T056 [US4] Implement diagnostics payload `slopsmith.jobs.diagnostics.v1` with providers, selectedProviders, jobs, outcomes, bridgeHits, limits, and notes in static/capabilities/jobs.js
-- [ ] T057 [US4] Implement retention policy preserving all active jobs, at least five recent terminal jobs, and at most 50 progress/log entries per job within snapshot budget in static/capabilities/jobs.js
-- [ ] T058 [US4] Implement failure category normalization and safe retryability summaries for invalid input, permission denied, provider unavailable, unsupported operation, timeout, cancellation, external dependency, storage, provider failure, and unknown in static/capabilities/jobs.js
-- [ ] T059 [US4] Implement redaction/pseudonymization enforcement for exported diagnostics and local inspector snapshots in static/capabilities/jobs.js
-- [ ] T060 [US4] Implement `record-bridge-hit` command and bridge hit normalization for legacy plugin queue, status screen, backend route, progress poll, and update flow in static/capabilities/jobs.js
-- [ ] T061 [US4] Implement native-over-compatibility duplicate suppression for logical jobs shared by native providers and compatibility-backed legacy surfaces in static/capabilities/jobs.js
-- [ ] T062 [US4] Update Capability Inspector jobs rendering for recent terminal jobs, failure categories, retention notes, bridge hits, and redacted history in plugins/capability_inspector/screen.js
+- [X] T056 [US4] Implement diagnostics payload `slopsmith.jobs.diagnostics.v1` with providers, selectedProviders, jobs, outcomes, bridgeHits, limits, and notes in static/capabilities/jobs.js
+- [X] T057 [US4] Implement retention policy preserving all active jobs, at least five recent terminal jobs, and at most 50 progress/log entries per job within snapshot budget in static/capabilities/jobs.js
+- [X] T058 [US4] Implement failure category normalization and safe retryability summaries for invalid input, permission denied, provider unavailable, unsupported operation, timeout, cancellation, external dependency, storage, provider failure, and unknown in static/capabilities/jobs.js
+- [X] T059 [US4] Implement redaction/pseudonymization enforcement for exported diagnostics and local inspector snapshots in static/capabilities/jobs.js
+- [X] T060 [US4] Implement `record-bridge-hit` command and bridge hit normalization for legacy plugin queue, status screen, backend route, progress poll, and update flow in static/capabilities/jobs.js
+- [X] T061 [US4] Implement native-over-compatibility duplicate suppression for logical jobs shared by native providers and compatibility-backed legacy surfaces in static/capabilities/jobs.js
+- [X] T062 [US4] Update Capability Inspector jobs rendering for recent terminal jobs, failure categories, retention notes, bridge hits, and redacted history in plugins/capability_inspector/screen.js
 
 **Checkpoint**: User Story 4 is independently functional; support surfaces explain failures and migration bridges without leaking privileged data.
 
@@ -161,16 +161,16 @@
 
 **Purpose**: Documentation, migration guidance, validation, and cleanup across all stories.
 
-- [ ] T063 [P] Update jobs active-domain command/event/diagnostics guidance in docs/capability-domains.md
-- [ ] T064 [P] Update jobs migration status and removal gates in docs/capability-roadmap.md
-- [ ] T065 [P] Update jobs privileged provider-coordinator row and outcomes in docs/capability-safety-matrix.md
-- [ ] T066 [P] Add jobs provider/requester manifest and dispatch recipe in docs/capability-recipes.md
-- [ ] T067 [P] Add changelog entry for the jobs control plane in CHANGELOG.md
-- [ ] T068 Run syntax checks for static/capabilities.js, static/capabilities/jobs.js, and plugins/capability_inspector/screen.js
-- [ ] T069 Run focused JS validation with npm run test:js and confirm jobs tests pass in tests/js/jobs_domain.test.js, tests/js/jobs_scheduling.test.js, tests/js/jobs_diagnostics.test.js, tests/js/jobs_compat.test.js, and tests/js/capability_inspector_render.test.js
-- [ ] T070 Run focused pytest regression if diagnostics/plugin/redaction Python surfaces changed in tests/test_diagnostics_bundle.py, tests/test_diagnostics_redact.py, tests/test_plugins.py, and tests/test_plugin_runtime_idempotence.py
-- [ ] T071 Run browser console smoke after UI wiring with tests/browser/check-errors.spec.ts
-- [ ] T072 Verify quickstart scenarios and update any discovered validation notes in specs/009-jobs/quickstart.md
+- [X] T063 [P] Update jobs active-domain command/event/diagnostics guidance in docs/capability-domains.md
+- [X] T064 [P] Update jobs migration status and removal gates in docs/capability-roadmap.md
+- [X] T065 [P] Update jobs privileged provider-coordinator row and outcomes in docs/capability-safety-matrix.md
+- [X] T066 [P] Add jobs provider/requester manifest and dispatch recipe in docs/capability-recipes.md
+- [X] T067 [P] Add changelog entry for the jobs control plane in CHANGELOG.md
+- [X] T068 Run syntax checks for static/capabilities.js, static/capabilities/jobs.js, and plugins/capability_inspector/screen.js
+- [X] T069 Run focused JS validation with npm run test:js and confirm jobs tests pass in tests/js/jobs_domain.test.js, tests/js/jobs_scheduling.test.js, tests/js/jobs_diagnostics.test.js, tests/js/jobs_compat.test.js, and tests/js/capability_inspector_render.test.js
+- [X] T070 Run focused pytest regression if diagnostics/plugin/redaction Python surfaces changed in tests/test_diagnostics_bundle.py, tests/test_diagnostics_redact.py, tests/test_plugins.py, and tests/test_plugin_runtime_idempotence.py
+- [X] T071 Run browser console smoke after UI wiring with tests/browser/check-errors.spec.ts
+- [X] T072 Verify quickstart scenarios and update any discovered validation notes in specs/009-jobs/quickstart.md
 
 ---
 

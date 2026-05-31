@@ -60,6 +60,14 @@ The progression slice (spec 010) promotes `progression` as an active exclusive-o
 
 Deferred follow-up slices: a `contributor` role so plugins ship their own challenge/quest content (drums challenges from a drums-scoring plugin, quest-pool entries from minigame plugins), and drums scoring wiring so `song_completed {instrument: "drums"}` goals become satisfiable.
 
+## Jobs Control Plane Slice
+
+The jobs slice promotes `jobs` from a deferred domain to an active privileged provider-coordinator. It owns provider registration, selected-provider persistence, capacity-aware scheduling, explicit user-approved enqueue/retry gates, prompt-free list/inspect, cancellation/pause/resume/retry coordination, reload recovery for provider-declared recoverable references, compatibility bridge hit accounting, and redaction-safe diagnostics under `slopsmith.jobs.diagnostics.v1`.
+
+Providers keep actual privileged work private. Core stores only safe job summaries, provider metadata, selected/default provider choices, bounded lifecycle history, terminal outcomes, and recovery references. It does not persist raw payloads, active non-recoverable work, DB schemas, paths, filenames, URLs, tokens, command lines, media/artifacts, recordings, live handles, or provider-private values.
+
+Jobs bridge removal gates are: bundled and first-party long-running workflows use native `jobs` provider registration/dispatch; normal conversion/import/update/cache smoke runs show no unexpected legacy bridge hits; diagnostics distinguish queued, denied, user-action-required, provider-selection-required, stale, cancelled, completed, failed, timeout, retry-started, orphaned, and provider-unavailable cases; repeated plugin hydration does not duplicate providers or jobs; and reload recovery restores only provider-declared safe references.
+
 ## Recommended Next Slices
 
 The plugin inventory suggests this migration order after the audio graph/session and playback slices:
@@ -68,6 +76,10 @@ The plugin inventory suggests this migration order after the audio graph/session
 2. `note-detection` (control-plane slice done — see spec-009): continue with chart-path/engine migration onto bindings; audio-input coupling and calibration diagnostics are follow-up slices.
 3. UI contribution host: migrate navigation, plugin screens, player controls, player panels, overlays, shortcuts, and guided tours under placement/lifecycle policy.
 4. Backend and privileged capability cleanup: migrate routes, plugin lifecycle, media import/export, recording, external services, and subprocess-backed workflows with explicit user confirmation and diagnostics redaction.
+
+1. `note-detection`: formalize note-state providers, calibration diagnostics, audio-input coupling, and hit/miss event flow. Requesters should use `audio-input` for source selection/opening rather than owning device prompts directly.
+2. UI contribution host: migrate navigation, plugin screens, player controls, player panels, overlays, shortcuts, and guided tours under placement/lifecycle policy.
+3. Backend and privileged capability cleanup: migrate routes, plugin lifecycle, media import/export, recording, external services, and subprocess-backed workflows with explicit user confirmation and diagnostics redaction.
 
 ## UI/UX Migration Path
 
@@ -107,7 +119,6 @@ These domains are planned but should stay out of the runtime graph until a host 
 | `ui.player-panels` | exclusive-owner | safe | Player panel contributions, mount/unmount, visibility, ordering. | A panel host with layout and focus rules. |
 | `ui.player-overlays` | exclusive-owner | safe | Overlay contributions layered over player or highway surfaces. | Overlay placement and z-order rules that coexist with legacy overlays. |
 | `plugins` | exclusive-owner | privileged | Plugin enable/disable/install/update workflows. | Visible user confirmation, rollback, and disabled-handler enforcement. |
-| `jobs` | multi-provider | privileged | Long-running jobs, cancellation, status, failures. | Scheduling limits, cancellation semantics, and user-visible failures. |
 | `midi-control` | multi-provider | sensitive | MIDI device providers and control mappings. | Device consent and redacted diagnostics. |
 | `audio-input` | multi-provider | sensitive | Audio input device providers, source selection, open/close lifecycle, shared sessions, and redacted failure diagnostics. | Promoted by the audio graph/session slice and implemented by the audio-input control-plane slice. |
 | `tempo-clock` | multi-provider | safe | Tempo/clock provider registration and consumers. | A concrete tempo source and consumer workflow. |

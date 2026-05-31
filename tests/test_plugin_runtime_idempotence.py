@@ -63,8 +63,11 @@ def test_app_shell_loads_capability_registry_before_app_runtime():
 
     assert '<script src="/static/capabilities.js"></script>' in source
     assert '<script src="/static/capabilities/library.js"></script>' in source
+    assert '<script src="/static/capabilities/jobs.js"></script>' in source
     assert source.index('/static/diagnostics.js') < source.index('/static/capabilities.js')
     assert source.index('/static/capabilities.js') < source.index('/static/capabilities/library.js')
+    assert source.index('/static/capabilities/library.js') < source.index('/static/capabilities/jobs.js')
+    assert source.index('/static/capabilities/jobs.js') < source.index('/static/app.js')
     assert source.index('/static/capabilities/library.js') < source.index('/static/app.js')
 
 
@@ -83,7 +86,8 @@ def test_capability_runtime_overrides_do_not_mask_claims():
     set_enabled = source[source.index("function setParticipantEnabled("):source.index("function registerParticipants(")]
     reserved = source[source.index("const RESERVED_FUTURE_DOMAINS"):source.index("const RUNTIME_DOMAIN_DEFAULTS")]
 
-    assert "['denied', 'failed', 'short-circuited', 'handled', 'degraded', 'overridden', 'no-owner', 'no-handler', 'no-target', 'unsupported-command', 'incompatible', 'incompatible-version', 'unavailable', 'provider-selection-required', 'user-action-required', 'stale', 'cancelled', 'stopped'].includes(decision.outcome)" in source
+    for token in ["'unsupported-operation'", "'queued'", "'validation-failed'", "'completed'", "'timeout'", "'retry-started'"]:
+        assert token in source
     assert "if (entry.type !== 'manual') return false;" in source
     assert "type: 'manual'" in source
     assert "_remember(userOverrides" not in set_enabled
@@ -91,7 +95,9 @@ def test_capability_runtime_overrides_do_not_mask_claims():
     assert "'audio-mix'" not in reserved
     assert "'audio-input'" not in reserved
     assert "'playback'" not in reserved
+    assert "'jobs'" not in reserved
     assert "playback:" in source
+    assert "jobs:" in source
     assert "'backend.routes'" in reserved
     assert "'backend.routes':" not in source
 

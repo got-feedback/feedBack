@@ -122,6 +122,71 @@ A route-only wrapper that uses the library capability without registering a brow
 }
 ```
 
+## Jobs Provider And Requester
+
+Plugins that run long-lived work should register as `jobs` providers and keep actual work private. The jobs host only stores safe summaries, provider ids, selected-provider choices, progress, terminal outcomes, and provider-declared recovery references.
+
+```json
+{
+  "id": "sloppak_converter",
+  "name": "Sloppak Converter",
+  "standards": ["capability-pipelines.v1", "plugin-runtime-idempotent.v1"],
+  "capabilities": {
+    "jobs": {
+      "roles": ["provider", "observer"],
+      "operations": ["job.enqueue", "job.status", "job.cancel", "job.retry", "job.recover"],
+      "events": ["queued", "started", "progress", "completed", "failed", "cancelled"],
+      "mode": "active",
+      "compatibility": "shim-allowed",
+      "ownership": "multi-provider",
+      "safety": "privileged",
+      "version": 1
+    }
+  }
+}
+```
+
+Runtime registration supplies the redaction-safe provider summary and operation callbacks:
+
+```js
+window.slopsmith.jobs.registerProvider({
+  providerId: 'sloppak_converter.jobs',
+  pluginId: 'sloppak_converter',
+  label: 'Sloppak Converter',
+  jobTypes: ['psarc-to-sloppak'],
+  actions: ['enqueue', 'inspect', 'cancel', 'retry', 'recover'],
+  capacity: { maxRunning: 1, maxQueued: 20 },
+  recoverySupport: { queued: true, running: false, paused: false },
+  operationHandlers: {
+    'job.enqueue': ({ job }) => startConversion(job),
+    'job.cancel': ({ job }) => cancelConversion(job.jobId),
+    'job.retry': ({ job }) => startConversion(job),
+  },
+});
+```
+
+Requesters enqueue privileged work only from a user action or matching approved continuation. Use safe labels and fingerprints rather than paths, filenames, URLs, command lines, or raw payloads.
+
+```js
+const result = await window.slopsmith.capabilities.dispatch({
+  capability: 'jobs',
+  command: 'enqueue',
+  source: 'sloppak_converter',
+  args: {
+    jobType: 'psarc-to-sloppak',
+    requester: 'sloppak_converter',
+    authorization: 'user-action',
+    target: { targetRef: 'song-target-abc123' },
+    inputs: { safeFingerprint: 'input-fingerprint-abc123' },
+    safeLabel: 'Convert selected song',
+  },
+});
+
+if (result.outcome === 'user-action-required') {
+  // Show an explicit button; do not start provider work in the background.
+}
+```
+
 ## Audio Mix Fader Provider
 
 Existing plugins can keep using `window.slopsmith.audio.registerFader(spec)` while migrating. The compatibility bridge records the fader as an `audio-mix` participant. New bundled code should prefer a native participant declaration plus the audio-session helper once available in its integration point.

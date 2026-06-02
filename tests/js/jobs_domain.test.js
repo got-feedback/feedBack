@@ -52,8 +52,11 @@ test('approved continuation enqueue matches the stored approval scope key', asyn
     const first = await dispatch(window, 'enqueue', request);
     const approvalScopeKey = window.slopsmith.jobs._test.jobs.get(first.payload.job.jobId).approvalScopeKey;
 
+    const rejected = await dispatch(window, 'enqueue', { ...request, authorization: 'approved-continuation', approvalScopeKey: `${approvalScopeKey}-mismatch` });
     const continued = await dispatch(window, 'enqueue', { ...request, authorization: 'approved-continuation', approvalScopeKey });
 
+    assert.equal(rejected.status, 'blocked');
+    assert.equal(rejected.outcome, 'denied');
     assert.equal(continued.status, 'applied');
     assert.equal(calls.length, 2);
 });

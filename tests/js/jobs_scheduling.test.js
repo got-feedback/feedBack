@@ -137,8 +137,11 @@ test('retry accepts approved continuation using the stored scope key', async () 
     const approvalScopeKey = window.slopsmith.jobs._test.jobs.get(jobId).approvalScopeKey;
 
     window.slopsmith.jobs.fail(provider.providerId, jobId, { category: 'provider-failure', safeReason: 'retryable failure', retryable: true });
+    const rejected = await dispatch(window, 'retry', { jobId, authorization: 'approved-continuation', approvalScopeKey: `${approvalScopeKey}-mismatch` });
     const retried = await dispatch(window, 'retry', { jobId, authorization: 'approved-continuation', approvalScopeKey });
 
+    assert.equal(rejected.status, 'blocked');
+    assert.equal(rejected.outcome, 'denied');
     assert.equal(retried.status, 'retry-started');
 });
 

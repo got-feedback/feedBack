@@ -234,7 +234,7 @@ if (!runtime.registered) {
   window.slopsmith.capabilities.registerParticipant('my_plugin.runtime', {
     'example.plugin-domain': {
       roles: ['provider'],
-      operations: ['inspect'],
+      commands: ['inspect'],
       handlers: {
         inspect: () => runtime.impl.inspect(),
       },

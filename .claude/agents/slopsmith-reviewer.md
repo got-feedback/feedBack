@@ -33,7 +33,7 @@ Run each item; structure the output as `PASS` / `FAIL` / `N/A` with file:line ci
    python -c "import json,jsonschema; s=json.load(open('schema/plugin.schema.json')); jsonschema.validate(json.load(open('plugins/<id>/plugin.json')), s); print('OK')"
    ```
 2. **Manifest `id` matches the directory name.** `tests/test_plugin_schema.py::test_in_tree_manifest_id_matches_directory` enforces this — but call it out in review.
-3. **Declared files exist.** For every path-bearing field in `plugin.json` (`script`, `routes`, `tour`, `settings.html`, `settings.server_files`, `diagnostics.server_files`), `test -f plugins/<id>/<path>` must succeed (or the path must be a directory if it ends with `/`).
+3. **Declared plugin files exist.** For plugin-root-relative file fields (`script`, `routes`, `tour`, `settings.html`), `test -f plugins/<id>/<path>` must succeed.
 4. **License is on the curated allowlist** if present. Cross-check `plugin.json.license` against the SPDX list in [`CONTRIBUTING.md`](../../CONTRIBUTING.md) "Plugin licensing".
 5. **`type: "visualization"` ↔ `window.slopsmithViz_<id>` factory.** If `type == "visualization"`, grep `script` for the factory declaration.
 6. **Backend logging.** Grep `plugins/<id>/*.py` for `print(`, `traceback.print_exc(`, `logging.getLogger(`. Suggest `context["log"]` replacements.
@@ -41,7 +41,7 @@ Run each item; structure the output as `PASS` / `FAIL` / `N/A` with file:line ci
 8. **Frontend IIFE.** If `script` exists, check the top of the file isn't running top-level statements that leak to global scope. Wrapping in `(function () { 'use strict'; ... })();` is the convention.
 9. **Capability-first frontend integration.** If the script wraps host globals or polls another plugin's globals, flag it as a capability gap unless the PR explicitly documents why no active domain can model the integration yet.
 10. **`localStorage` prefix.** Grep for `localStorage.` usage; keys must start with `<plugin_id>`.
-11. **`settings.server_files` paths are safe.** Each entry must be a relpath — no leading `/`, no `..`, no backslashes. The schema enforces this but call it out.
+11. **Server-file allowlists are safe.** `settings.server_files` and `diagnostics.server_files` entries are relpaths under `context["config_dir"]`, not files under the plugin directory. Check for no leading `/`, no `..`, no backslashes, no `//`, no `./`, and no leading dotfiles. The schema enforces this but call it out.
 
 ## Output format
 
@@ -50,12 +50,12 @@ plugin-review: <plugin_id>
 =========================
 1. manifest validates                 PASS
 2. id matches directory               PASS
-3. declared files exist               FAIL — settings.server_files lists "missing_db.sqlite" but plugins/<id>/missing_db.sqlite is absent
+3. declared plugin files exist        FAIL — script lists "missing.js" but plugins/<id>/missing.js is absent
 ...
 
 Total: 10 PASS / 1 FAIL / 1 N/A
 Action items:
-- Remove the dangling settings.server_files entry, or create the file.
+- Remove the dangling script entry, or create the file.
 - Replace `print(...)` calls at routes.py:42, routes.py:88 with `context["log"].info(...)`.
 ```
 

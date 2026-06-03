@@ -23,7 +23,7 @@ Thanks for the PR! A few quick reminders before you hit submit:
 - [ ] `npm run test:js` passes locally
 - [ ] `npm test` (Playwright) passes locally — *or* CI will run it
 - [ ] Verified in `docker compose up` (live-reload working directory)
-- [ ] Plugin manifest validates against `schema/plugin.schema.json` (legacy fields + capability metadata)
+- [ ] Plugin manifest validates against `schema/plugin.schema.json` (including capability metadata)
 - [ ] Not applicable — explain below
 
 ## Screenshots / recordings

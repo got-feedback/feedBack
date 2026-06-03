@@ -54,7 +54,7 @@ If the plugin slug or type is missing, ask once.
 
 **`type=routes-only`** — adds:
 - `"routes": "routes.py"` to manifest
-- a conservative `"capabilities"` declaration only when the route participates in a known domain such as `library`, `jobs`, or `privileged-capabilities`; otherwise leave capability participation out and ask what workflow the route owns
+- a conservative `"capabilities"` declaration for the route's Slopsmith-facing workflow; if the domain is unclear, ask what capability domain the route owns, provides, requests, or observes before finalizing the scaffold
 - `routes.py` with `def setup(app, context):` that registers one example route and uses `context["log"].info("plugin ready")` (never `print()`)
 - `tests/test_<id>_routes.py` — FastAPI TestClient stub
 

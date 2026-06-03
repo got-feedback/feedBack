@@ -5,7 +5,7 @@
   "hooks": {},
 
   "_commented_example_hooks": {
-    "_comment": "Copy the block below into the empty `hooks` object above if you want plugin.json edits to be auto-validated against schema/plugin.schema.json on save. Per-user opt-in; not enabled by default because hooks run in every Claude Code session that loads this repo.",
+    "_comment": "Copy the block below into the empty `hooks` object above if you want plugin.json edits to be auto-validated against schema/plugin.schema.json, including capability metadata, on save. Per-user opt-in; not enabled by default because hooks run in every Claude Code session that loads this repo.",
     "PostToolUse": [
       {
         "matcher": "Write|Edit",

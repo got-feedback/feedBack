@@ -10,10 +10,12 @@ Every plugin lives in `plugins/<name>/` and must declare a `plugin.json` manifes
   "name": "My Plugin",
   "version": "1.0.0",
   "private": false,
+  "standards": ["capability-pipelines.v1", "plugin-runtime-idempotent.v1"],
   "type": "visualization",
   "nav": { "label": "My Plugin", "screen": "plugin-my_plugin" },
   "screen": "screen.html",
   "script": "screen.js",
+  "styles": "assets/plugin.css",
   "routes": "routes.py",
   "settings": {
     "html": "settings.html",
@@ -22,6 +24,24 @@ Every plugin lives in `plugins/<name>/` and must declare a `plugin.json` manifes
   "diagnostics": {
     "server_files": ["my_plugin.diag.json"],
     "callable": "diagnostics:collect"
+  },
+  "settings_schema": {
+    "schema_version": "1",
+    "packable_keys": ["enabled"]
+  },
+  "ui": {
+    "settings": [{ "id": "my-plugin-settings", "region": "plugin-settings", "label": "My Plugin" }]
+  },
+  "capabilities": {
+    "library": {
+      "roles": ["provider"],
+      "operations": ["query-page", "query-artists", "query-stats"],
+      "mode": "active",
+      "compatibility": "none",
+      "ownership": "multi-provider",
+      "safety": "safe",
+      "version": 1
+    }
   }
 }
 ```
@@ -46,6 +66,20 @@ Plain semver string. Advisory only — the plugin loader does not consume this. 
 
 Advisory metadata for plugin authors. Not consumed by the loader.
 
+### `standards` (string[], optional)
+
+Versioned contracts the plugin participates in. New capability-aware plugins should declare `"capability-pipelines.v1"` when they include native `capabilities`, `ui`, `runtime_domains`, or related metadata.
+
+Declare `"plugin-runtime-idempotent.v1"` only when repeated script hydration cannot duplicate wrappers, listeners, timers, DOM roots, diagnostics contributors, jobs, media nodes, or capability participants.
+
+### `capability_api` (object, optional)
+
+Explicit capability API marker. Most plugins can use the compact `standards` form instead:
+
+```json
+{ "capability_api": { "standard": "capability-pipelines.v1", "version": 1 } }
+```
+
 ### `type` (string, optional — role hint, slopsmith#36)
 
 Supported values:
@@ -63,6 +97,10 @@ Path to HTML file (relative to plugin dir). Mounted at `#plugin-<id>` in the SPA
 ### `script` (string, optional)
 
 Path to JS file (relative to plugin dir). Loaded via `<script>` tag in global scope. Wrap in an IIFE.
+
+### `styles` (string, optional)
+
+Path to a plugin-owned compiled stylesheet under `assets/`, for example `"assets/plugin.css"`. Use this when a plugin ships Tailwind utilities that core's prebuilt stylesheet cannot know about, especially arbitrary-value classes in runtime-installed plugins. The stylesheet must be built ahead of time with Tailwind `preflight: false`; Slopsmith injects one versioned `<link>` for the plugin. See [plugin-styles.md](plugin-styles.md).
 
 ### `routes` (string, optional)
 
@@ -94,6 +132,77 @@ Path to Python file exporting `setup(app, context)`. See "Backend routes" below.
 - **`diagnostics.callable`** — `"<module>:<function>"` (e.g. `"diagnostics:collect"`). Resolved lazily via `load_sibling` when the user clicks Export, then called as `func({"plugin_id": "...", "config_dir": Path(...)})`. Return `dict`/`list` → written to `plugins/<id>/callable.json`; `bytes` → `callable.bin`; `str` → `callable.txt`. Exceptions are caught and appended to the bundle's `manifest.notes` — a buggy plugin never crashes the export.
 
 See [plugin-diagnostics.md](plugin-diagnostics.md) for full diagnostics integration patterns.
+
+### `settings_schema` (object, optional)
+
+Redaction-safe settings metadata for support tooling and capability diagnostics. Use this to describe schema/version and packable key names; do not store user settings values, paths, tokens, or plugin-private payloads here.
+
+### `ui` / `ui_contributions` (object, optional)
+
+Native UI contribution declarations keyed by UI domain or surface. These let Slopsmith attribute plugin UI to stable contribution records while legacy `nav`, `screen`, `settings`, visualization picker entries, shortcuts, overlays, player panels, and tours continue to work through compatibility bridges.
+
+Example:
+
+```json
+{
+  "ui": {
+    "settings": [{ "id": "my-plugin-settings", "region": "plugin-settings", "label": "My Plugin" }],
+    "ui.player-overlays": [{ "id": "my-plugin-overlay", "region": "player.overlays.highway", "label": "My Overlay" }]
+  }
+}
+```
+
+Contribution ids must be stable and unique per plugin. Keep metadata redaction-safe: no settings values, DOM handles, local paths, callbacks, or private payloads.
+
+### `capabilities` (object, optional)
+
+Native `capability-pipelines.v1` declarations keyed by capability domain. They describe what the plugin owns, provides, requests, observes, or emits before the runtime script hydrates.
+
+```json
+{
+  "standards": ["capability-pipelines.v1"],
+  "capabilities": {
+    "library": {
+      "roles": ["provider"],
+      "operations": ["query-page", "query-artists", "query-stats", "tuning-names", "get-art", "sync-song"],
+      "description": "Adds a browsable library source.",
+      "mode": "active",
+      "compatibility": "none",
+      "ownership": "multi-provider",
+      "safety": "safe",
+      "version": 1
+    },
+    "playback": {
+      "roles": ["observer"],
+      "observes": ["loading", "ready", "stopped", "ended"],
+      "description": "Observes playback lifecycle without wrapping window.playSong.",
+      "mode": "active",
+      "compatibility": "shim-allowed",
+      "ownership": "observer-only",
+      "safety": "safe",
+      "version": 1
+    }
+  }
+}
+```
+
+Supported declaration fields include:
+
+- `roles`: `owner`, `coordinator`, `provider`, `observer`, `requester`, `transformer`, `handler`, `validator`, `short-circuiter`, `contributor`
+- `commands`, `operations`, `requests`, `observes`, `emits`, `events`: string arrays naming public commands, provider operations, or events
+- `kind`: `command`, `provider-coordinator`, `event`, `diagnostic`, `privileged`
+- `mode`: `active`, `optional`, `legacy-shim`, `disabled`
+- `compatibility`: `none`, `shim-allowed`, `degrade-noop`, `required`, `legacy-window-shim`
+- `ownership`: `exclusive-owner`, `multi-provider`, `observer-only`, `requester-only`, `privileged`, `diagnostic-only`
+- `safety`: `safe`, `privileged`, `sensitive`, `diagnostic-only`
+- `description` / `summary`: short redaction-safe text for local tooling
+- `version`: `1`
+
+Invalid capability metadata is rejected by schema validation and ignored by runtime capability tooling; legacy plugin fields still load through their existing app paths.
+
+### `runtime_domains` / `domains` (object, optional)
+
+Legacy bridge declarations for older runtime-domain metadata. Prefer `capabilities` for new native declarations.
 
 ### `license` (string, optional but recommended)
 
@@ -127,7 +236,7 @@ def setup(app, context):
 
 ## Validation
 
-Run the local validator skill `/plugin-validate` (Claude Code) or the CI workflow `.github/workflows/validate-plugins.yml`. Both consume [`schema/plugin.schema.json`](../schema/plugin.schema.json).
+Run the local validator skill `/plugin-validate` (Claude Code) or the CI workflow `.github/workflows/validate-plugins.yml`. Both consume [`schema/plugin.schema.json`](../schema/plugin.schema.json), including capability-pipelines metadata.
 
 ## Related
 

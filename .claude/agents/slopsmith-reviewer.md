@@ -7,7 +7,7 @@ model: sonnet
 
 # slopsmith-reviewer
 
-Plugin-aware reviewer for Slopsmith. Use when reviewing a plugin's code or manifest. Does **not** duplicate the built-in `peer-review` skill — focus is narrow: the plugin contract surface defined in [`docs/PLUGIN_AUTHORING.md`](../../docs/PLUGIN_AUTHORING.md) and enforced by [`schema/plugin.schema.json`](../../schema/plugin.schema.json) and `tests/test_plugin_schema.py`.
+Plugin-aware reviewer for Slopsmith. Use when reviewing a plugin's code or manifest. Does **not** duplicate the built-in `peer-review` skill — focus is narrow: the plugin contract surface defined in [`docs/PLUGIN_AUTHORING.md`](../../docs/PLUGIN_AUTHORING.md) and enforced by [`schema/plugin.schema.json`](../../schema/plugin.schema.json), including `capability-pipelines.v1` metadata, and `tests/test_plugin_schema.py`.
 
 ## When to invoke
 

@@ -119,12 +119,14 @@ Slopsmith supports two:
 
 ## Plugin authoring — see [`docs/PLUGIN_AUTHORING.md`](docs/PLUGIN_AUTHORING.md)
 
-Plugins are the primary extension point. Each lives in `plugins/<name>/` with a `plugin.json` manifest. Curated plugins must be AGPL-3.0 or AGPL-compatible — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the allowlist. Manifest is validated in CI against [`schema/plugin.schema.json`](schema/plugin.schema.json).
+Plugins are the primary extension point. Each lives in `plugins/<name>/` with a `plugin.json` manifest. Curated plugins must be AGPL-3.0 or AGPL-compatible — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the allowlist. Manifest is validated in CI against [`schema/plugin.schema.json`](schema/plugin.schema.json), including `capability-pipelines.v1` metadata for native capability declarations.
 
 Topic | Doc
 --- | ---
 Manifest reference (`plugin.json` fields) | [`docs/plugin-manifest.md`](docs/plugin-manifest.md)
+Capability declarations (`standards`, `capabilities`, `ui`) | [`docs/plugin-manifest.md#capabilities`](docs/plugin-manifest.md#capabilities)
 Visualization (setRenderer / overlay / note-state) | [`docs/plugin-visualization-contracts.md`](docs/plugin-visualization-contracts.md)
+Plugin styles (`styles: "assets/plugin.css"`) | [`docs/plugin-styles.md`](docs/plugin-styles.md)
 Audio mixer fader registration | [`docs/plugin-audio-mixer.md`](docs/plugin-audio-mixer.md)
 Backend `context["log"]` logging | [`docs/plugin-logging.md`](docs/plugin-logging.md)
 Diagnostics opt-in (export bundle) | [`docs/plugin-diagnostics.md`](docs/plugin-diagnostics.md)
@@ -169,6 +171,7 @@ python -c "import json,glob,jsonschema; s=json.load(open('schema/plugin.schema.j
 - **No frontend frameworks.** Vanilla JS, fetch API, Tailwind classes. Don't add React/Vue/Svelte.
 - **Backend logging.** Plugin `routes.py` must use `context["log"]`, never `print()`. See [`docs/plugin-logging.md`](docs/plugin-logging.md).
 - **Plugin Python imports.** Multi-file backends use `context["load_sibling"]("<module>")`, not bare `from <module> import`. See [`docs/plugin-sibling-imports.md`](docs/plugin-sibling-imports.md).
+- **Capability metadata.** New plugin integrations should declare `standards: ["capability-pipelines.v1"]` plus redaction-safe `capabilities`/`ui` metadata rather than relying only on private globals.
 - **Spec-kit owns `.specify/` and `specs/`.** Don't modify those without explicit instruction; the `/speckit-*` skills own that surface.
 
 ## Tool-specific surfaces (optional reading)

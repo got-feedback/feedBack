@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/byrongamatos/slopsmith/blob/main/schema/plugin.schema.json",
+  "$id": "https://github.com/slopsmith/slopsmith/blob/main/schema/plugin.schema.json",
   "title": "Slopsmith plugin manifest",
-  "description": "Schema for plugins/<id>/plugin.json. See docs/plugin-manifest.md for prose. License enum mirrors the curated-plugin allowlist in CONTRIBUTING.md (keep them in sync; tests/test_plugin_schema.py asserts subset).",
+  "description": "Schema for plugins/<id>/plugin.json. See docs/plugin-manifest.md for prose. License enum mirrors the curated-plugin allowlist in CONTRIBUTING.md (keep them in sync; tests/test_plugin_schema.py asserts subset). Capability metadata follows capability-pipelines.v1 and is intentionally additive.",
   "type": "object",
-  "additionalProperties": false,
+  "additionalProperties": true,
   "required": ["id", "name"],
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
-      "description": "Snake-case identifier. Used to namespace localStorage, the plugin screen id (plugin-<id>), the backend logger (slopsmith.plugin.<id>), and the diagnostics bundle directory. Reverse-DNS form (com.example.foo) is supported via the load_sibling encoding."
+      "pattern": "^[A-Za-z0-9_.-]+$",
+      "description": "Plugin identifier. Snake_case is preferred for bundled plugins. Used to namespace localStorage, the plugin screen id (plugin-<id>), the backend logger (slopsmith.plugin.<id>), and the diagnostics bundle directory. Reverse-DNS form (com.example.foo) is supported via the load_sibling encoding."
     },
     "name": {
       "type": "string",
@@ -18,12 +18,27 @@
       "description": "Human-readable name shown in UI surfaces."
     },
     "version": {
-      "type": "string",
+      "type": ["string", "null"],
       "description": "Plain semver string. Advisory only; the plugin loader does not consume this."
     },
     "private": {
       "type": "boolean",
       "description": "Advisory metadata for plugin authors. Not consumed by the loader."
+    },
+    "standards": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Versioned standards the plugin participates in. Use capability-pipelines.v1 for native capability metadata and plugin-runtime-idempotent.v1 only when repeated hydration cannot duplicate runtime work."
+    },
+    "capability_api": {
+      "type": "object",
+      "properties": {
+        "standard": { "const": "capability-pipelines.v1" },
+        "version": { "const": 1 }
+      },
+      "additionalProperties": false,
+      "description": "Optional explicit capability API version marker. The standards array is the preferred compact form."
     },
     "bundled": {
       "type": "boolean",
@@ -71,6 +86,12 @@
     "script": {
       "type": "string",
       "description": "Relative path to JS loaded in global scope on page load. Wrap your code in an IIFE."
+    },
+    "styles": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^assets/(?!.*\\.\\.)[^\\\\?#]+$",
+      "description": "Plugin-root-relative path under assets/ (e.g. 'assets/plugin.css') to a compiled, preflight-off Tailwind stylesheet the frontend injects as a <link>. Must stay under assets/ with no '..', backslash, query, or fragment. See docs/plugin-styles.md."
     },
     "routes": {
       "type": "string",
@@ -120,6 +141,50 @@
         }
       },
       "description": "Opt-in for the Export Diagnostics bundle (slopsmith#166). See docs/plugin-diagnostics.md."
+    },
+    "settings_schema": {
+      "type": "object",
+      "description": "Redaction-safe settings metadata used by capability diagnostics and backup/import tooling. Do not store actual settings values here."
+    },
+    "capabilities": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/domainName" },
+      "additionalProperties": { "$ref": "#/$defs/capabilityDeclaration" },
+      "description": "Native capability-pipelines.v1 declarations keyed by capability domain."
+    },
+    "ui_contributions": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/domainName" },
+      "additionalProperties": { "$ref": "#/$defs/contributionList" },
+      "description": "Native UI contribution declarations keyed by UI domain."
+    },
+    "ui": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/domainName" },
+      "additionalProperties": { "$ref": "#/$defs/contributionList" },
+      "description": "Alias for UI contribution declarations used by current first-party plugin manifests."
+    },
+    "runtime_domains": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/domainName" },
+      "additionalProperties": { "$ref": "#/$defs/domainDeclaration" },
+      "description": "Legacy-to-capability bridge declarations for runtime domains. Prefer capabilities for new native declarations."
+    },
+    "domains": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/domainName" },
+      "additionalProperties": { "$ref": "#/$defs/domainDeclaration" },
+      "description": "Legacy runtime-domain declaration alias. Prefer capabilities for new native declarations."
+    },
+    "privileged_capabilities": {
+      "type": "array",
+      "items": { "type": "object" },
+      "description": "Manifest-derived privileged workflow summaries. The privileged-capabilities host validates detailed semantics at runtime."
+    },
+    "privileged_compatibility_bridges": {
+      "type": "array",
+      "items": { "type": "object" },
+      "description": "Diagnostics-only compatibility bridge declarations for privileged legacy surfaces."
     }
   },
   "allOf": [
@@ -128,5 +193,79 @@
       "if": { "properties": { "type": { "const": "visualization" } }, "required": ["type"] },
       "then": { "required": ["script"] }
     }
-  ]
+  ],
+  "$defs": {
+    "domainName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "capabilityDeclaration": {
+      "type": "object",
+      "properties": {
+        "roles": {
+          "type": "array",
+          "items": {
+            "enum": ["owner", "coordinator", "provider", "observer", "requester", "transformer", "handler", "validator", "short-circuiter", "contributor"]
+          },
+          "uniqueItems": true
+        },
+        "commands": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "operations": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "requests": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "observes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "emits": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "events": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "kind": { "enum": ["command", "provider-coordinator", "event", "diagnostic", "privileged"] },
+        "mode": { "enum": ["active", "optional", "legacy-shim", "disabled"] },
+        "compatibility": { "enum": ["none", "shim-allowed", "degrade-noop", "required", "legacy-window-shim"] },
+        "ownership": { "enum": ["exclusive-owner", "multi-provider", "observer-only", "requester-only", "privileged", "diagnostic-only"] },
+        "safety": { "enum": ["safe", "privileged", "sensitive", "diagnostic-only"] },
+        "order": {
+          "type": "object",
+          "properties": {
+            "fixed": { "type": "boolean" },
+            "before": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "after": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+          },
+          "additionalProperties": false
+        },
+        "provider_policy": { "type": "object" },
+        "description": { "type": "string" },
+        "summary": { "type": "string" },
+        "version": { "const": 1 }
+      },
+      "additionalProperties": false
+    },
+    "domainDeclaration": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "role": { "type": "string", "minLength": 1 },
+            "roles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "ownership": { "enum": ["exclusive-owner", "multi-provider", "observer-only", "requester-only", "privileged", "diagnostic-only"] },
+            "safety": { "enum": ["safe", "privileged", "sensitive", "diagnostic-only"] },
+            "legacy_source": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": true
+        },
+        { "type": "array" }
+      ]
+    },
+    "contributionList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "region": { "type": "string", "minLength": 1 },
+          "label": { "type": "string" },
+          "order": { "type": ["number", "integer", "string"] }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
 }

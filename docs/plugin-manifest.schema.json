@@ -3,62 +3,363 @@
   "$id": "https://slopsmith.local/contracts/plugin-manifest-capabilities.schema.json",
   "title": "Slopsmith Plugin Manifest Capability Contract",
   "type": "object",
-  "required": ["id", "name"],
+  "required": [
+    "id",
+    "name"
+  ],
   "properties": {
-    "id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_.-]+$" },
-    "name": { "type": "string", "minLength": 1 },
-    "version": { "type": ["string", "null"] },
-    "private": { "type": "boolean" },
-    "standards": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "private": {
+      "type": "boolean"
+    },
+    "standards": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
     "capability_api": {
       "type": "object",
-      "properties": { "standard": { "const": "capability-pipelines.v1" }, "version": { "const": 1 } },
+      "properties": {
+        "standard": {
+          "const": "capability-pipelines.v1"
+        },
+        "version": {
+          "const": 1
+        }
+      },
       "additionalProperties": false
     },
     "capabilities": {
       "type": "object",
-      "propertyNames": { "$ref": "#/$defs/domainName" },
-      "additionalProperties": { "$ref": "#/$defs/capabilityDeclaration" }
+      "propertyNames": {
+        "$ref": "#/$defs/domainName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/capabilityDeclaration"
+      }
     },
-    "ui_contributions": { "type": "object", "propertyNames": { "$ref": "#/$defs/domainName" }, "additionalProperties": { "$ref": "#/$defs/contributionList" } },
-    "ui": { "type": "object", "propertyNames": { "$ref": "#/$defs/domainName" }, "additionalProperties": { "$ref": "#/$defs/contributionList" } },
-    "runtime_domains": { "type": "object", "propertyNames": { "$ref": "#/$defs/domainName" }, "additionalProperties": { "$ref": "#/$defs/domainDeclaration" } },
-    "domains": { "type": "object", "propertyNames": { "$ref": "#/$defs/domainName" }, "additionalProperties": { "$ref": "#/$defs/domainDeclaration" } },
-    "settings_schema": { "type": "object" },
-    "nav": {}, "screen": {}, "script": {}, "routes": {}, "settings": {}, "diagnostics": {}, "type": { "type": "string" }, "tour": {},
-    "description": { "type": "string", "description": "Short one-sentence summary of the plugin, surfaced on the v3 Pedalboard Plugins page (clamped to ~2 lines). Optional and additive." },
-    "category": { "type": "string", "description": "Which pedalboard the plugin sits on in the v3 Plugins page. Suggested values: 'audio', 'creation', 'practice', 'game', 'tools'. Free-form; unknown/absent values fall back to a curated default then 'other'. Optional and additive." },
-    "icon": { "type": "string", "minLength": 1, "pattern": "^assets/(?!.*\\.\\.)[^\\\\?#]+$", "description": "Plugin-root-relative path under assets/ (e.g. 'assets/thumb.png') to a thumbnail (~square, ~256x256 PNG/SVG) shown as the pedal graphic on the v3 Plugins page. Same containment rule as `styles`. If omitted, the loader auto-detects assets/thumb.png; failing that the UI shows a default pedal graphic. Optional and additive." },
-    "styles": { "type": "string", "minLength": 1, "pattern": "^assets/(?!.*\\.\\.)[^\\\\?#]+$", "description": "Plugin-root-relative path under assets/ (e.g. 'assets/plugin.css') to a compiled, preflight-off Tailwind stylesheet the frontend injects as a <link>. Must stay under assets/ with no '..', backslash, or query/fragment. See docs/plugin-styles.md." }
+    "ui_contributions": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/domainName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/contributionList"
+      }
+    },
+    "ui": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/domainName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/contributionList"
+      }
+    },
+    "runtime_domains": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/domainName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/domainDeclaration"
+      }
+    },
+    "domains": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/domainName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/domainDeclaration"
+      }
+    },
+    "settings_schema": {
+      "type": "object"
+    },
+    "nav": {},
+    "screen": {},
+    "script": {},
+    "routes": {},
+    "settings": {},
+    "diagnostics": {},
+    "type": {
+      "type": "string"
+    },
+    "tour": {},
+    "description": {
+      "type": "string",
+      "description": "Short one-sentence summary of the plugin, surfaced on the v3 Pedalboard Plugins page (clamped to ~2 lines). Optional and additive."
+    },
+    "category": {
+      "type": "string",
+      "description": "Which pedalboard the plugin sits on in the v3 Plugins page. Suggested values: 'audio', 'creation', 'practice', 'game', 'tools'. Free-form; unknown/absent values fall back to a curated default then 'other'. Optional and additive."
+    },
+    "icon": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^assets/(?!.*\\.\\.)[^\\\\?#]+$",
+      "description": "Plugin-root-relative path under assets/ (e.g. 'assets/thumb.png') to a thumbnail (~square, ~256x256 PNG/SVG) shown as the pedal graphic on the v3 Plugins page. Same containment rule as `styles`. If omitted, the loader auto-detects assets/thumb.png; failing that the UI shows a default pedal graphic. Optional and additive."
+    },
+    "styles": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^assets/(?!.*\\.\\.)[^\\\\?#]+$",
+      "description": "Plugin-root-relative path under assets/ (e.g. 'assets/plugin.css') to a compiled, preflight-off Tailwind stylesheet the frontend injects as a <link>. Must stay under assets/ with no '..', backslash, query, or fragment. See docs/plugin-styles.md."
+    }
   },
   "additionalProperties": true,
   "$defs": {
-    "domainName": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_.:-]+$" },
+    "domainName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
     "capabilityDeclaration": {
       "type": "object",
       "properties": {
-        "roles": { "type": "array", "items": { "enum": ["owner", "provider", "observer", "requester", "transformer", "handler", "validator", "short-circuiter", "contributor"] }, "uniqueItems": true },
-        "commands": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-        "operations": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-        "requests": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-        "observes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-        "emits": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-        "events": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-        "kind": { "enum": ["command", "provider-coordinator", "event", "diagnostic", "privileged"] },
-        "mode": { "enum": ["active", "optional", "legacy-shim", "disabled"] },
-        "compatibility": { "enum": ["none", "shim-allowed", "degrade-noop", "required", "legacy-window-shim"] },
-        "ownership": { "enum": ["exclusive-owner", "multi-provider", "observer-only", "requester-only", "privileged", "diagnostic-only"] },
-        "safety": { "enum": ["safe", "privileged", "sensitive", "diagnostic-only"] },
-        "order": { "type": "object", "properties": { "fixed": { "type": "boolean" }, "before": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }, "after": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true } }, "additionalProperties": false },
-        "provider_policy": { "type": "object" },
-        "settings": { "type": "array", "description": "Declarative per-instance control descriptors (toggle / range / select) a participant exposes for a consuming host to render generically. Domain-agnostic in shape; how a host applies a chosen value is defined by each capability domain's contract (the visualization domain requires an applySetting(key, value) method on the renderer instance).", "items": { "type": "object", "required": ["key", "type"], "properties": { "key": { "type": "string", "minLength": 1 }, "label": { "type": "string" }, "type": { "enum": ["toggle", "range", "select"] }, "default": {}, "min": { "type": "number" }, "max": { "type": "number" }, "step": { "type": "number" }, "options": { "type": "array", "items": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "minLength": 1 }, "label": { "type": "string" } }, "additionalProperties": false } } }, "additionalProperties": false } },
-        "description": { "type": "string" },
-        "summary": { "type": "string" },
-        "version": { "const": 1 }
+        "roles": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "owner",
+              "coordinator",
+              "provider",
+              "observer",
+              "requester",
+              "transformer",
+              "handler",
+              "validator",
+              "short-circuiter",
+              "contributor"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "observes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "emits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "kind": {
+          "enum": [
+            "command",
+            "provider-coordinator",
+            "event",
+            "diagnostic",
+            "privileged"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "active",
+            "optional",
+            "legacy-shim",
+            "disabled"
+          ]
+        },
+        "compatibility": {
+          "enum": [
+            "none",
+            "shim-allowed",
+            "degrade-noop",
+            "required",
+            "legacy-window-shim"
+          ]
+        },
+        "ownership": {
+          "enum": [
+            "exclusive-owner",
+            "multi-provider",
+            "observer-only",
+            "requester-only",
+            "privileged",
+            "diagnostic-only"
+          ]
+        },
+        "safety": {
+          "enum": [
+            "safe",
+            "privileged",
+            "sensitive",
+            "diagnostic-only"
+          ]
+        },
+        "order": {
+          "type": "object",
+          "properties": {
+            "fixed": {
+              "type": "boolean"
+            },
+            "before": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "after": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "provider_policy": {
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "const": 1
+        }
       },
       "additionalProperties": false
     },
-    "domainDeclaration": { "oneOf": [{ "type": "object", "properties": { "role": { "type": "string", "minLength": 1 }, "roles": { "type": "array", "items": { "type": "string", "minLength": 1 } }, "ownership": { "enum": ["exclusive-owner", "multi-provider", "observer-only", "requester-only", "privileged", "diagnostic-only"] }, "safety": { "enum": ["safe", "privileged", "sensitive", "diagnostic-only"] }, "legacy_source": { "type": "string", "minLength": 1 } }, "additionalProperties": true }, { "type": "array" }] },
-    "contributionList": { "type": "array", "items": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "minLength": 1 }, "region": { "type": "string", "minLength": 1 }, "label": { "type": "string" }, "order": { "type": ["number", "integer", "string"] } }, "additionalProperties": true } }
+    "domainDeclaration": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "minLength": 1
+            },
+            "roles": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "ownership": {
+              "enum": [
+                "exclusive-owner",
+                "multi-provider",
+                "observer-only",
+                "requester-only",
+                "privileged",
+                "diagnostic-only"
+              ]
+            },
+            "safety": {
+              "enum": [
+                "safe",
+                "privileged",
+                "sensitive",
+                "diagnostic-only"
+              ]
+            },
+            "legacy_source": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "array"
+        }
+      ]
+    },
+    "contributionList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string"
+          },
+          "order": {
+            "type": [
+              "number",
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    }
   }
 }

@@ -1,6 +1,6 @@
 ---
 name: plugin-validate
-description: Validate a Slopsmith plugin's plugin.json against the schema and run structural checks. USE WHEN the user asks to validate a plugin, check the manifest, plugin.json errors, lint plugin, verify plugin structure, plugin license check, or audit plugin contract. Runs JSON Schema validation, file-existence checks for declared script/routes/settings.html/tour paths, and license-allowlist check.
+description: Validate a Slopsmith plugin's plugin.json against the schema and run structural checks. USE WHEN the user asks to validate a plugin, check the manifest, plugin.json errors, lint plugin, verify plugin structure, plugin license check, or audit plugin contract. Runs JSON Schema validation, capability metadata checks, file-existence checks for declared script/routes/settings.html/tour paths, and license-allowlist check.
 ---
 
 # plugin-validate
@@ -32,7 +32,7 @@ for path in sorted(glob.glob('plugins/*/plugin.json')):
     plugin_id = plugin_dir.name
     m = json.load(open(path))
     plugin_ok = True  # per-iteration flag so we don't print OK after a later FAIL
-    # 1. Schema
+    # 1. Schema, including capability-pipelines.v1 metadata
     try:
         jsonschema.validate(m, schema)
     except jsonschema.ValidationError as e:

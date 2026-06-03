@@ -238,7 +238,7 @@ def _normalize_manifest_sequence(value) -> list:
 
 _CAPABILITY_STANDARD = "capability-pipelines.v1"
 _VALID_CAPABILITY_ROLES = {
-    "owner", "provider", "observer", "requester", "transformer", "handler",
+    "owner", "coordinator", "provider", "observer", "requester", "transformer", "handler",
     "validator", "short-circuiter", "contributor",
 }
 _VALID_CAPABILITY_MODES = {"active", "optional", "legacy-shim", "disabled"}

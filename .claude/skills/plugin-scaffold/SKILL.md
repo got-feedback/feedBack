@@ -30,25 +30,31 @@ If the plugin slug or type is missing, ask once.
 
 **Common to all types:**
 
-- `plugins/<id>/plugin.json` — minimum schema-valid manifest. Set `id`, `name`, `version: "0.1.0"`, and `license: "AGPL-3.0-only"` by default (ask if a different license is desired).
+- `plugins/<id>/plugin.json` — schema-valid manifest. Set `id`, `name`, `version: "0.1.0"`, `license: "AGPL-3.0-only"`, and `standards: ["capability-pipelines.v1", "plugin-runtime-idempotent.v1"]` by default (ask if a different license is desired).
 
 **`type=visualization`** — adds:
 - `"type": "visualization"` and `"script": "screen.js"` to manifest
+- `"capabilities": { "visualization": { "roles": ["provider"], "operations": ["renderer.create", "renderer.destroy", "renderer.inspect"], "mode": "active", "compatibility": "shim-allowed", "ownership": "multi-provider", "safety": "safe", "version": 1 } }`
 - `screen.js` exporting `window.slopsmithViz_<id> = function () { return { contextType: '2d', init(canvas, bundle) { this.ctx = canvas.getContext('2d'); }, draw(bundle) { /* TODO */ }, destroy() {} }; };` plus a static `matchesArrangement` example commented out
 - `tests/browser/<id>.spec.ts` — Playwright stub that loads the app and asserts the plugin's factory is registered
 
 **`type=overlay`** — adds:
 - `"script": "screen.js"` to manifest (no `type` declared — overlays don't use the picker)
+- `"capabilities": { "ui.player-overlays": { "roles": ["provider"], "mode": "active", "compatibility": "shim-allowed", "ownership": "multi-provider", "safety": "safe", "version": 1 } }`
+- a matching `"ui"` contribution with a stable overlay id and redaction-safe label
 - `screen.js` scaffolding a navbar toggle, an own-canvas + own-rAF loop reading `highway.getNotes()` / `getChords()` / `getTime()`, and respecting `highway.isDefaultRenderer()` if using `highway.project` / `fretX`
 - `tests/browser/<id>.spec.ts` — toggle on / off test
 
 **`type=settings-only`** — adds:
 - `"settings": { "html": "settings.html" }` to manifest
+- `"settings_schema"` with a schema version and an empty `packable_keys` list
+- a `"ui"` settings contribution with a stable id
 - `settings.html` — empty form skeleton with explanatory comments
 - `screen.js` reading/writing `localStorage` keys prefixed with `<id>_`
 
 **`type=routes-only`** — adds:
 - `"routes": "routes.py"` to manifest
+- a conservative `"capabilities"` declaration only when the route participates in a known domain such as `library`, `jobs`, or `privileged-capabilities`; otherwise leave capability participation out and ask what workflow the route owns
 - `routes.py` with `def setup(app, context):` that registers one example route and uses `context["log"].info("plugin ready")` (never `print()`)
 - `tests/test_<id>_routes.py` — FastAPI TestClient stub
 
@@ -64,7 +70,7 @@ Then point the user at [`docs/PLUGIN_AUTHORING.md`](../../../docs/PLUGIN_AUTHORI
 
 ## Don'ts
 
-- Don't add fields to the manifest that aren't in the schema. If the user wants something custom, ask whether it should become a real field — that's a `schema/plugin.schema.json` change, not a plugin-local convention.
+- Don't invent plugin-local manifest conventions. If the user wants something custom, either express it through existing `capability-pipelines.v1` metadata or ask whether it should become a real schema field.
 - Don't scaffold a `requirements.txt` without confirming the deps. The plugin loader installs them on first load; an accidental dep slows everyone's startup.
 - Don't pre-fill `localStorage` keys without a prefix. Collisions across plugins are real.
 - Don't generate hidden side effects at import time (`screen.js` top level or `routes.py` top level). Keep all wiring inside the IIFE / `setup()`.

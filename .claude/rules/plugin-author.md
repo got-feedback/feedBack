@@ -12,6 +12,7 @@ These rules apply only when editing files under `plugins/**`. They encode the co
 ## Manifest
 
 - **`plugin.json` is required** and must validate against [`schema/plugin.schema.json`](../../schema/plugin.schema.json). Required fields: `id`, `name`. The `id` must match the parent directory name (the loader keys discovery by directory; drift breaks plugin lookup).
+- **Capability-aware plugins declare intent** with `standards: ["capability-pipelines.v1"]` and redaction-safe `capabilities` / `ui` metadata. Legacy fields still work, but don't strip or reject native metadata when editing manifests.
 - **License must come from the curated allowlist** if the plugin is intended for the curated list. See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) "Plugin licensing".
 - **`type: "visualization"`** requires a `script` field exporting `window.slopsmithViz_<id>`. See [`docs/plugin-visualization-contracts.md`](../../docs/plugin-visualization-contracts.md).
 

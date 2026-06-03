@@ -34,7 +34,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-test.txt
 
-      - name: Validate every in-tree plugin.json against schema
+      - name: Validate every in-tree plugin.json against capability-aware schema
         run: |
           python - <<'PY'
           import glob, json, sys
@@ -66,7 +66,7 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Run schema sanity tests
+      - name: Run schema and capability contract tests
         # --noconftest skips tests/conftest.py, which imports structlog
         # (not in requirements-test.txt). The schema tests don't use
         # shared fixtures, so this is safe and avoids dragging the full

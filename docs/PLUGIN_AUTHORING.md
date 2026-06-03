@@ -26,12 +26,16 @@ The minimum viable plugin is a `plugin.json` with just `id` and `name`. Everythi
 }
 ```
 
+Capability-aware plugins should also declare the `capability-pipelines.v1` standard and the domains they participate in. Legacy fields such as `nav`, `screen`, `settings`, `type: "visualization"`, shortcuts, overlays, and mixer faders still work, but native metadata lets diagnostics, the Capability Inspector, and migration tooling explain plugin behavior without scraping private globals.
+
 ## Topics
 
 | Topic | Doc | When to read |
 |---|---|---|
 | **Manifest reference** | [plugin-manifest.md](plugin-manifest.md) | Field-by-field reference for `plugin.json`. Read first. |
+| **Capability declarations** | [plugin-manifest.md#capabilities](plugin-manifest.md#capabilities) | Declaring provider/requester/observer intent with `capability-pipelines.v1`. |
 | **Visualization contracts** | [plugin-visualization-contracts.md](plugin-visualization-contracts.md) | Building a highway renderer (setRenderer), an overlay layer, or a note-state provider. |
+| **Plugin styles** | [plugin-styles.md](plugin-styles.md) | Shipping a plugin-owned prebuilt stylesheet via `styles: "assets/plugin.css"`. |
 | **Audio mixer faders** | [plugin-audio-mixer.md](plugin-audio-mixer.md) | Plugin produces audio outside the song `<audio>` element. |
 | **Backend logging** | [plugin-logging.md](plugin-logging.md) | Plugin has a `routes.py`. Use `context["log"]`, never `print()`. |
 | **Diagnostics contribution** | [plugin-diagnostics.md](plugin-diagnostics.md) | Adding plugin state to the Export Diagnostics bundle. |
@@ -45,6 +49,7 @@ The minimum viable plugin is a `plugin.json` with just `id` and `name`. Everythi
 ## General guidelines
 
 - Wrap your plugin code in an IIFE: `(function () { 'use strict'; ... })();`
+- Declare `standards: ["capability-pipelines.v1"]` and native `capabilities` when your plugin participates in a Slopsmith capability domain.
 - Use `localStorage` for user-facing settings, prefixed with your plugin id.
 - If hooking `window.playSong`, always call the original and `await` it.
 - If hooking `window.showScreen`, clean up your state when leaving the player screen.

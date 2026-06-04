@@ -133,35 +133,15 @@ def _parse_bcfs(bcfs: bytes) -> dict:
 
 
 def _load_gpif(gp_path: str) -> ET.Element:
-    """Load and parse score.gpif from a .gpx (GP6) or .gp (GP7/GP8) file.
-
-    GP6 (.gpx): custom BCFZ/BCFS binary container holding score.gpif.
-    GP7/GP8 (.gp): standard ZIP archive holding Content/score.gpif.
-    Both formats use the same GPIF XML schema inside, so a single parser
-    handles all versions once the outer container is unpacked.
-    """
+    """Load and parse score.gpif from a .gpx file."""
     with open(gp_path, 'rb') as fh:
         raw = fh.read()
-
-    # GP7/GP8: ZIP container (PK magic)
-    if raw[:2] == b'PK':
-        import zipfile
-        import io as _io
-        with zipfile.ZipFile(_io.BytesIO(raw)) as zf:
-            if 'Content/score.gpif' not in zf.namelist():
-                raise ValueError("Content/score.gpif not found in GP7/GP8 ZIP container")
-            return ET.fromstring(zf.read('Content/score.gpif'))
-
-    # GP6 (.gpx): BCFZ compressed or raw BCFS
     if raw[:4] == b'BCFZ':
         bcfs = _decompress_bcfz(raw)
     elif raw[:4] == b'BCFS':
         bcfs = raw
     else:
-        raise ValueError(
-            f"Unrecognised Guitar Pro container (magic: {raw[:4]!r}). "
-            f"Supported: .gpx (GP6, BCFZ/BCFS) and .gp (GP7/GP8, ZIP)."
-        )
+        raise ValueError(f"Not a GPX file (magic: {raw[:4]!r})")
     fs = _parse_bcfs(bcfs)
     if 'score.gpif' not in fs:
         raise ValueError("score.gpif not found in GPX container")
@@ -279,7 +259,6 @@ def _gpif_tracks(root: ET.Element) -> list[dict]:
         midi_channel = 0
         is_drums = False
         if gm is not None:
-            # GP6 (.gpx): <GeneralMidi table="Percussion"><Program>...</Program>
             try: midi_program = int(gm.findtext('Program') or 0)
             except (ValueError, TypeError): pass
             try:
@@ -289,25 +268,6 @@ def _gpif_tracks(root: ET.Element) -> list[dict]:
             except (ValueError, TypeError): pass
             if gm.get('table') == 'Percussion':
                 is_drums = True
-        else:
-            # GP7/GP8 (.gp): <InstrumentSet><Type>drumKit</Type>
-            # and <MidiConnection><PrimaryChannel>9</PrimaryChannel>
-            inst_set = t.find('InstrumentSet')
-            if inst_set is not None:
-                inst_type = (inst_set.findtext('Type') or '').lower()
-                if inst_type == 'drumkit':
-                    is_drums = True
-            midi_conn = t.find('MidiConnection')
-            if midi_conn is not None:
-                try:
-                    ch_text = (midi_conn.findtext('PrimaryChannel') or '').strip()
-                    if ch_text:
-                        ch = int(ch_text)
-                        midi_channel = ch
-                        if ch == 9:
-                            is_drums = True
-                except (ValueError, TypeError):
-                    pass
 
         # String tuning
         string_pitches: list[int] = []
@@ -624,15 +584,13 @@ def list_tracks(gp_path: str) -> list[dict]:
     result = []
     for i, t in enumerate(tracks):
         is_bass = bool(
-            not t['is_drums']  # drums always have low/zero string pitches — must exclude
-            and (
-                (
-                    not t['string_pitches']  # no string tuning = not guitar-family
-                    and 32 <= t['midi_program'] <= 39
-                ) or (
-                    t['string_pitches']
-                    and max(t['string_pitches']) <= 48  # bass top string ≤ C3
-                )
+            (
+                not t['is_drums']
+                and not t['string_pitches']  # no string tuning = not guitar-family
+                and 32 <= t['midi_program'] <= 39
+            ) or (
+                t['string_pitches']
+                and max(t['string_pitches']) <= 48  # bass top string ≤ C3
             )
         )
         is_piano = (
@@ -1339,7 +1297,7 @@ def convert_file(
             if bid != '-1' and bid:
                 bar = bars_by_id.get(bid)
                 if bar is not None:
-                    for vid in bar.findtext('Voices', '').split():
+                    for voice_pos, vid in enumerate(bar.findtext('Voices', '').split()):
                         if vid == '-1':
                             continue
                         voice = voices_dict.get(vid)
@@ -1440,6 +1398,13 @@ def convert_file(
                                         fret=rs_fret,
                                         sustain=sustain,
                                     )
+                                    # Staff assignment for keys/piano (slopsmith staff schema).
+                                    # Derived from voice position as authored in the GP tab —
+                                    # not inferred from pitch — preserving hand crossings exactly.
+                                    # Voice 0 = treble/RH staff (staff=1),
+                                    # Voice 1+ = bass/LH staff (staff=0).
+                                    if is_keys:
+                                        rn.staff = 1 if voice_pos == 0 else 0
 
                                     # Techniques — GPIF stores these as <Property>
                                     # elements (NOT child tags), so the old
@@ -1624,7 +1589,7 @@ def convert_file(
                 if _lh_bid != '-1' and _lh_bid:
                     _lh_bar = bars_by_id.get(_lh_bid)
                     if _lh_bar is not None:
-                        for _lh_vid in _lh_bar.findtext('Voices', '').split():
+                        for _lh_voice_pos, _lh_vid in enumerate(_lh_bar.findtext('Voices', '').split()):
                             if _lh_vid == '-1':
                                 continue
                             _lh_voice = voices_dict.get(_lh_vid)
@@ -1674,6 +1639,8 @@ def convert_file(
                                         fret=_lh_midi % 24,
                                         sustain=_lh_dur if _lh_dur > 0.2 else 0.0,
                                     )
+                                    # Preserve authored voice-position staff assignment.
+                                    _lh_rn.staff = 1 if _lh_voice_pos == 0 else 0
                                     _lh_notes.append(_lh_rn)
                                     _lh_last_per_key[_lh_midi] = _lh_rn
                                 _lh_vt += _lh_dur

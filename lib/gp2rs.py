@@ -69,6 +69,7 @@ class RsNote:
     tremolo: bool = False
     tap: bool = False
     link_next: bool = False
+    staff: int = -1  # Piano staff: -1=absent, 0=LH/bass clef, 1=RH/treble clef
 
 
 @dataclass
@@ -1021,6 +1022,8 @@ def _build_xml(
             "tap": "1" if n.tap else "0",
             "ignore": "0",
         }
+        if getattr(n, 'staff', -1) != -1:
+            attrs["staff"] = str(n.staff)
         ET.SubElement(notes_el, "note", **attrs)
 
     # Chords

@@ -1019,6 +1019,7 @@ def _assemble_files_and_notes(
     client_contributions: dict | None,
     log: logging.Logger,
     plugins_root: "Path | list[Path] | None" = None,
+    backend_jobs_snapshot: dict | None = None,
 ) -> tuple[dict[str, bytes], list[str], str, "Redactor | None"]:
     """Assemble all diagnostic file bytes without packaging into a zip.
 
@@ -1044,6 +1045,11 @@ def _assemble_files_and_notes(
         files["system/env.json"] = env_payload
         plugins_data = _system_plugins(loaded_plugins, plugins_root=plugins_root, redactor=redactor)
         files["system/plugins.json"] = _safe_json_dumps(plugins_data).encode("utf-8")
+        if backend_jobs_snapshot is not None:
+            payload = backend_jobs_snapshot
+            if redactor is not None:
+                payload = _redact_value(payload, redactor)
+            files["system/jobs.json"] = _safe_json_dumps(payload).encode("utf-8")
         # Plugin loading is async and takes a few seconds on cold
         # boot. If the bundle was captured during that window, every
         # plugin appears as an "orphan" — flag the likely race so the
@@ -1195,6 +1201,7 @@ def build_bundle(
     client_contributions: dict | None = None,
     log: logging.Logger,
     plugins_root: "Path | list[Path] | None" = None,
+    backend_jobs_snapshot: dict | None = None,
 ) -> tuple[bytes, str, dict]:
     """Returns (zip_bytes, filename, manifest_dict)."""
     files, notes, runtime_kind, redactor = _assemble_files_and_notes(
@@ -1212,6 +1219,7 @@ def build_bundle(
         client_contributions=client_contributions,
         log=log,
         plugins_root=plugins_root,
+        backend_jobs_snapshot=backend_jobs_snapshot,
     )
 
     manifest = _make_manifest(
@@ -1274,6 +1282,7 @@ def preview_bundle(
     redact: bool,
     log: logging.Logger,
     plugins_root: "Path | list[Path] | None" = None,
+    backend_jobs_snapshot: dict | None = None,
 ) -> dict:
     """Lightweight preview: returns manifest-shaped output without
     building the zip or executing plugin diagnostics callables.
@@ -1317,6 +1326,7 @@ def preview_bundle(
         client_contributions=None,
         log=log,
         plugins_root=plugins_root,
+        backend_jobs_snapshot=backend_jobs_snapshot,
     )
 
     # ── Callable-output placeholders ──────────────────────────────────────

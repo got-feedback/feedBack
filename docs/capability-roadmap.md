@@ -62,7 +62,7 @@ Deferred follow-up slices: a `contributor` role so plugins ship their own challe
 
 ## Jobs Control Plane Slice
 
-The jobs slice promotes `jobs` from a deferred domain to an active privileged provider-coordinator. It owns provider registration, selected-provider persistence, capacity-aware scheduling, explicit user-approved enqueue/retry gates, prompt-free list/inspect, cancellation/pause/resume/retry coordination, reload recovery for provider-declared recoverable references, compatibility bridge hit accounting, and redaction-safe diagnostics under `slopsmith.jobs.diagnostics.v1`.
+The jobs slice promotes `jobs` from a deferred domain to an active privileged provider-coordinator. It owns browser provider registration, selected-provider persistence, capacity-aware scheduling, explicit user-approved enqueue/retry gates, prompt-free list/inspect, cancellation/pause/resume/retry coordination, reload recovery for provider-declared recoverable references, compatibility bridge hit accounting, and redaction-safe diagnostics under `slopsmith.jobs.diagnostics.v1`. A backend companion lets plugin route code register/adopt/progress/settle backend-owned jobs into `/api/jobs`, `/ws/jobs`, and diagnostics `system/jobs.json` without exposing provider-private execution payloads.
 
 Providers keep actual privileged work private. Core stores only safe job summaries, provider metadata, selected/default provider choices, bounded lifecycle history, terminal outcomes, and recovery references. It does not persist raw payloads, active non-recoverable work, DB schemas, paths, filenames, URLs, tokens, command lines, media/artifacts, recordings, live handles, or provider-private values.
 

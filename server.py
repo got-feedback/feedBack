@@ -45,6 +45,7 @@ import loosefolder as loosefolder_mod
 # scan workers can import + unpickle _scan_one without re-running this
 # module's import-time side effects (see lib/scan_worker.py).
 from scan_worker import _extract_meta_for_file, _relpath, _scan_one
+from jobs_backend import backend_jobs
 
 import concurrent.futures
 import contextvars
@@ -198,6 +199,9 @@ _DEMO_BLOCKED: list[tuple[str, re.Pattern]] = [
     ("POST",   re.compile(r"^/api/diagnostics/export$")),
     ("GET",    re.compile(r"^/api/diagnostics/preview$")),
     ("GET",    re.compile(r"^/api/diagnostics/hardware$")),
+    ("GET",    re.compile(r"^/api/jobs(?:/[^/]+)?$")),
+    ("GET",    re.compile(r"^/api/jobs/providers$")),
+    ("POST",   re.compile(r"^/api/jobs/[^/]+/(cancel|retry)$")),
     # Bundled core plugin — video background upload/delete
     ("POST",   re.compile(r"^/api/plugins/highway_3d/files$")),
     ("DELETE", re.compile(r"^/api/plugins/highway_3d/files$")),
@@ -3357,6 +3361,7 @@ async def startup_events():
         "unregister_tuning_provider": unregister_tuning_provider,
         "get_sloppak_cache_dir": lambda: SLOPPAK_CACHE_DIR,
         "register_demo_janitor_hook": register_demo_janitor_hook,
+        "jobs": backend_jobs,
         # Unified XP service (fee[dB]ack v0.3.0). Plugins that award XP
         # (minigames, tutorials, …) should feed the single core store via these
         # instead of keeping a private XP curve. `award_xp` returns the new
@@ -6242,6 +6247,7 @@ def export_diagnostics(payload: dict = Body(default_factory=dict)):
         client_contributions=client_contributions,
         log=log,
         plugins_root=_diag_plugins_roots(),
+        backend_jobs_snapshot=backend_jobs.snapshot(),
     )
     return Response(
         content=zip_bytes,
@@ -6283,6 +6289,7 @@ def preview_diagnostics(
         redact=redact,
         log=log,
         plugins_root=_diag_plugins_roots(),
+        backend_jobs_snapshot=backend_jobs.snapshot(),
     )
 
 
@@ -6291,6 +6298,88 @@ def diagnostics_hardware():
     """Backend hardware probe (cross-platform). Reusable independently
     of the bundle export — handy for "what's my GPU" plugin queries."""
     return _diag_hardware()
+
+
+@app.get("/api/jobs/providers")
+def api_jobs_providers():
+    """Return backend-registered job providers with redaction-safe metadata."""
+    return {"schema": "slopsmith.jobs.providers.v1", "providers": backend_jobs.list_jobs().get("providers", [])}
+
+
+@app.get("/api/jobs")
+def api_jobs_list(providerId: str | None = None, jobType: str | None = None,
+                  state: str | None = None, includeTerminal: bool = True):
+    """Return backend job summaries without triggering provider work."""
+    filters = {
+        "providerId": providerId,
+        "jobType": jobType,
+        "state": state,
+        "includeTerminal": includeTerminal,
+    }
+    return backend_jobs.list_jobs(filters)
+
+
+@app.get("/api/jobs/{job_id}")
+def api_jobs_inspect(job_id: str):
+    result = backend_jobs.inspect(job_id)
+    if result.get("outcome") == "no-target":
+        raise HTTPException(status_code=404, detail=result.get("reason") or "job not found")
+    return result
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def api_jobs_cancel(job_id: str):
+    result = backend_jobs.inspect(job_id)
+    if result.get("outcome") == "no-target":
+        raise HTTPException(status_code=404, detail=result.get("reason") or "job not found")
+    return {
+        "outcome": "unsupported-operation",
+        "status": "rejected",
+        "reason": "Backend job cancellation must be handled by the owning provider route in this slice",
+        "payload": result.get("payload", {}),
+    }
+
+
+@app.post("/api/jobs/{job_id}/retry")
+def api_jobs_retry(job_id: str):
+    result = backend_jobs.inspect(job_id)
+    if result.get("outcome") == "no-target":
+        raise HTTPException(status_code=404, detail=result.get("reason") or "job not found")
+    return {
+        "outcome": "unsupported-operation",
+        "status": "rejected",
+        "reason": "Backend job retry must be handled by the owning provider route in this slice",
+        "payload": result.get("payload", {}),
+    }
+
+
+@app.websocket("/ws/jobs")
+async def jobs_ws(websocket: WebSocket):
+    """Stream backend job snapshots and lifecycle updates."""
+    await websocket.accept()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+
+    def _on_event(event: dict) -> None:
+        def _put() -> None:
+            if queue.full():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            queue.put_nowait(event)
+        loop.call_soon_threadsafe(_put)
+
+    unsubscribe = backend_jobs.subscribe(_on_event)
+    try:
+        await websocket.send_json({"type": "snapshot", "snapshot": backend_jobs.snapshot()})
+        while True:
+            event = await queue.get()
+            await websocket.send_json(event)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        unsubscribe()
 
 
 # ── Plugin-provided routes are registered at startup via plugins/__init__.py ─

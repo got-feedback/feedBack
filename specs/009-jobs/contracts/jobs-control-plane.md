@@ -64,6 +64,27 @@ Required args:
 
 Outcomes: `handled`, `validation-failed`, `incompatible-version`, `denied`.
 
+### `unregister-provider`
+
+Unregisters a provider and settles provider-owned active jobs to terminal state.
+
+Required args:
+
+```json
+{
+  "providerId": "string"
+}
+```
+
+Rules:
+
+- Command is privileged and host-owned.
+- Missing/unknown provider returns `no-owner`.
+- Registered provider emits `provider-unregistered`.
+- Any active jobs owned by the provider transition to terminal unavailable/orphaned state with a safe reason.
+
+Outcomes: `handled`, `no-owner`, `failed`.
+
 ### `list-providers`
 
 Returns redaction-safe provider summaries. Prompt-free and side-effect-free.
@@ -92,7 +113,7 @@ Rules:
 
 - Privileged work requires `authorization: "user-action"` or an approved continuation matching provider, job type, target, requester, and inputs.
 - Missing or mismatched approval returns `denied` or `user-action-required` before provider operation callbacks run.
-- If exactly one compatible provider exists, it may be selected automatically.
+- If exactly one compatible provider exists, it MUST be selected automatically.
 - If multiple compatible providers exist, `providerId` or selected/default provider is required; otherwise return `provider-selection-required`.
 - Validation happens before provider work starts.
 - Provider capacity controls whether the job enters `queued` or `running`.

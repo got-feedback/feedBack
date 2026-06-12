@@ -91,13 +91,13 @@ test('provider-private enqueue payload reaches only the provider callback', asyn
     await dispatch(window, 'register-provider', { provider });
 
     const result = await dispatch(window, 'enqueue', enqueuePayload({
-        providerPayload: { filename: '/Users/example/DLC/Secret Song.psarc', token: 'abc123' },
+        providerPayload: { filename: '/Users/example/DLC/Secret Song.sloppak', token: 'abc123' },
         target: { safeRef: 'target-secret-song' },
         inputs: { safeFingerprint: 'input-secret-song' },
     }));
 
     assert.equal(result.status, 'applied');
-    assert.deepEqual(privatePayload, { filename: '/Users/example/DLC/Secret Song.psarc', token: 'abc123' });
+    assert.deepEqual(privatePayload, { filename: '/Users/example/DLC/Secret Song.sloppak', token: 'abc123' });
     assert.doesNotMatch(JSON.stringify(result.payload.job), /Secret Song|abc123|filename/);
     assert.doesNotMatch(JSON.stringify(diagnosticsSnapshot(window)), /Secret Song|abc123|filename/);
 });

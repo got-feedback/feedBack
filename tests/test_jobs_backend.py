@@ -27,7 +27,7 @@ def test_backend_jobs_adopt_progress_and_complete_redacts_raw_payloads():
     progressed = jobs.update_progress(
         "provider.test",
         "backend-1",
-        {"mode": "determinate", "percent": 42, "step": "convert", "message": "/Users/example/Secret.psarc token=abc"},
+        {"mode": "determinate", "percent": 42, "step": "convert", "message": "/Users/example/Secret.sloppak token=abc"},
     )
     assert progressed["outcome"] == "handled"
 
@@ -38,7 +38,7 @@ def test_backend_jobs_adopt_progress_and_complete_redacts_raw_payloads():
     text = str(snapshot)
     assert "provider.test" in text
     assert "target-abc" in text
-    assert "Secret.psarc" not in text
+    assert "Secret.sloppak" not in text
     assert "token=abc" not in text
     assert "/Users/example" not in text
     assert snapshot["jobs"]["recentTerminal"][0]["state"] == "completed"
@@ -70,7 +70,7 @@ def test_backend_jobs_dispatches_private_provider_action_and_redacts_payload():
             "outcome": "cancelled",
             "payload": {
                 "jobId": request["job"]["jobId"],
-                "rawPath": "/Users/example/Secret.psarc",
+                "rawPath": "/Users/example/Secret.sloppak",
             },
         }
 

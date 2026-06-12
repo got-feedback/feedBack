@@ -2448,7 +2448,7 @@ class TuningProviderRegistry:
                     for name, freqs in names.items():
                         result[instrument][name] = [round(f * scale, 4) for f in freqs]
             except Exception:
-                logger.exception("tuning provider %r raised during get_merged()", provider_id)
+                log.exception("tuning provider %r raised during get_merged()", provider_id)
         return result
 
 
@@ -4583,7 +4583,8 @@ def api_award_xp(data: dict):
     # bind (→ 500) and no real run awards anywhere near this.
     if not (0 <= amount <= 10_000_000):
         return JSONResponse({"error": "amount must be between 0 and 10,000,000"}, status_code=400)
-    meta_db.award_xp(amount)
+    source = _clean_str(data.get("source")) or None
+    meta_db.award_xp(amount, source)
     return meta_db.get_progress()
 
 
@@ -6332,9 +6333,9 @@ async def api_jobs_cancel(job_id: str, data: dict | None = Body(default=None)):
     result = backend_jobs.inspect(job_id)
     if result.get("outcome") == "no-target":
         raise HTTPException(status_code=404, detail=result.get("reason") or "job not found")
-    request = data if isinstance(data, dict) else {}
-    request.setdefault("authorization", "user-action")
-    request.setdefault("requesterId", "api.jobs")
+    request = dict(data) if isinstance(data, dict) else {}
+    request["authorization"] = "user-action"
+    request["requesterId"] = "api.jobs"
     return await backend_jobs.dispatch_action(job_id, "job.cancel", request)
 
 
@@ -6343,9 +6344,9 @@ async def api_jobs_retry(job_id: str, data: dict | None = Body(default=None)):
     result = backend_jobs.inspect(job_id)
     if result.get("outcome") == "no-target":
         raise HTTPException(status_code=404, detail=result.get("reason") or "job not found")
-    request = data if isinstance(data, dict) else {}
-    request.setdefault("authorization", "user-action")
-    request.setdefault("requesterId", "api.jobs")
+    request = dict(data) if isinstance(data, dict) else {}
+    request["authorization"] = "user-action"
+    request["requesterId"] = "api.jobs"
     return await backend_jobs.dispatch_action(job_id, "job.retry", request)
 
 
@@ -6375,7 +6376,22 @@ async def jobs_ws(websocket: WebSocket):
     try:
         await websocket.send_json({"type": "snapshot", "snapshot": backend_jobs.snapshot()})
         while True:
-            event = await queue.get()
+            event_task = asyncio.create_task(queue.get())
+            recv_task = asyncio.create_task(websocket.receive())
+            done, pending = await asyncio.wait(
+                {event_task, recv_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            if recv_task in done:
+                message = recv_task.result()
+                if message.get("type") == "websocket.disconnect":
+                    break
+                continue
+            event = event_task.result()
             await websocket.send_json(event)
     except WebSocketDisconnect:
         pass

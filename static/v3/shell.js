@@ -145,7 +145,12 @@
     function renderTopbar() {
         const bar = document.getElementById('v3-topbar');
         if (!bar) return;
-        bar.className = 'sticky top-0 z-20 bg-fb-sidebar/80 backdrop-blur';
+        // z-30 (not z-20): the global topbar must stack above per-screen sticky
+        // bars — notably the v3 Songs filter/search bar, which is also
+        // `sticky top-0 z-20 backdrop-blur` and, being later in source order,
+        // otherwise wins the z-index tie and paints over the topbar's instrument
+        // selector / tuner dropdowns (slopsmith#857 regression).
+        bar.className = 'sticky top-0 z-30 bg-fb-sidebar/80 backdrop-blur';
         bar.innerHTML =
             // Row 1 — top utility bar: search.
             '<div class="flex items-center gap-4 px-4 md:px-8 pt-4">' +

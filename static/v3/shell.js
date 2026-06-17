@@ -142,14 +142,12 @@
     }
 
     // ── Topbar ───────────────────────────────────────────────────────────---
-    const PATREON_URL = 'https://patreon.com';
     function renderTopbar() {
         const bar = document.getElementById('v3-topbar');
         if (!bar) return;
         bar.className = 'sticky top-0 z-20 bg-fb-sidebar/80 backdrop-blur';
         bar.innerHTML =
-            // Row 1 — top utility bar: search + Support Us! (stay here, NOT on
-            // the title row).
+            // Row 1 — top utility bar: search.
             '<div class="flex items-center gap-4 px-4 md:px-8 pt-4">' +
             '<button id="v3-hamburger" class="md:hidden text-fb-textDim hover:text-fb-text shrink-0" aria-label="Menu">' +
             '<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>' +
@@ -158,10 +156,7 @@
             '<input id="v3-search" type="search" placeholder="Search songs…" aria-label="Search songs" ' +
             'class="w-full bg-gray-800/50 border border-gray-700 rounded-md pl-10 pr-4 py-2 text-sm ' +
             'text-fb-text placeholder-fb-textDim focus:border-fb-primary focus:ring-1 focus:ring-fb-primary outline-none"></div>' +
-            '<a href="' + PATREON_URL + '" target="_blank" rel="noopener" class="ml-auto ' +
-            'hidden sm:inline-flex items-center gap-2 bg-fb-accent hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-md shadow-lg shadow-fb-accent/20 transition-colors">' +
-            '<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M14.8 3c-3 0-5.4 2.4-5.4 5.4S11.8 13.9 14.8 13.9 20.2 11.5 20.2 8.4 17.8 3 14.8 3zM3.8 3h3.4v18H3.8z"/></svg>' +
-            'Support Us!</a></div>' +
+            '</div>' +
             // Row 2 — page header: title + ONLY the tuner/instrument/profile
             // badge cluster on the same line as the header.
             '<div class="flex items-center gap-3 px-4 md:px-8 pt-2 pb-4">' +

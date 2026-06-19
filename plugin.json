@@ -21,12 +21,15 @@
             "mode": "active",
             "safety": "sensitive"
         },
-        "audio-input": {
-            "roles": ["provider"],
-            "operations": ["source.enumerate", "source.describe", "source.open", "source.close"],
-            "emits": [],
+        "midi-input": {
+            "roles": ["requester"],
+            "requests": ["discover", "list-sources", "select-source", "open-source", "close-source"],
             "mode": "active",
-            "safety": "sensitive"
+            "compatibility": "degrade-noop",
+            "ownership": "requester-only",
+            "safety": "sensitive",
+            "description": "Reads the MIDI keyboard input through the core midi-input domain (Web-MIDI provider ships built-in with the domain). Absent domain → no MIDI devices, fail-soft.",
+            "version": 1
         }
     }
 }

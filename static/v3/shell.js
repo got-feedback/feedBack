@@ -30,6 +30,7 @@
         { key: 'settings',   screen: 'settings',         label: 'Settings',        group: 'HOME',    icon: 'gear' },
         { key: 'playlists',  screen: 'v3-playlists',     label: 'Playlists',       group: 'LIBRARY', icon: 'list' },
         { key: 'songs',      screen: 'v3-songs',         label: 'Songs',           group: 'LIBRARY', icon: 'disc' },
+        { key: 'studio',     screen: 'plugin-rig_builder', label: 'Studio',        group: 'LIBRARY', icon: 'studio' },
         { key: 'lessons',    screen: 'v3-lessons',       label: 'Lessons',         group: 'LIBRARY', icon: 'lessons' },
         { key: 'favorites',  screen: 'favorites',        label: 'Favorites',       group: 'LIBRARY', icon: 'star' },
         { key: 'saved',      screen: 'v3-saved',         label: 'Saved for Later', group: 'LIBRARY', icon: 'bookmark' },
@@ -51,6 +52,8 @@
         user: 'M12 12a4 4 0 100-8 4 4 0 000 8zm-7 8a7 7 0 0114 0',
         arcade: 'M7 8h10a4 4 0 014 4 4 4 0 01-4 4H7a4 4 0 01-4-4 4 4 0 014-4zm0 4h3m-1.5-1.5v3M15 11h.01M17.5 13h.01',
         lessons: 'M12 4L2 9l10 5 10-5-10-5zM6 11.5V16c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5v-4.5',
+        studio: 'M5 3v6M5 13v8M12 3v10M12 17v4M19 3v4M19 11v10M2 11h6M9 15h6M16 7h6',
+
         trophy: 'M8 21h8m-4-4v4m-6-17h12v5a6 6 0 01-12 0V4zm12 2h2a2 2 0 01-2 4M6 6H4a2 2 0 002 4',
         tag: 'M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0l-7-7V4h9.6l7.4 7.4a2 2 0 010 2zM7.5 7.5h.01',
     };
@@ -232,7 +235,8 @@
             const res = await fetch('/api/plugins');
             if (res.ok) plugins = await res.json();
         } catch (e) { return; } // degrade: no plugin group
-        const withNav = (Array.isArray(plugins) ? plugins : []).filter((p) => p && p.nav && (p.nav.label || p.name));
+        const withNav = (Array.isArray(plugins) ? plugins : []).filter((p) => p && p.nav && (p.nav.label || p.name)
+            && p.id !== 'rig_builder');   // rig_builder is pinned into the LIBRARY group as "Studio"
         if (!withNav.length) return;
         let html = '<div class="px-3 mt-2 mb-1 text-[10px] uppercase tracking-wider font-semibold text-fb-textDim/70">PLUGINS</div><div class="space-y-0.5">';
         for (const p of withNav) {

@@ -37,6 +37,7 @@ class Note:
     right_hand: int = -1
     pick_direction: int = -1
     ignore: bool = False
+    staff: int = -1  # Piano staff: -1=absent, 0=LH/bass clef, 1=RH/treble clef
 
 
 @dataclass
@@ -217,6 +218,8 @@ def note_to_wire(n: Note) -> dict:
         out["pkd"] = n.pick_direction
     if n.ignore:
         out["ig"] = True
+    if n.staff != -1:
+        out["stf"] = n.staff
     return out
 
 
@@ -307,6 +310,7 @@ def note_from_wire(d: dict, time: float | None = None) -> Note:
         right_hand=_wire_int_optional(d.get("rh"), -1),
         pick_direction=_wire_int_optional(d.get("pkd"), -1),
         ignore=bool(d.get("ig", False)),
+        staff=_wire_int_optional(d.get("stf"), -1),
     )
 
 
@@ -762,6 +766,7 @@ def _parse_note(n) -> Note:
         right_hand=_int_optional(n, "rightHand", -1),
         pick_direction=_int_optional(n, "pickDirection", -1),
         ignore=_bool(n, "ignore"),
+        staff=_int_optional(n, "staff", -1),
     )
 
 

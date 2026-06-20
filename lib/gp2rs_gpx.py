@@ -279,7 +279,6 @@ def _gpif_tracks(root: ET.Element) -> list[dict]:
         midi_channel = 0
         is_drums = False
         if gm is not None:
-            # GP6 (.gpx): <GeneralMidi table="Percussion"><Program>...</Program>
             try: midi_program = int(gm.findtext('Program') or 0)
             except (ValueError, TypeError): pass
             try:
@@ -289,25 +288,6 @@ def _gpif_tracks(root: ET.Element) -> list[dict]:
             except (ValueError, TypeError): pass
             if gm.get('table') == 'Percussion':
                 is_drums = True
-        else:
-            # GP7/GP8 (.gp): <InstrumentSet><Type>drumKit</Type>
-            # and <MidiConnection><PrimaryChannel>9</PrimaryChannel>
-            inst_set = t.find('InstrumentSet')
-            if inst_set is not None:
-                inst_type = (inst_set.findtext('Type') or '').lower()
-                if inst_type == 'drumkit':
-                    is_drums = True
-            midi_conn = t.find('MidiConnection')
-            if midi_conn is not None:
-                try:
-                    ch_text = (midi_conn.findtext('PrimaryChannel') or '').strip()
-                    if ch_text:
-                        ch = int(ch_text)
-                        midi_channel = ch
-                        if ch == 9:
-                            is_drums = True
-                except (ValueError, TypeError):
-                    pass
 
         # String tuning
         string_pitches: list[int] = []
@@ -624,15 +604,14 @@ def list_tracks(gp_path: str) -> list[dict]:
     result = []
     for i, t in enumerate(tracks):
         is_bass = bool(
-            not t['is_drums']  # drums always have low/zero string pitches — must exclude
-            and (
-                (
-                    not t['string_pitches']  # no string tuning = not guitar-family
-                    and 32 <= t['midi_program'] <= 39
-                ) or (
-                    t['string_pitches']
-                    and max(t['string_pitches']) <= 48  # bass top string ≤ C3
-                )
+            (
+                not t['is_drums']
+                and not t['string_pitches']  # no string tuning = not guitar-family
+                and 32 <= t['midi_program'] <= 39
+            ) or (
+                not t['is_drums']  # explicit guard: drums can have low string pitches
+                and t['string_pitches']
+                and max(t['string_pitches']) <= 48  # bass top string ≤ C3
             )
         )
         is_piano = (
@@ -1339,7 +1318,7 @@ def convert_file(
             if bid != '-1' and bid:
                 bar = bars_by_id.get(bid)
                 if bar is not None:
-                    for vid in bar.findtext('Voices', '').split():
+                    for voice_pos, vid in enumerate(bar.findtext('Voices', '').split()):
                         if vid == '-1':
                             continue
                         voice = voices_dict.get(vid)
@@ -1440,6 +1419,13 @@ def convert_file(
                                         fret=rs_fret,
                                         sustain=sustain,
                                     )
+                                    # Staff assignment for keys/piano (slopsmith staff schema).
+                                    # Derived from voice position as authored in the GP tab —
+                                    # not inferred from pitch — preserving hand crossings.
+                                    # Voice 0 = treble/RH staff (staff=1),
+                                    # Voice 1+ = bass/LH staff (staff=0).
+                                    if is_keys:
+                                        rn.staff = 1 if voice_pos == 0 else 0
 
                                     # Techniques — GPIF stores these as <Property>
                                     # elements (NOT child tags), so the old
@@ -1674,6 +1660,10 @@ def convert_file(
                                         fret=_lh_midi % 24,
                                         sustain=_lh_dur if _lh_dur > 0.2 else 0.0,
                                     )
+                                    # LH track notes are always bass clef (staff=0).
+                                    # The LH track as a whole IS the left hand —
+                                    # voice position within the LH track is irrelevant.
+                                    _lh_rn.staff = 0
                                     _lh_notes.append(_lh_rn)
                                     _lh_last_per_key[_lh_midi] = _lh_rn
                                 _lh_vt += _lh_dur

@@ -24,6 +24,11 @@ from pathlib import Path
 
 log = logging.getLogger("slopsmith.lib.sloppak")
 
+# The feedpak format version this build targets / writes (manifest
+# `feedpak_version`, a semver string per spec §4). Readers tolerate any version
+# (additive/MINOR compatibility); writers stamp this.
+FEEDPAK_VERSION = "1.2.0"
+
 import yaml
 
 from safepath import safe_join
@@ -316,6 +321,9 @@ class LoadedSloppak:
     stems: list[dict]           # [{"id": str, "file": str, "default": bool}]
     source_dir: Path
     manifest: dict
+    # The pack's declared format version (manifest `feedpak_version`, a semver
+    # string per spec §4). None when absent (legacy / pre-versioning packs).
+    feedpak_version: str | None = None
     # Parsed `drum_tab.json` payload when the manifest carries a `drum_tab:`
     # key pointing at a readable, schema-valid file. None otherwise (older
     # sloppaks, sloppaks without drums, sloppaks whose drum tab failed to
@@ -789,11 +797,13 @@ def load_song(
                         "events": clean_events,
                     }
 
+    _fpv = manifest.get("feedpak_version")
     return LoadedSloppak(
         song=song,
         stems=stems,
         source_dir=source_dir,
         manifest=manifest,
+        feedpak_version=_fpv if isinstance(_fpv, str) and _fpv else None,
         drum_tab=drum_tab_data,
         song_timeline=song_timeline_data,
         tempos=tempos_data,

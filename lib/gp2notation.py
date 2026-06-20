@@ -522,6 +522,10 @@ def attach_notation_to_sloppak(sloppak_dir: str | Path, arr_id: str, payload: di
         json.dumps(payload, separators=(",", ":")), encoding="utf-8"
     )
     entry["notation"] = filename
+    # Stamp the format version while we're rewriting the manifest (spec §4),
+    # without downgrading an existing (possibly higher) declared version.
+    from sloppak import FEEDPAK_VERSION
+    manifest.setdefault("feedpak_version", FEEDPAK_VERSION)
     manifest_path.write_text(
         yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
         encoding="utf-8",

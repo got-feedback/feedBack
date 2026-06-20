@@ -502,8 +502,12 @@ def test_attach_notation_to_sloppak(tmp_path):
     entries = {e["id"]: e for e in rewritten["arrangements"]}
     assert entries["keys"]["notation"] == "notation_keys.json"
     assert "notation" not in entries["lead"]
-    # Key order preserved (sort_keys=False round-trip).
-    assert list(rewritten.keys()) == ["title", "artist", "arrangements", "stems"]
+    # Original key order preserved (sort_keys=False round-trip); the manifest
+    # rewrite also stamps feedpak_version (spec §4), appended at the end.
+    assert list(rewritten.keys()) == [
+        "title", "artist", "arrangements", "stems", "feedpak_version"]
+    from sloppak import FEEDPAK_VERSION
+    assert rewritten["feedpak_version"] == FEEDPAK_VERSION
 
 
 def test_attach_notation_unknown_arrangement_raises(tmp_path):

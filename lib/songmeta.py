@@ -49,6 +49,15 @@ def _apply_to_sloppak_manifest(manifest: dict, fields: dict) -> bool:
     if "year" in fields:
         manifest["year"] = _coerce_year(fields["year"])
         dirty = True
+    # Opportunistically declare the format version (spec §4) when we're already
+    # rewriting because a metadata field was supplied. Gated on `dirty` (i.e. a
+    # field was given) so this never forces a *standalone* rewrite with no fields
+    # passed, and `not in` so an existing (possibly higher) version is preserved,
+    # never downgraded. NB `dirty` here means "a field was supplied" — a
+    # supplied-but-identical value already triggers a rewrite (pre-existing).
+    if dirty and "feedpak_version" not in manifest:
+        from sloppak import FEEDPAK_VERSION
+        manifest["feedpak_version"] = FEEDPAK_VERSION
     return dirty
 
 

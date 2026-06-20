@@ -491,6 +491,25 @@ def _chord_fingers(chord, frets: list[int], num_strings: int) -> list[int]:
     return fingers
 
 
+def _chord_diagram_frets(chord, num_strings: int, width: int) -> list[int]:
+    """RS-string-ordered absolute frets of the chord DIAGRAM voicing, padded to
+    ``width`` with -1.
+
+    Used to confirm the diagram describes the voicing actually played before
+    enriching a template — mirrors the GP8 exact fret-pattern guard. pyguitarpro
+    stores absolute frets in ``chord.strings`` (``firstFret`` is display-only),
+    so the result compares directly against the played ``frets``."""
+    out = [-1] * width
+    strings = getattr(chord, "strings", None) or []
+    for i, fret in enumerate(strings):
+        if fret is None or fret < 0:
+            continue
+        rs = _gp_string_to_rs(i + 1, num_strings)
+        if 0 <= rs < width:
+            out[rs] = fret
+    return out
+
+
 def _is_bass_track(track: guitarpro.Track) -> bool:
     """Detect whether a GP track is a bass.
 
@@ -869,21 +888,34 @@ def convert_track(
                     else:
                         idx = chord_template_map[fret_key]
 
-                    # Enrich the template with the GP chord diagram (name +
-                    # per-string fingering) attached to this beat. Back-fill
-                    # any still-blank template so the data attaches regardless
-                    # of whether the annotated beat is the one that first
-                    # created the template (a plain earlier strum of the same
-                    # voicing must not shadow it). First annotation wins.
+                    # Enrich the template from the GP chord diagram attached to
+                    # this beat — but ONLY when the diagram describes the voicing
+                    # actually played (same width-normalized fret pattern). A
+                    # mismatched chord label/diagram would otherwise mis-name /
+                    # finger the played template, and the back-fill would spread
+                    # it to other strums of the same played pattern. Mirrors the
+                    # GP8 exact fret-pattern guard.
+                    #
+                    # Name and fingers back-fill INDEPENDENTLY: a name-only first
+                    # annotation must not block a later beat that carries fingers
+                    # (and vice versa). Back-fill any still-blank field so the
+                    # data attaches regardless of which strum carries it.
                     if beat.effect and beat.effect.chord:
-                        ct = chord_templates[idx]
-                        if not ct.name and all(f < 0 for f in ct.fingers):
-                            name = beat.effect.chord.name or ""
-                            fingers = _chord_fingers(
-                                beat.effect.chord, frets, num_strings)
-                            if name or any(f >= 0 for f in fingers):
-                                ct.name = name
-                                ct.fingers = fingers
+                        gpc = beat.effect.chord
+                        # Compare over the FULL string span (played width vs the
+                        # track's string count) so a diagram that frets an
+                        # extended string the played voicing doesn't use counts
+                        # as a mismatch instead of being silently trimmed.
+                        _w = max(len(frets), num_strings)
+                        _played = frets + [-1] * (_w - len(frets))
+                        if _chord_diagram_frets(gpc, num_strings, _w) == _played:
+                            ct = chord_templates[idx]
+                            if not ct.name and gpc.name:
+                                ct.name = gpc.name
+                            if all(f < 0 for f in ct.fingers):
+                                fingers = _chord_fingers(gpc, frets, num_strings)
+                                if any(f >= 0 for f in fingers):
+                                    ct.fingers = fingers
 
                     rs_chords.append(RsChord(
                         time=t,

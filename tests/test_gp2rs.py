@@ -795,12 +795,14 @@ def _ct_note(note_type, gp_string, fret):
     )
 
 
-def _ct_song(beats):
-    """One-measure mock song for convert_track, standard 6-string guitar at 120 BPM."""
+def _ct_song(beats, string_values=None):
+    """One-measure mock song for convert_track, standard 6-string guitar at 120 BPM.
+
+    `string_values` overrides the tuning/string count (e.g. a 7-string track)."""
     voice = SimpleNamespace(beats=beats)
     measure = SimpleNamespace(voices=[voice])
     strings = [SimpleNamespace(number=i + 1, value=v)
-               for i, v in enumerate([64, 59, 55, 50, 45, 40])]
+               for i, v in enumerate(string_values or [64, 59, 55, 50, 45, 40])]
     track = SimpleNamespace(
         strings=strings,
         channel=SimpleNamespace(instrument=24),
@@ -1181,3 +1183,102 @@ def test_chord_diagram_backfills_template_first_strummed_unannotated():
     assert len(cts) == 1, "same voicing must dedup to one template"
     assert cts[0].get("chordName") == "Gtest"
     assert cts[0].get("finger5") == "2" and cts[0].get("finger4") == "1"
+
+
+def test_chord_diagram_mismatch_not_applied():
+    # The attached diagram describes a DIFFERENT voicing (frets 5/5) than the
+    # notes actually played (3/2). It must NOT enrich the played template —
+    # otherwise a mislabeled chord would name/finger the wrong voicing (and the
+    # back-fill would spread it). Name + fingers stay blank.
+    note_e = _ct_note(guitarpro.NoteType.normal, gp_string=1, fret=3)
+    note_b = _ct_note(guitarpro.NoteType.normal, gp_string=2, fret=2)
+    beat = _ct_beat(tick=0, dur_value=4, notes=[note_e, note_b])
+    beat.effect.chord = _ct_chord(
+        "Wrong", strings=[5, 5, -1, -1, -1, -1],  # != played 3/2
+        fingerings=[guitarpro.Fingering.annular, guitarpro.Fingering.annular],
+    )
+
+    xml_str = convert_track(_ct_song([beat]), track_index=0)
+    root = ET.fromstring(xml_str)  # noqa: S314
+    ct = root.find(".//chordTemplates/chordTemplate")
+    assert ct is not None
+    assert ct.get("chordName") == ""
+    assert [ct.get(f"finger{i}") for i in range(6)] == ["-1"] * 6
+
+
+def test_chord_diagram_name_then_fingers_decoupled():
+    # First annotated beat carries a NAME but no fingers (all open); a later beat
+    # of the same voicing carries the fingers. Both must land — a name-only first
+    # annotation must not block the later fingers (name/fingers back-fill
+    # independently).
+    def _beat(tick, name, fingerings):
+        b = _ct_beat(
+            tick=tick, dur_value=4,
+            notes=[_ct_note(guitarpro.NoteType.normal, gp_string=1, fret=3),
+                   _ct_note(guitarpro.NoteType.normal, gp_string=2, fret=2)],
+        )
+        b.effect.chord = _ct_chord(name, strings=[3, 2, -1, -1, -1, -1],
+                                   fingerings=fingerings)
+        return b
+
+    first = _beat(0, "Gtest",
+                  [guitarpro.Fingering.open, guitarpro.Fingering.open])
+    second = _beat(GP_TICKS_PER_QUARTER, "",
+                   [guitarpro.Fingering.middle, guitarpro.Fingering.index])
+
+    xml_str = convert_track(_ct_song([first, second]), track_index=0)
+    root = ET.fromstring(xml_str)  # noqa: S314
+    cts = root.findall(".//chordTemplates/chordTemplate")
+    assert len(cts) == 1
+    assert cts[0].get("chordName") == "Gtest"  # from the first (name-only) beat
+    # fingers from the second beat — not blocked by the first beat's name
+    assert cts[0].get("finger5") == "2" and cts[0].get("finger4") == "1"
+
+
+def test_chord_diagram_barre_higher_position_matches():
+    # A voicing high on the neck: diagram strings hold ABSOLUTE frets (firstFret
+    # is display-only), so they match the played absolute frets and the template
+    # enriches. Guards against an absolute-vs-relative matching regression.
+    notes = [_ct_note(guitarpro.NoteType.normal, gp_string=1, fret=5),
+             _ct_note(guitarpro.NoteType.normal, gp_string=2, fret=5),
+             _ct_note(guitarpro.NoteType.normal, gp_string=3, fret=6)]
+    beat = _ct_beat(tick=0, dur_value=4, notes=notes)
+    ch = _ct_chord("A", strings=[5, 5, 6, -1, -1, -1],
+                   fingerings=[guitarpro.Fingering.index, guitarpro.Fingering.index,
+                               guitarpro.Fingering.middle])
+    ch.firstFret = 5  # display base — must not affect matching
+    beat.effect.chord = ch
+
+    xml_str = convert_track(_ct_song([beat]), track_index=0)
+    root = ET.fromstring(xml_str)  # noqa: S314
+    ct = root.find(".//chordTemplates/chordTemplate")
+    assert ct is not None
+    assert ct.get("chordName") == "A"
+    assert ct.get("fret5") == "5" and ct.get("finger5") == "1"
+    assert ct.get("fret4") == "5" and ct.get("finger4") == "1"
+    assert ct.get("fret3") == "6" and ct.get("finger3") == "2"
+
+
+def test_chord_diagram_extended_string_outside_played_width_not_applied():
+    # 7-string track. Played voicing is on strings 2 & 3 only (width 6 — the
+    # high e / rs6 is unused), but the diagram ALSO frets string 1 (the extended
+    # rs6). The extra diagram note must make this a MISMATCH, not be silently
+    # trimmed to a false match — so the played template stays un-enriched.
+    seven = [64, 59, 55, 50, 45, 40, 35]  # low-B 7-string
+    note_b = _ct_note(guitarpro.NoteType.normal, gp_string=2, fret=3)  # rs5
+    note_g = _ct_note(guitarpro.NoteType.normal, gp_string=3, fret=2)  # rs4
+    beat = _ct_beat(tick=0, dur_value=4, notes=[note_b, note_g])
+    # diagram index0 = gp_string1 (rs6) frets 5 (NOT played); index1/2 match.
+    beat.effect.chord = _ct_chord(
+        "Bogus", strings=[5, 3, 2, -1, -1, -1, -1],
+        fingerings=[guitarpro.Fingering.index, guitarpro.Fingering.middle,
+                    guitarpro.Fingering.index],
+    )
+
+    xml_str = convert_track(_ct_song([beat], string_values=seven), track_index=0)
+    root = ET.fromstring(xml_str)  # noqa: S314
+    ct = root.find(".//chordTemplates/chordTemplate")
+    assert ct is not None
+    assert ct.get("chordName") == ""
+    # played template is width 6 (rs6/high-e unused) -> finger0..finger5
+    assert all(ct.get(f"finger{i}") == "-1" for i in range(6))

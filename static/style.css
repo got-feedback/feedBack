@@ -42,7 +42,7 @@ html { scroll-behavior: smooth; }
    don't paint over the picker / mixer / lyrics toggle. Without this,
    the bottom controls bar would silently sit underneath the canvas
    and become click-through invisible.
-   Folds in the fix from got-feedback/feedback#99. */
+   Folds in the fix from got-feedback/feedBack#99. */
 /* The footer pins the section-practice bar + transport row to the bottom of
    #player. margin-top:auto lives here (not on #player-controls) so the bar,
    which now sits outside #player-controls, stays directly above the row. */

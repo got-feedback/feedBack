@@ -245,7 +245,7 @@ The factory **returns a fresh instance per call**, so splitscreen's per-panel `s
 - Feature branches off `main`, descriptive name (e.g. `fix/preview-stacking`, `feat/palette-picker`).
 - PR target: target the contributor's own fork by default unless they ask otherwise; confirm before opening a PR upstream. Run `git remote -v` in this directory to see the remotes that are configured locally.
 - Commit messages: short imperative subject, optional body explaining *why*. Don't summarize the diff — the diff already does that.
-- This plugin is bundled **in-tree** at `plugins/highway_3d/` inside the `got-feedback/feedback` repository (not a gitlink/submodule). It ships with the default container image. Changes go through the normal slopsmith PR process — no separate upstream repo to sync.
+- This plugin is bundled **in-tree** at `plugins/highway_3d/` inside the `got-feedback/feedBack` repository (not a gitlink/submodule). It ships with the default container image. Changes go through the normal slopsmith PR process — no separate upstream repo to sync.
 
 ## When in doubt
 

@@ -5,7 +5,7 @@ isolated vocals + per-syllable lyric timing (both produced by the
 WhisperX fallback or shipped in the source archive), the /pitch endpoint
 runs CREPE over the vocals stem and returns one MIDI note per supplied
 timing token. The result lands in `<sloppak>/vocal_pitch.json` in the
-shape the got-feedback/feedback-plugin-lyrics-karaoke renderer
+shape the got-feedback/feedBack-plugin-lyrics-karaoke renderer
 already consumes:
 
     {"version": 1, "notes": [{"t": float, "d": float, "midi": int}, ...]}
@@ -23,7 +23,7 @@ runs locally. Adding a local CREPE path here would mean pulling
 `crepe` + `tensorflow` as plugin deps (~500 MB+ on top of the
 existing torch/demucs/whisperx). Deferred until users hit the gap.
 If you need a local fallback today, install
-`got-feedback/feedback-plugin-lyrics-karaoke` and let its local
+`got-feedback/feedBack-plugin-lyrics-karaoke` and let its local
 pYIN run when the server isn't reachable.
 
 Cache key parity with stem_separation / lyric_transcription

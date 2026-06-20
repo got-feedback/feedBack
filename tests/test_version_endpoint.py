@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-DEFAULT_SOURCE_URL = "https://github.com/got-feedback/feedback"
+DEFAULT_SOURCE_URL = "https://github.com/got-feedback/feedBack"
 DEFAULT_LICENSE_URL = DEFAULT_SOURCE_URL + "/blob/main/LICENSE"
 
 

@@ -44,9 +44,9 @@ Plugins under GPL-2.0-only, LGPL-2.1-only, CDDL, EPL, or proprietary terms will 
 Standard PR workflow described in [CLAUDE.md → Git Workflow](CLAUDE.md):
 - Never push directly to `main`.
 - Create a feature branch on your fork.
-- Open a PR against `got-feedback/feedback:main`.
+- Open a PR against `got-feedback/feedBack:main`.
 - Keep commits scoped and well-described; short imperative subject + `Signed-off-by` trailer.
 
 ## Questions
 
-Open an issue or start a [Discussion](https://github.com/got-feedback/feedback/discussions) if you're unsure whether a contribution fits — much better to ask early than to find out after the work is done.
+Open an issue or start a [Discussion](https://github.com/got-feedback/feedBack/discussions) if you're unsure whether a contribution fits — much better to ask early than to find out after the work is done.

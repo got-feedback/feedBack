@@ -223,9 +223,9 @@ Find the note's `t` in the chart, then grep the event log for entries near that 
 
 The Note Detection plugin lives in its own repository — these links go to the canonical source at github.com. If you've cloned the plugin into a local `plugins/note_detect/` next to this repo, the same files are at the equivalent path on disk.
 
-- Plugin source: [`screen.js`](https://github.com/got-feedback/feedback-plugin-notedetect/blob/main/screen.js) — `matchNotes`, `checkMisses`, `_diagTimingErrors` / `_diagTimingErrorsHits`, `getDiagnostic`.
-- Routes: [`routes.py`](https://github.com/got-feedback/feedback-plugin-notedetect/blob/main/routes.py) — the `/api/plugins/note_detect/recording` and `/api/plugins/note_detect/live-judgment` endpoints.
-- Harness: [`tools/harness.js`](https://github.com/got-feedback/feedback-plugin-notedetect/blob/main/tools/harness.js).
-- Regression driver: [`tools/regression.js`](https://github.com/got-feedback/feedback-plugin-notedetect/blob/main/tools/regression.js).
+- Plugin source: [`screen.js`](https://github.com/got-feedback/feedBack-plugin-notedetect/blob/main/screen.js) — `matchNotes`, `checkMisses`, `_diagTimingErrors` / `_diagTimingErrorsHits`, `getDiagnostic`.
+- Routes: [`routes.py`](https://github.com/got-feedback/feedBack-plugin-notedetect/blob/main/routes.py) — the `/api/plugins/note_detect/recording` and `/api/plugins/note_detect/live-judgment` endpoints.
+- Harness: [`tools/harness.js`](https://github.com/got-feedback/feedBack-plugin-notedetect/blob/main/tools/harness.js).
+- Regression driver: [`tools/regression.js`](https://github.com/got-feedback/feedBack-plugin-notedetect/blob/main/tools/regression.js).
 - Benchmark builder: [docs/benchmarks/note_detect_v1/build_benchmark.py](benchmarks/note_detect_v1/build_benchmark.py).
-- Settings UI: [`settings.html`](https://github.com/got-feedback/feedback-plugin-notedetect/blob/main/settings.html) — A/V auto-calibrate panel, tuning-mode toggle, diagnostic block.
+- Settings UI: [`settings.html`](https://github.com/got-feedback/feedBack-plugin-notedetect/blob/main/settings.html) — A/V auto-calibrate panel, tuning-mode toggle, diagnostic block.

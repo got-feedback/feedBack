@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import shutil
 import threading
 import zipfile
@@ -301,6 +302,11 @@ class LoadedSloppak:
     # When present, its beats/sections take priority over any beats/sections
     # embedded in the arrangement JSONs.
     song_timeline: dict | None = None
+    # Parsed `keys.json` payload (manifest `keys:` key) — a song-level,
+    # instrument-independent key/scale-change track (spec §7.7). None when
+    # absent / unreadable / malformed. Streamed over the highway WS as a
+    # `keys` message; consumers (renderers, plugins) read it from there.
+    keys: dict | None = None
     # Maps arrangement id → validated notation payload.  None when no
     # arrangement passed schema validation; a non-empty dict only when at least
     # one arrangement carried a `notation:` sub-key whose file loaded and passed
@@ -681,6 +687,67 @@ def load_song(
             default_on = bool(default_val)
         stems.append({"id": sid, "file": sfile, "default": default_on})
 
+    # Optional keys.json — song-level, instrument-independent key/scale track
+    # (manifest `keys:` key, spec §7.7). Permissive like the other side-files:
+    # missing / unreadable / malformed -> None, never fatal. Stored as a
+    # sanitized {version, events:[{t, key, scale?}]} (finite t, non-empty string
+    # key, sorted) so the highway WS can stream it without re-validating.
+    keys_data: dict | None = None
+    keys_rel = manifest.get("keys")
+    if isinstance(keys_rel, str) and keys_rel:
+        try:
+            k_path = (source_dir / keys_rel).resolve()
+            k_path.relative_to(source_dir.resolve())
+        except ValueError:
+            log.warning("sloppak: keys path %r escapes source_dir — skipped", keys_rel)
+            k_path = None
+        except OSError as e:
+            log.warning("sloppak: keys path resolution failed (%s) — skipped", e)
+            k_path = None
+        if k_path is not None and k_path.exists():
+            try:
+                raw = json.loads(k_path.read_text(encoding="utf-8"))
+            except Exception as e:
+                log.warning("sloppak: failed to parse keys %r: %s", keys_rel, e)
+                raw = None
+            if raw is not None and not isinstance(raw, dict):
+                log.warning("sloppak: keys %r ignored — expected dict, got %s",
+                            keys_rel, type(raw).__name__)
+            elif isinstance(raw, dict):
+                if not isinstance(raw.get("events"), list):
+                    log.warning("sloppak: keys %r ignored — 'events' must be a list", keys_rel)
+                else:
+                    clean_events: list[dict] = []
+                    for ev in raw["events"]:
+                        if not isinstance(ev, dict):
+                            continue
+                        # Drop events with a missing / non-numeric / non-finite
+                        # time rather than silently rewriting them to 0.0 — a
+                        # bad `t` makes the whole event meaningless.
+                        t = ev.get("t")
+                        if (not isinstance(t, (int, float)) or isinstance(t, bool)
+                                or not math.isfinite(t)):
+                            continue
+                        t = float(t)
+                        key = ev.get("key")
+                        if not isinstance(key, str) or not key:
+                            continue
+                        entry = {"t": t, "key": key}
+                        scale = ev.get("scale")
+                        if isinstance(scale, str) and scale:
+                            entry["scale"] = scale
+                        clean_events.append(entry)
+                    clean_events.sort(key=lambda e: e["t"])
+                    # int only — a float version (incl. NaN/Inf, which json.loads
+                    # accepts) would raise on int(); default rather than abort the
+                    # load of an optional side-file.
+                    _ver = raw.get("version")
+                    keys_data = {
+                        "version": _ver if isinstance(_ver, int)
+                                   and not isinstance(_ver, bool) else 1,
+                        "events": clean_events,
+                    }
+
     return LoadedSloppak(
         song=song,
         stems=stems,
@@ -688,6 +755,7 @@ def load_song(
         manifest=manifest,
         drum_tab=drum_tab_data,
         song_timeline=song_timeline_data,
+        keys=keys_data,
         notation_by_id=notation_by_id_data,
         arrangement_ids=arrangement_ids_acc,
     )

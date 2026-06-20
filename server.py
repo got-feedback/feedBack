@@ -6976,6 +6976,11 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
                 and _notation_arr_id is not None
                 and _notation_arr_id in loaded_slop.notation_by_id
             ),
+            # Song-level key/scale track presence (keys.json, spec §7.7) so a
+            # consumer can light up a key/scale display without parsing the pack.
+            "has_keys": bool(
+                is_slop and loaded_slop is not None and loaded_slop.keys is not None
+            ),
         })
 
         # Send drum_tab when the sloppak ships one (manifest `drum_tab:` key,
@@ -7015,6 +7020,17 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
         # Send sections
         sections = [{"name": s.name, "time": s.start_time} for s in song.sections]
         await websocket.send_json({"type": "sections", "data": sections})
+
+        # Send the song-level key/scale track (keys.json, spec §7.7) when the
+        # sloppak ships one. Consumers read it from the WS rather than the file,
+        # like drum_tab/beats/sections. The loader already sanitized the events
+        # (finite t, non-empty string key, sorted), so this is a direct send.
+        if is_slop and loaded_slop is not None and loaded_slop.keys is not None:
+            await websocket.send_json({
+                "type": "keys",
+                "version": int(loaded_slop.keys.get("version", 1)),
+                "data": loaded_slop.keys.get("events") or [],
+            })
 
         # Send notation data when the sloppak ships it for the active arrangement.
         # Slots after sections (cursor sync depends on beats, which precede sections)

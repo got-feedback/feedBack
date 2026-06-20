@@ -445,6 +445,93 @@ def _gp6_element_variation_to_midi(element: int, variation: int) -> int | None:
     return _ART_TO_MIDI.get(art_id, art_id)
 
 
+# GPIF chord-diagram <Position finger="..."> names → RS finger integers,
+# matching the editor (E1) + gp2rs/pyguitarpro convention:
+# open/unused = -1, thumb = 0, index = 1, middle = 2, ring = 3, pinky = 4.
+_GPIF_FINGER_MAP = {
+    'none': -1, 'open': -1, '': -1,
+    'thumb': 0,
+    'index': 1,
+    'middle': 2,
+    'ring': 3, 'annular': 3,
+    'pinky': 4, 'little': 4,
+}
+
+
+def _rs_string_order(string_pitches: list[int]) -> dict[int, int]:
+    """Map each GPIF string index → RS string index (0 = lowest pitch).
+
+    Mirrors the per-note transform in ``convert_file`` (sort GPIF string
+    indices by open pitch ascending, tiebreak on index, use the rank), so a
+    chord diagram's string indices land on the same RS strings as the played
+    notes regardless of format direction (GP6 .gpx high→low, GP8 .gp low→high).
+    """
+    order = sorted(range(len(string_pitches)),
+                   key=lambda i: (string_pitches[i], i))
+    return {gp: rs for rs, gp in enumerate(order)}
+
+
+def _parse_chord_diagrams(track_el, string_pitches: list[int]) -> dict:
+    """Map fret-pattern tuple → ``{'name', 'fingers'}`` from a track's diagrams.
+
+    GP7/GP8 GPIF stores authored chord diagrams per track under
+    ``Properties/Property[@name="DiagramCollection"]/Items/Item``. Each Item
+    carries the chord name (its ``name`` attribute) and a ``<Diagram>`` with
+    per-string ``<Fret string=.. fret=..>`` plus
+    ``<Fingering><Position finger=.. string=..></Fingering>``. Diagram string
+    indices share the positional space of note ``String`` indices, so they go
+    through the same pitch-rank transform; ``<Fret fret>`` is the absolute fret
+    (``baseFret`` is display-only and not applied).
+
+    Keying by fret pattern (width-normalised to ≥6, exactly like the template
+    build site) keeps the join key consistent with GP5 + the editor's
+    preserve-by-fret-key (E0). Returns ``{}`` when there are no diagrams or no
+    string tuning (orientation/width would be undefined).
+    """
+    diagrams: dict[tuple, dict] = {}
+    if track_el is None or not string_pitches:
+        return diagrams
+    gp_to_rs = _rs_string_order(string_pitches)
+    for item in track_el.findall(
+            './/Property[@name="DiagramCollection"]/Items/Item'):
+        diag = item.find('Diagram')
+        if diag is None:
+            continue
+        rs_frets: dict[int, int] = {}
+        for fr in diag.findall('Fret'):
+            try:
+                gp = int(fr.get('string'))
+                fret = int(fr.get('fret'))
+            except (TypeError, ValueError):
+                continue
+            if fret < 0:
+                continue
+            rs = gp_to_rs.get(gp)
+            if rs is not None:
+                rs_frets[rs] = fret
+        if not rs_frets:
+            continue
+        width = max(6, max(rs_frets) + 1)
+        frets = [-1] * width
+        fingers = [-1] * width
+        for rs, fret in rs_frets.items():
+            frets[rs] = fret
+        for pos in diag.findall('Fingering/Position'):
+            try:
+                gp = int(pos.get('string'))
+            except (TypeError, ValueError):
+                continue
+            rs = gp_to_rs.get(gp)
+            if rs is None or not (0 <= rs < width) or frets[rs] < 0:
+                continue
+            fname = (pos.get('finger') or '').strip().lower()
+            fingers[rs] = _GPIF_FINGER_MAP.get(fname, -1)
+        # First diagram wins for a given voicing (stable, deterministic).
+        diagrams.setdefault(tuple(frets),
+                            {'name': item.get('name', '') or '', 'fingers': fingers})
+    return diagrams
+
+
 def _gpx_percussion_midis(track_el) -> list[int]:
     """Flatten a drumKit ``InstrumentSet``'s articulations into a list of GM
     ``OutputMidiNumber``s, positionally indexed to match a note's
@@ -1277,6 +1364,10 @@ def convert_file(
         rs_chords: list[RsChord] = []
         chord_templates: list[ChordTemplate] = []
         chord_template_map: dict[tuple, int] = {}
+        # Authored chord diagrams (name + per-string fingering) for this track,
+        # keyed by fret pattern so they enrich matching played voicings.
+        chord_diagram_map = _parse_chord_diagrams(
+            track.get('_el'), track['string_pitches'])
         beats_out: list[RsBeat] = []
         sections: list[RsSection] = []
         section_counts: dict[str, int] = {}
@@ -1533,8 +1624,12 @@ def convert_file(
                                     fkey = tuple(frets_t)
                                     if fkey not in chord_template_map:
                                         chord_template_map[fkey] = len(chord_templates)
+                                        _diag = chord_diagram_map.get(fkey)
                                         chord_templates.append(ChordTemplate(
-                                            name='', frets=list(frets_t), fingers=[-1] * width,
+                                            name=(_diag['name'] if _diag else ''),
+                                            frets=list(frets_t),
+                                            fingers=(list(_diag['fingers']) if _diag
+                                                     else [-1] * width),
                                         ))
                                     rs_chords.append(RsChord(
                                         time=t,

@@ -1100,3 +1100,84 @@ def test_tie_not_extended_across_repeat_boundary():
         assert sustain == pytest.approx(0.5, abs=0.01), (
             f"sustain should be ~0.5 s (one quarter note), got {sustain:.3f}"
         )
+
+
+# ── convert_track: GP5 chord-diagram fingering extraction (E3) ───────────────
+# pyguitarpro exposes the chord-diagram voicing on beat.effect.chord:
+# .strings is per-string frets indexed 0 = highest string, .fingerings is the
+# parallel Fingering enum list (open=-1, thumb=0, index=1, middle=2, ring=3,
+# pinky=4 — already the RS finger integers). A chord beat carrying this data
+# must import with per-string fingers; a chord beat without it stays all -1.
+
+def _ct_chord(name, strings, fingerings):
+    return SimpleNamespace(
+        name=name, strings=list(strings),
+        fingerings=list(fingerings), length=len(strings),
+    )
+
+
+def test_chord_diagram_fingers_extracted():
+    # Two-note voicing on high e (fret 3) + B (fret 2). chord.strings is
+    # indexed 0 = highest string, so strings[0] = high e, strings[1] = B.
+    note_e = _ct_note(guitarpro.NoteType.normal, gp_string=1, fret=3)  # high e
+    note_b = _ct_note(guitarpro.NoteType.normal, gp_string=2, fret=2)  # B
+    beat = _ct_beat(tick=0, dur_value=4, notes=[note_e, note_b])
+    beat.effect.chord = _ct_chord(
+        "Gtest",
+        strings=[3, 2, -1, -1, -1, -1],
+        fingerings=[
+            guitarpro.Fingering.middle,  # high e -> 2
+            guitarpro.Fingering.index,   # B      -> 1
+        ],
+    )
+
+    xml_str = convert_track(_ct_song([beat]), track_index=0)
+    root = ET.fromstring(xml_str)  # noqa: S314
+    ct = root.find(".//chordTemplates/chordTemplate")
+    assert ct is not None
+    assert ct.get("chordName") == "Gtest"
+    # _gp_string_to_rs(1, 6) = 5 (high e), _gp_string_to_rs(2, 6) = 4 (B).
+    assert ct.get("fret5") == "3" and ct.get("finger5") == "2"
+    assert ct.get("fret4") == "2" and ct.get("finger4") == "1"
+    assert [ct.get(f"finger{i}") for i in range(0, 4)] == ["-1"] * 4
+
+
+def test_chord_without_diagram_has_blank_fingers():
+    # A plain two-note chord (effect.chord is None) is unchanged: blank name,
+    # all-(-1) fingers — no regression for diagram-less charts.
+    note_e = _ct_note(guitarpro.NoteType.normal, gp_string=1, fret=3)
+    note_b = _ct_note(guitarpro.NoteType.normal, gp_string=2, fret=2)
+    beat = _ct_beat(tick=0, dur_value=4, notes=[note_e, note_b])  # chord=None
+
+    xml_str = convert_track(_ct_song([beat]), track_index=0)
+    root = ET.fromstring(xml_str)  # noqa: S314
+    ct = root.find(".//chordTemplates/chordTemplate")
+    assert ct is not None
+    assert ct.get("chordName") == ""
+    assert [ct.get(f"finger{i}") for i in range(6)] == ["-1"] * 6
+
+
+def test_chord_diagram_backfills_template_first_strummed_unannotated():
+    # The annotated chord must enrich its voicing even when an earlier,
+    # unannotated beat of the SAME fret pattern created the template first.
+    plain = _ct_beat(
+        tick=0, dur_value=4,
+        notes=[_ct_note(guitarpro.NoteType.normal, gp_string=1, fret=3),
+               _ct_note(guitarpro.NoteType.normal, gp_string=2, fret=2)],
+    )  # chord=None, creates the blank template
+    annotated = _ct_beat(
+        tick=GP_TICKS_PER_QUARTER, dur_value=4,
+        notes=[_ct_note(guitarpro.NoteType.normal, gp_string=1, fret=3),
+               _ct_note(guitarpro.NoteType.normal, gp_string=2, fret=2)],
+    )
+    annotated.effect.chord = _ct_chord(
+        "Gtest", strings=[3, 2, -1, -1, -1, -1],
+        fingerings=[guitarpro.Fingering.middle, guitarpro.Fingering.index],
+    )
+
+    xml_str = convert_track(_ct_song([plain, annotated]), track_index=0)
+    root = ET.fromstring(xml_str)  # noqa: S314
+    cts = root.findall(".//chordTemplates/chordTemplate")
+    assert len(cts) == 1, "same voicing must dedup to one template"
+    assert cts[0].get("chordName") == "Gtest"
+    assert cts[0].get("finger5") == "2" and cts[0].get("finger4") == "1"

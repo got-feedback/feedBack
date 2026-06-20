@@ -460,6 +460,37 @@ def _gp_string_to_rs(gp_string: int, num_strings: int) -> int:
     return num_strings - gp_string
 
 
+def _chord_fingers(chord, frets: list[int], num_strings: int) -> list[int]:
+    """Per-string fingering for a chord template, in RS string order.
+
+    pyguitarpro exposes the chord-diagram voicing on ``beat.effect.chord``:
+    ``chord.strings`` is a per-string fret list indexed 0 = highest string
+    (GP string 1), -1 = unplayed; ``chord.fingerings`` is the parallel list
+    of :class:`guitarpro.Fingering` enums (``open=-1, thumb=0, index=1,
+    middle=2, annular=3, little=4`` — already the RS finger integers). The
+    fingerings list may carry one trailing extra entry, so we only read the
+    first ``len(strings)`` of it.
+
+    Returns a list the same width as ``frets`` (RS string index 0 = low).
+    Only strings that are actually played in this template (``frets[rs] >= 0``)
+    get a finger; everything else stays -1. A chord without a populated
+    voicing yields all -1, so diagram-less charts are unchanged.
+    """
+    fingers = [-1] * len(frets)
+    strings = getattr(chord, "strings", None) or []
+    fingerings = getattr(chord, "fingerings", None) or []
+    for i, fret in enumerate(strings):
+        if fret is None or fret < 0:
+            continue  # string not part of the voicing
+        rs = _gp_string_to_rs(i + 1, num_strings)
+        if not (0 <= rs < len(frets)) or frets[rs] < 0:
+            continue
+        if i < len(fingerings):
+            val = getattr(fingerings[i], "value", fingerings[i])
+            fingers[rs] = val if isinstance(val, int) else -1
+    return fingers
+
+
 def _is_bass_track(track: guitarpro.Track) -> bool:
     """Detect whether a GP track is a bass.
 
@@ -828,17 +859,31 @@ def convert_track(
                     fret_key = tuple(frets)
 
                     if fret_key not in chord_template_map:
-                        # Try to get chord name from GP
-                        chord_name = ""
-                        if beat.effect and beat.effect.chord:
-                            chord_name = beat.effect.chord.name or ""
                         idx = len(chord_templates)
                         chord_templates.append(ChordTemplate(
-                            name=chord_name,
+                            name="",
                             frets=list(frets),
                             fingers=[-1] * width,
                         ))
                         chord_template_map[fret_key] = idx
+                    else:
+                        idx = chord_template_map[fret_key]
+
+                    # Enrich the template with the GP chord diagram (name +
+                    # per-string fingering) attached to this beat. Back-fill
+                    # any still-blank template so the data attaches regardless
+                    # of whether the annotated beat is the one that first
+                    # created the template (a plain earlier strum of the same
+                    # voicing must not shadow it). First annotation wins.
+                    if beat.effect and beat.effect.chord:
+                        ct = chord_templates[idx]
+                        if not ct.name and all(f < 0 for f in ct.fingers):
+                            name = beat.effect.chord.name or ""
+                            fingers = _chord_fingers(
+                                beat.effect.chord, frets, num_strings)
+                            if name or any(f >= 0 for f in fingers):
+                                ct.name = name
+                                ct.fingers = fingers
 
                     rs_chords.append(RsChord(
                         time=t,

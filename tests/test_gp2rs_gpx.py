@@ -684,3 +684,88 @@ def test_note_vibrato_ignores_whammy_trembar_property():
                       '</Properties></Note>')
     tp = {p.get('name'): p for p in n.findall('.//Property')}
     assert _note_has_vibrato(n, tp) is False
+
+
+# ── convert_file: GP8 chord-diagram name + fingering extraction (E3) ─────────
+# GP7/GP8 GPIF carries authored chord diagrams under a track's
+# Property[@name="DiagramCollection"]. Each Item gives the chord name and a
+# <Diagram> with per-string fret + finger. A played voicing matching that
+# fret pattern must import with the diagram's name + fingers; a chart without
+# a DiagramCollection must import with blank name + all-(-1) fingers.
+
+def _gpif_chord_diagram(diagram_block: str) -> str:
+    # A two-note chord (low E fret 3 + A fret 2) on a low->high tuned guitar.
+    return f"""
+<GPIF>
+  <Score><Title>T</Title><Artist>A</Artist></Score>
+  <Tracks>
+    <Track id="0"><Name>Lead Guitar</Name>
+      <Property name="Tuning"><Pitches>40 45 50 55 59 64</Pitches></Property>
+      {diagram_block}
+    </Track>
+  </Tracks>
+  <MasterBars><MasterBar><Time>4/4</Time><Bars>0</Bars></MasterBar></MasterBars>
+  <Bars><Bar id="0"><Voices>0</Voices></Bar></Bars>
+  <Voices><Voice id="0"><Beats>0</Beats></Voice></Voices>
+  <Beats><Beat id="0"><Rhythm ref="r0"/><Notes>0 1</Notes></Beat></Beats>
+  <Notes>
+    <Note id="0">
+      <Property name="String"><String>0</String></Property>
+      <Property name="Fret"><Fret>3</Fret></Property></Note>
+    <Note id="1">
+      <Property name="String"><String>1</String></Property>
+      <Property name="Fret"><Fret>2</Fret></Property></Note>
+  </Notes>
+  <Rhythms><Rhythm id="r0"><NoteValue>Quarter</NoteValue></Rhythm></Rhythms>
+</GPIF>
+"""
+
+
+_DIAGRAM_BLOCK = """
+<Property name="DiagramCollection"><Items>
+  <Item id="1" name="G5">
+    <Diagram stringCount="6" fretCount="5" baseFret="0">
+      <Fret string="0" fret="3"/>
+      <Fret string="1" fret="2"/>
+      <Fingering>
+        <Position finger="Middle" fret="3" string="0"/>
+        <Position finger="Index" fret="2" string="1"/>
+      </Fingering>
+    </Diagram>
+  </Item>
+</Items></Property>
+"""
+
+
+def _convert_first_chord_template(monkeypatch, tmp_path, gpif):
+    monkeypatch.setattr(gp2rs_gpx, "_load_gpif", lambda _p: ET.fromstring(gpif))
+    out_files = convert_file(
+        "dummy.gp", str(tmp_path),
+        track_indices=[0], arrangement_names={0: "Lead"},
+    )
+    root = ET.parse(out_files[0]).getroot()
+    cts = root.findall(".//chordTemplates/chordTemplate")
+    assert len(cts) == 1
+    return cts[0]
+
+
+def test_convert_file_gp8_chord_diagram_enriches_template(tmp_path, monkeypatch):
+    ct = _convert_first_chord_template(
+        monkeypatch, tmp_path, _gpif_chord_diagram(_DIAGRAM_BLOCK))
+    # Diagram name + per-string fingering land on the matching voicing.
+    assert ct.get("chordName") == "G5"
+    # RS string 0 = low E (fret 3, Middle=2), string 1 = A (fret 2, Index=1).
+    assert ct.get("fret0") == "3" and ct.get("finger0") == "2"
+    assert ct.get("fret1") == "2" and ct.get("finger1") == "1"
+    # Unplayed strings stay -1 for both fret and finger.
+    assert [ct.get(f"finger{i}") for i in range(2, 6)] == ["-1"] * 4
+
+
+def test_convert_file_gp8_no_diagram_leaves_template_blank(tmp_path, monkeypatch):
+    # Same chart, no DiagramCollection -> identical import to before E3.
+    ct = _convert_first_chord_template(
+        monkeypatch, tmp_path, _gpif_chord_diagram(""))
+    assert ct.get("chordName") == ""
+    assert [ct.get(f"finger{i}") for i in range(6)] == ["-1"] * 6
+    # Fret pattern itself is unchanged (the join key still works).
+    assert ct.get("fret0") == "3" and ct.get("fret1") == "2"

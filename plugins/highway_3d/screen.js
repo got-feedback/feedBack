@@ -10296,6 +10296,37 @@
                             lbl.scale.set(lblWS, lblHS, 1);
                         }
 
+                        // Harmony annotations (§6.3.1 / §6.6) — the chord's
+                        // function (fn.rn Roman numeral) and template voicing,
+                        // stacked above the chord name. Gated by the
+                        // teaching-marks opt-in (mirrors the 2D overlay). Display
+                        // only — never grading.
+                        if (_drawTeachingMarks && firstInShapeRun && !chordWireHighDensity(ch)) {
+                            const _h = chordHarmonyLabels(ch.fn, bundle.chordTemplates?.[ch.id]?.voicing);
+                            if (_h.rn || _h.voicing) {
+                                const hlW = 24 * K * _textSizeMul;
+                                const hlH = 9 * K * _textSizeMul;
+                                const frameLeft = cx - width / 2;
+                                const baseX = frameLeft - hlW / 2 + NW * 0.94;
+                                const opacity = Math.min(1, 0.3 + fade * 0.7) * chordTailMul;
+                                // Start one chord-name-height above the name and
+                                // stack upward so labels never overlap the gems.
+                                let hy = yMaxF + hlH * 1.6;
+                                const _drawHarmony = (text, colorHex) => {
+                                    if (!text) return;
+                                    const s = pChordLbl.get();
+                                    const m = txtMat(text, colorHex, true, 'chord');
+                                    if (s.material.map !== m.map) { s.material.map = m.map; s.material.needsUpdate = true; }
+                                    s.material.opacity = opacity;
+                                    s.position.set(baseX, hy, z);
+                                    s.scale.set(hlW, hlH, 1);
+                                    hy += hlH;
+                                };
+                                _drawHarmony(_h.rn, '#ffcc66');       // sd teaching color
+                                _drawHarmony(_h.voicing, '#7fd1ff');  // fg teaching color
+                            }
+                        }
+
                         // Shape-based barre detection for the 3D indicator.
                         // Drives off chord notes alone — independent of label
                         // availability, so charts whose chordTemplates lack a
@@ -11357,6 +11388,15 @@
             // unset/out of range.
             if (!Number.isInteger(sd) || sd < 0 || sd > 11) return '';
             return String(sd);
+        }
+        /** Harmony annotations (§6.3.1 / §6.6): display labels for a chord's
+         * function (instance `fn.rn` Roman numeral) and template `voicing`
+         * string. '' for each when absent/malformed. Pure; shared with the 2D
+         * highway and node-tested. Display only — never grading. */
+        function chordHarmonyLabels(fn, voicing) {
+            const rn = (fn && typeof fn.rn === 'string') ? fn.rn.trim() : '';
+            const vc = (typeof voicing === 'string') ? voicing.trim() : '';
+            return { rn, voicing: vc };
         }
 
         function bnvSampleAt(bnv, t) {

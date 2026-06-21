@@ -509,6 +509,17 @@ function createHighway() {
         return String(sd);
     }
 
+    /** Harmony annotations (§6.3.1 / §6.6): display labels for a chord's
+     * harmonic function (the instance `fn.rn` Roman numeral) and its template
+     * `voicing` string. Returns '' for each when absent or malformed. Pure;
+     * node-tested and shared by both highways. Display/teaching only — MUST
+     * NEVER feed a grader (honesty rule). */
+    function chordHarmonyLabels(fn, voicing) {
+        const rn = (fn && typeof fn.rn === 'string') ? fn.rn.trim() : '';
+        const vc = (typeof voicing === 'string') ? voicing.trim() : '';
+        return { rn, voicing: vc };
+    }
+
     /** Teaching mark (§6.2.2): bucket drawn notes by their strum-group key `ch`.
      * Returns the groups (in first-seen order) for each ch value >= 0 that has
      * at least two members — a lone note is not a strum gesture. Pure; drives
@@ -2198,6 +2209,39 @@ function createHighway() {
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'bottom';
                 fillTextReadable(tmpl.name, labelX, labelY);
+            }
+
+            // Harmony annotations (§6.3.1 / §6.6) — the chord's function
+            // (fn.rn Roman numeral) and template voicing, stacked above the
+            // chord name. Gated behind the teaching-marks opt-in (same overlay
+            // class as sd/ch) so they don't clutter the default highway.
+            // Display only — never grading.
+            if (_showTeachingMarks && !ch.hd && p.scale > 0.15 && sorted.length > 0) {
+                const { rn, voicing } = chordHarmonyLabels(ch.fn, tmpl && tmpl.voicing);
+                if (rn || voicing) {
+                    const hx = hasNonZero
+                        ? (xMin + xMax) / 2
+                        : (sorted.length >= 2
+                            ? (fretX(frameLeftFret, p.scale, W) + fretX(frameRightFret, p.scale, W)) / 2
+                            : fretX(sorted[0].f, p.scale, W));
+                    // Baseline = just above where the chord name sits.
+                    const nameY = hasNonZero
+                        ? (p.y * H - actualTotalH / 2 - sz * 0.7 - sz * 0.4)
+                        : (p.y * H - sz * 0.8);
+                    ctx.font = `bold ${Math.max(10, sz * 0.32) | 0}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    let stackY = nameY - sz * 0.5;
+                    if (rn) {
+                        ctx.fillStyle = '#ffcc66';   // matches the sd teaching color
+                        fillTextReadable(rn, hx, stackY);
+                        stackY -= sz * 0.45;
+                    }
+                    if (voicing) {
+                        ctx.fillStyle = '#7fd1ff';   // matches the fg teaching color
+                        fillTextReadable(voicing, hx, stackY);
+                    }
+                }
             }
 
             // Notes — wide colored bar for open strings inside a chord,

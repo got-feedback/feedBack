@@ -1180,6 +1180,25 @@ class MetadataDB:
         ).fetchall()
         return {r[0]: r[1] for r in rows if r[2] and r[2] > 0}
 
+    def top_stats(self, limit: int = 5) -> list[dict]:
+        """Top scored songs (best score first) for the profile 'Your best
+        scores' panel. Aggregated per-song across arrangements (best score,
+        best accuracy, total plays), only SCORED songs (plays > 0), dead songs
+        skipped. Mirrors best_accuracy_map's grouping; enriched with metadata
+        by the /api/stats/top route."""
+        limit = max(1, min(50, int(limit)))
+        rows = self.conn.execute(
+            "SELECT filename, MAX(best_score), MAX(best_accuracy), SUM(plays) "
+            "FROM song_stats WHERE 1=1 " + self._existing_song_filter() +   # skip dead songs
+            "GROUP BY filename HAVING SUM(plays) > 0 "
+            "ORDER BY MAX(best_score) DESC, MAX(best_accuracy) DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            {"filename": r[0], "best_score": r[1], "best_accuracy": r[2], "plays": r[3]}
+            for r in rows
+        ]
+
     # ── Playlists ─────────────────────────────────────────────────────────--
     SAVED_KEY = "saved_for_later"
 
@@ -5009,6 +5028,28 @@ def api_stats_best():
     """{filename: best_accuracy} for all songs with a recorded best — one call
     to badge the library grid (defined before the {filename} catch-all)."""
     return meta_db.best_accuracy_map()
+
+
+@app.get("/api/stats/top")
+def api_top_stats(limit: int = 5):
+    """Top scored songs (best first), joined to song metadata, for the profile
+    'Your best scores' panel (defined before the {filename} catch-all)."""
+    from urllib.parse import quote
+    out = []
+    for r in meta_db.top_stats(limit):
+        meta = meta_db.conn.execute(
+            "SELECT title, artist, tuning_name FROM songs WHERE filename = ?",
+            (r["filename"],),
+        ).fetchone()
+        title, artist, tuning_name = meta if meta else (None, None, None)
+        out.append({
+            **r,
+            "title": title or r["filename"],
+            "artist": artist or "",
+            "tuning_name": tuning_name or "",
+            "art_url": f"/api/song/{quote(r['filename'])}/art",
+        })
+    return out
 
 
 @app.get("/api/stats/{filename:path}")

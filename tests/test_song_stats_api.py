@@ -104,6 +104,40 @@ def test_recent_orders_by_last_played(client, server):
     assert "art_url" in recent[0] and "title" in recent[0]
 
 
+def test_top_orders_by_best_score_and_enriches(client, server):
+    # The profile "Your best scores" panel: top songs by best score, descending,
+    # joined to metadata. A worse-scored and a resume-only song must rank below /
+    # be excluded respectively.
+    server.meta_db.put("low.archive", 0, 0, {"title": "Low", "artist": "A"})
+    server.meta_db.put("high.archive", 0, 0, {"title": "High", "artist": "B"})
+    server.meta_db.put("resume.archive", 0, 0, {"title": "Resume"})
+    client.post("/api/stats", json={"filename": "low.archive", "score": 100, "accuracy": 0.5})
+    client.post("/api/stats", json={"filename": "high.archive", "score": 900, "accuracy": 0.95})
+    client.post("/api/stats", json={"filename": "resume.archive", "lastPlayPosition": 12.0})  # plays==0
+    top = client.get("/api/stats/top").json()
+    names = [r["filename"] for r in top]
+    assert names[:2] == ["high.archive", "low.archive"]   # best score first
+    assert "resume.archive" not in names                  # unscored excluded
+    assert top[0]["title"] == "High" and "art_url" in top[0]
+    assert top[0]["best_score"] == 900 and top[0]["best_accuracy"] == pytest.approx(0.95)
+
+
+def test_top_aggregates_arrangements_and_respects_limit(client, server):
+    # Per-song aggregation (best across arrangements) + the limit param.
+    server.meta_db.put("multi.archive", 0, 0, {"title": "Multi",
+                                               "arrangements": [{"name": "Lead"}, {"name": "Bass"}]})
+    server.meta_db.put("solo.archive", 0, 0, {"title": "Solo"})
+    client.post("/api/stats", json={"filename": "multi.archive", "arrangement": 0, "score": 200, "accuracy": 0.6})
+    client.post("/api/stats", json={"filename": "multi.archive", "arrangement": 1, "score": 800, "accuracy": 0.9})
+    client.post("/api/stats", json={"filename": "solo.archive", "score": 500, "accuracy": 0.7})
+    top = client.get("/api/stats/top").json()
+    multi = next(r for r in top if r["filename"] == "multi.archive")
+    assert multi["best_score"] == 800   # best arrangement, not summed/duplicated
+    assert [r["filename"] for r in top].count("multi.archive") == 1
+    # limit caps the list.
+    assert len(client.get("/api/stats/top?limit=1").json()) == 1
+
+
 # ── Codex-preflight regressions (bad-input hardening + resume touch) ──────────
 
 def test_stats_rejects_non_finite_score_accuracy(client):

@@ -129,10 +129,12 @@
             '<button type="button" data-v3-edit-profile class="text-sm text-fb-primary hover:text-fb-primaryHi">Edit name &amp; avatar</button>' +
             '<button type="button" data-v3-open-progress class="text-sm text-fb-primary hover:text-fb-primaryHi">View challenges &amp; quests →</button>' +
             '</div></div></div>' +
-            // Per-song bests (filled by prompt 14's song_stats; placeholder here)
+            // Per-song bests — top scored songs from /api/stats/top, filled by
+            // renderBests() after innerHTML is set. The placeholder text shows
+            // during load and when nothing's been scored yet.
             '<div class="bg-fb-card/80 backdrop-blur rounded-xl p-6 border border-fb-border/50">' +
             '<h3 class="text-lg font-bold text-fb-text mb-2">Your best scores</h3>' +
-            '<p id="v3-profile-bests" class="text-sm text-fb-textDim">Play a song to start tracking your accuracy and best scores.</p>' +
+            '<div id="v3-profile-bests" class="text-sm text-fb-textDim">Play a song to start tracking your accuracy and best scores.</div>' +
             '</div>' +
             (_profile && _profile.player_hash
                 ? '<p class="text-center text-[10px] uppercase tracking-wider text-fb-textDim/60">player id ' + esc(_profile.player_hash.slice(0, 12)) + '</p>'
@@ -145,6 +147,43 @@
         if (window.v3Theme && typeof window.v3Theme.applyFrame === 'function') {
             window.v3Theme.applyFrame(root.querySelector('[data-v3-avatar-frame]'));
         }
+        renderBests();
+    }
+
+    // Fill the "Your best scores" panel from /api/stats/top (top scored songs,
+    // best first). Leaves the placeholder text in place on error / no scores so
+    // a fresh profile still reads sensibly. Accuracy is 0–1 (matches the library
+    // grid + dashboard badges).
+    async function renderBests() {
+        const host = document.getElementById('v3-profile-bests');
+        if (!host) return;
+        let rows = [];
+        try { const r = await fetch('/api/stats/top?limit=5'); if (r.ok) rows = await r.json(); } catch (e) { /* P15 — keep placeholder */ }
+        if (!Array.isArray(rows) || !rows.length) return;   // keep the placeholder text
+        const accColor = (a) => (a >= 0.9 ? 'text-fb-good' : a >= 0.5 ? 'text-fb-mid' : 'text-fb-low');
+        host.innerHTML =
+            '<ol class="space-y-2">' + rows.map((s, i) => {
+                const acc = Number(s.best_accuracy) || 0;
+                const pct = Math.round(acc * 100);
+                const score = Number(s.best_score) || 0;
+                return '<li data-fn="' + esc(s.filename) + '" class="flex items-center gap-3 cursor-pointer rounded-md px-2 py-1.5 hover:bg-fb-card transition">' +
+                    '<span class="w-5 text-center text-fb-textDim font-semibold shrink-0">' + (i + 1) + '</span>' +
+                    '<span class="flex-1 min-w-0">' +
+                    '<span class="block text-fb-text truncate">' + esc(s.title || s.filename) + '</span>' +
+                    (s.artist ? '<span class="block text-xs text-fb-textDim truncate">' + esc(s.artist) + '</span>' : '') +
+                    '</span>' +
+                    '<span class="shrink-0 text-right">' +
+                    '<span class="block font-bold ' + accColor(acc) + '">' + pct + '%</span>' +
+                    '<span class="block text-xs text-fb-textDim">' + score.toLocaleString() + ' pts</span>' +
+                    '</span></li>';
+            }).join('') + '</ol>';
+        // Click a row to play that song (default arrangement).
+        host.querySelectorAll('[data-fn]').forEach((li) => {
+            li.addEventListener('click', () => {
+                const fn = li.getAttribute('data-fn');
+                if (fn && typeof window.playSong === 'function') window.playSong(encodeURIComponent(fn));
+            });
+        });
     }
 
     // ── First-run onboarding (and edit) overlay ───────────────────────────────

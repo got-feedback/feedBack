@@ -14,9 +14,11 @@
  *
  * Lifecycle events are emitted on the capability surface and mirrored on
  * window.slopsmith as `progression:*` for non-capability consumers:
- * challenge-completed, quest-completed, path-level-up, rank-changed,
- * db-changed, calibration-completed, cosmetic-equipped (+ progression:updated
- * whenever fresh state lands).
+ * challenge-completed, quest-completed, quest-progressed, path-level-up,
+ * path-progressed, rank-changed, db-changed, calibration-completed,
+ * cosmetic-equipped (+ progression:updated whenever fresh state lands).
+ * quest-progressed / path-progressed are the partial-advance counterparts to
+ * the *-completed / *-level-up events (the achievement-toast feed).
  *
  * Vanilla JS, no framework (constitution P-II).
  */
@@ -37,6 +39,19 @@
         }
     }
 
+    // Index quests by "period:id" so a refresh can be diffed against the last
+    // state (period_type isn't on the per-quest payload, so carry it here).
+    function _questIndex(state) {
+        const out = {};
+        const quests = (state && state.quests) || {};
+        ['daily', 'weekly'].forEach((period) => {
+            (((quests[period] || {}).quests) || []).forEach((item) => {
+                if (item && item.id != null) out[period + ':' + item.id] = { period, item };
+            });
+        });
+        return out;
+    }
+
     function _diff(prev, next) {
         if (!prev || !next) return;
         if (prev.mastery_rank !== next.mastery_rank) {
@@ -45,6 +60,38 @@
         const before = (prev.wallet || {}).balance;
         const after = (next.wallet || {}).balance;
         if (before !== after) _emit('db-changed', { from: before, to: after, wallet: next.wallet });
+
+        // Quest "advance" — a still-incomplete quest whose count rose since the
+        // last state. The increment that COMPLETES a quest is intentionally left
+        // to quest-completed (emitted from notify()'s summary) so a finished
+        // quest surfaces once, not twice. A period rollover (count resets to 0,
+        // or a brand-new quest id) produces no event.
+        const prevQuests = _questIndex(prev);
+        const nextQuests = _questIndex(next);
+        Object.keys(nextQuests).forEach((key) => {
+            const pq = prevQuests[key];
+            const nq = nextQuests[key];
+            if (pq && !nq.item.completed && Number(nq.item.count) > Number(pq.item.count)) {
+                _emit('quest-progressed', Object.assign({ period_type: nq.period }, nq.item));
+            }
+        });
+
+        // Path "progress" — a challenge toward the next level completed
+        // (next.completed rose) WITHOUT a level-up. The level-up itself is
+        // emitted as path-level-up from notify()'s summary, so it surfaces once.
+        const prevPaths = {};
+        (prev.paths || []).forEach((p) => { if (p && p.id != null) prevPaths[p.id] = p; });
+        (next.paths || []).forEach((np) => {
+            const pp = prevPaths[np && np.id];
+            if (!pp || !np.next || !pp.next) return;
+            if (np.level === pp.level && Number(np.next.completed) > Number(pp.next.completed)) {
+                _emit('path-progressed', {
+                    id: np.id, name: np.name, level: np.level,
+                    next_level: np.next.level,
+                    completed: np.next.completed, required: np.next.required,
+                });
+            }
+        });
     }
 
     async function refresh() {
@@ -135,7 +182,8 @@
             ownership: 'exclusive-owner',
             safety: 'safe',
             commands: ['inspect', 'record-event', 'list-shop', 'buy-item', 'equip-item'],
-            events: ['challenge-completed', 'quest-completed', 'path-level-up', 'rank-changed',
+            events: ['challenge-completed', 'quest-completed', 'quest-progressed',
+                     'path-level-up', 'path-progressed', 'rank-changed',
                      'db-changed', 'calibration-completed', 'cosmetic-equipped'],
             description: 'Owns player progression: mastery rank, instrument-path challenges, daily/weekly quests, the Decibels wallet, and the cosmetics shop.',
             handlers: {

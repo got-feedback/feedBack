@@ -10,7 +10,7 @@ interchangeable forms:
    `.sloppak/`) containing the same files. Authoring form.
 
 The format is now published as **feedpak** at
-https://github.com/got-feedback/feedback-feedpak-spec — that spec is the
+https://github.com/got-feedback/feedpak-spec — that spec is the
 authoritative reference for the on-disk layout.
 
 **Naming / deprecation.** The format was renamed `sloppak` → `feedpak`. This

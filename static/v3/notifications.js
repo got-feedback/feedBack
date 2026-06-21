@@ -105,7 +105,10 @@
         return (hit && hit.name) || fallback || 'Path';
     };
 
-    sm.on('progression:quest-progressed', (q) => {
+    // The bus delivers a CustomEvent; the progression payload is e.detail
+    // (matches every other window.slopsmith.on consumer, e.g. progress.js).
+    sm.on('progression:quest-progressed', (e) => {
+        const q = e && e.detail;
         if (!q) return;
         fbNotify.show({
             icon: '🎯', accent: '#3B82F6',
@@ -114,7 +117,8 @@
         });
     });
 
-    sm.on('progression:quest-completed', (q) => {
+    sm.on('progression:quest-completed', (e) => {
+        const q = e && e.detail;
         if (!q) return;
         fbNotify.show({
             big: true, icon: '🏆', accent: '#FACC15',
@@ -123,7 +127,8 @@
         });
     });
 
-    sm.on('progression:path-progressed', (p) => {
+    sm.on('progression:path-progressed', (e) => {
+        const p = e && e.detail;
         if (!p) return;
         fbNotify.show({
             icon: '🎸', accent: '#22C55E',
@@ -132,7 +137,8 @@
         });
     });
 
-    sm.on('progression:path-level-up', (l) => {
+    sm.on('progression:path-level-up', (e) => {
+        const l = e && e.detail;
         if (!l) return;
         fbNotify.show({
             big: true, icon: '⭐', accent: '#F97316',
@@ -141,7 +147,8 @@
         });
     });
 
-    sm.on('progression:rank-changed', (r) => {
+    sm.on('progression:rank-changed', (e) => {
+        const r = e && e.detail;
         // Celebrate rank-UPs only (a per-source reset can lower it).
         if (!r || !(Number(r.to) > Number(r.from))) return;
         fbNotify.show({

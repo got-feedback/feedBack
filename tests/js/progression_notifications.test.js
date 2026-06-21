@@ -51,7 +51,10 @@ function load(progressionState) {
     };
     sandbox.window = sandbox;
     sandbox.document = fakeDom();
-    sandbox.window.slopsmith = { on: (name, fn) => { handlers[name] = fn; } };
+    // Deliver a CustomEvent-like wrapper ({detail}), exactly as the real bus
+    // does (capabilities.js: bus.on → addEventListener, fn gets a CustomEvent).
+    // Test call sites pass the raw payload; the handler must unwrap e.detail.
+    sandbox.window.slopsmith = { on: (name, fn) => { handlers[name] = (payload) => fn({ detail: payload }); } };
     sandbox.window.v3Progression = { get: () => progressionState };
     vm.createContext(sandbox);
     vm.runInContext(SRC, sandbox);

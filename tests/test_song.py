@@ -485,6 +485,73 @@ def test_template_voicing_tolerates_malformed(bad):
     assert arr.chord_templates[0].voicing == ""
 
 
+def test_template_caged_round_trip():
+    """A valid CAGED shape survives the template wire + arrangement round-trip."""
+    ct = ChordTemplate(name="Am", display_name="Am", fingers=[-1, 0, 2, 2, 1, 0],
+                       frets=[-1, 0, 2, 2, 1, 0], caged="E")
+    assert chord_template_to_wire(ct)["caged"] == "E"
+    arr = Arrangement(name="Rhythm", chord_templates=[ct])
+    assert arrangement_from_wire(arrangement_to_wire(arr)).chord_templates[0] == ct
+
+
+def test_template_caged_omitted_when_default():
+    """An empty caged (the default) produces no `caged` key."""
+    ct = ChordTemplate(name="Am", fingers=[-1] * 6, frets=[-1] * 6)
+    assert "caged" not in chord_template_to_wire(ct)
+    arr = arrangement_from_wire(arrangement_to_wire(
+        Arrangement(name="Rhythm", chord_templates=[ct])))
+    assert arr.chord_templates[0].caged == ""
+
+
+@pytest.mark.parametrize("bad", [None, 7, "X", "e", "", ["E"], {"c": "E"}])
+def test_template_caged_tolerates_malformed(bad):
+    """A non-enum caged on the wire falls back to the empty default."""
+    arr = arrangement_from_wire({
+        "name": "Rhythm",
+        "templates": [{"name": "Am", "fingers": [-1] * 6, "frets": [-1] * 6,
+                       "caged": bad}],
+    })
+    assert arr.chord_templates[0].caged == ""
+
+
+def test_template_guide_tones_round_trip():
+    """A non-empty guideTones list survives the template wire + round-trip."""
+    ct = ChordTemplate(name="G7", display_name="G7", fingers=[3, 2, 0, 0, 0, 1],
+                       frets=[3, 2, 0, 0, 0, 1], guide_tones=[4, 10])
+    assert chord_template_to_wire(ct)["guideTones"] == [4, 10]
+    arr = Arrangement(name="Rhythm", chord_templates=[ct])
+    assert arrangement_from_wire(arrangement_to_wire(arr)).chord_templates[0] == ct
+
+
+def test_template_guide_tones_omitted_when_default():
+    """An empty guide_tones (the default) produces no `guideTones` key."""
+    ct = ChordTemplate(name="Am", fingers=[-1] * 6, frets=[-1] * 6)
+    assert "guideTones" not in chord_template_to_wire(ct)
+    arr = arrangement_from_wire(arrangement_to_wire(
+        Arrangement(name="Rhythm", chord_templates=[ct])))
+    assert arr.chord_templates[0].guide_tones == []
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, []),
+    (12, []),
+    ("4,10", []),
+    ([12], []),
+    ([-1], []),
+    ([True, 3], [3]),          # bool is an int subclass — rejected
+    ([4, "x", 10, 11], [4, 10, 11]),
+    ([0, 11], [0, 11]),        # boundary values kept
+])
+def test_template_guide_tones_tolerates_malformed(raw, expected):
+    """Non-int / out-of-range guideTones entries are dropped off the wire."""
+    arr = arrangement_from_wire({
+        "name": "Rhythm",
+        "templates": [{"name": "Am", "fingers": [-1] * 6, "frets": [-1] * 6,
+                       "guideTones": raw}],
+    })
+    assert arr.chord_templates[0].guide_tones == expected
+
+
 # ── Arrangement round-trip ───────────────────────────────────────────────────
 
 def test_arrangement_empty_round_trip():

@@ -68,6 +68,14 @@ class ChordTemplate:
     # Harmony annotation (§6.6) — key-independent voicing type, e.g. "open",
     # "triad", "shell", "drop2", "barre". Display/teaching only, never grading.
     voicing: str = ""
+    # Harmony annotation (§6.6) — the CAGED shape the fingering derives from,
+    # one of "C"/"A"/"G"/"E"/"D" ("" = unset). Display/teaching only, never grading.
+    caged: str = ""
+    # Harmony annotation (§6.6) — chromatic semitone offsets 0..11 above the
+    # chord root marking the quality-defining tones (e.g. dom7 -> [4, 10]).
+    # snake_case attr; rides the wire as camelCase "guideTones" (like
+    # display_name -> "displayName"). Display/teaching only, never grading.
+    guide_tones: list = field(default_factory=list)
 
 
 @dataclass
@@ -319,7 +327,32 @@ def chord_template_to_wire(ct: ChordTemplate) -> dict:
     # Harmony voicing (§6.6) — default-omitted, only when non-empty.
     if ct.voicing:
         out["voicing"] = ct.voicing
+    # CAGED shape + guide tones (§6.6) — default-omitted, mirroring voicing.
+    if ct.caged:
+        out["caged"] = ct.caged
+    if ct.guide_tones:
+        out["guideTones"] = list(ct.guide_tones)
     return out
+
+
+# §6.6 CAGED shape enum — the only values accepted off the wire.
+_CAGED_SHAPES = ("C", "A", "G", "E", "D")
+
+
+def _sanitize_caged(val) -> str:
+    """A wire `caged` is kept only when it is one of the CAGED shape letters;
+    anything else (None, int, list, unknown string) falls back to ""."""
+    return val if isinstance(val, str) and val in _CAGED_SHAPES else ""
+
+
+def _sanitize_guide_tones(val) -> list:
+    """A wire `guideTones` is kept only as the int entries in 0..11; non-list
+    input, non-ints (bool is an int subclass — rejected), and out-of-range
+    values are dropped so a malformed value can't round-trip."""
+    if not isinstance(val, list):
+        return []
+    return [v for v in val
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 11]
 
 
 def _wire_int_optional(v, default=-1):
@@ -883,7 +916,9 @@ def arrangement_from_wire(d: dict) -> Arrangement:
                           fingers=list(ct.get("fingers", [-1] * 6)),
                           frets=list(ct.get("frets", [-1] * 6)),
                           voicing=(ct.get("voicing")
-                                   if isinstance(ct.get("voicing"), str) else ""))
+                                   if isinstance(ct.get("voicing"), str) else ""),
+                          caged=_sanitize_caged(ct.get("caged")),
+                          guide_tones=_sanitize_guide_tones(ct.get("guideTones")))
             for ct in d.get("templates", [])
         ],
         # `phrases` is optional — absent on single-level sources / older

@@ -511,13 +511,18 @@ function createHighway() {
 
     /** Harmony annotations (§6.3.1 / §6.6): display labels for a chord's
      * harmonic function (the instance `fn.rn` Roman numeral) and its template
-     * `voicing` string. Returns '' for each when absent or malformed. Pure;
-     * node-tested and shared by both highways. Display/teaching only — MUST
-     * NEVER feed a grader (honesty rule). */
-    function chordHarmonyLabels(fn, voicing) {
+     * `voicing`, `caged` shape, and `guideTones`. Returns '' for each when
+     * absent or malformed; `caged`/`guideTones` come back pre-formatted
+     * ("CAGED: E" / "gt 4,10"). Pure; node-tested and shared by both highways.
+     * Display/teaching only — MUST NEVER feed a grader (honesty rule). */
+    function chordHarmonyLabels(fn, voicing, caged, guideTones) {
         const rn = (fn && typeof fn.rn === 'string') ? fn.rn.trim() : '';
         const vc = (typeof voicing === 'string') ? voicing.trim() : '';
-        return { rn, voicing: vc };
+        const cg = (typeof caged === 'string' && /^[CAGED]$/.test(caged.trim()))
+            ? 'CAGED: ' + caged.trim() : '';
+        const gt = Array.isArray(guideTones)
+            ? guideTones.filter(n => Number.isInteger(n) && n >= 0 && n <= 11) : [];
+        return { rn, voicing: vc, caged: cg, guideTones: gt.length ? 'gt ' + gt.join(',') : '' };
     }
 
     /** Teaching mark (§6.2.2): bucket drawn notes by their strum-group key `ch`.
@@ -2217,8 +2222,9 @@ function createHighway() {
             // class as sd/ch) so they don't clutter the default highway.
             // Display only — never grading.
             if (_showTeachingMarks && !ch.hd && p.scale > 0.15 && sorted.length > 0) {
-                const { rn, voicing } = chordHarmonyLabels(ch.fn, tmpl && tmpl.voicing);
-                if (rn || voicing) {
+                const { rn, voicing, caged, guideTones } = chordHarmonyLabels(
+                    ch.fn, tmpl && tmpl.voicing, tmpl && tmpl.caged, tmpl && tmpl.guideTones);
+                if (rn || voicing || caged || guideTones) {
                     const hx = hasNonZero
                         ? (xMin + xMax) / 2
                         : (sorted.length >= 2
@@ -2240,6 +2246,16 @@ function createHighway() {
                     if (voicing) {
                         ctx.fillStyle = '#7fd1ff';   // matches the fg teaching color
                         fillTextReadable(voicing, hx, stackY);
+                        stackY -= sz * 0.45;
+                    }
+                    if (caged) {
+                        ctx.fillStyle = '#a0ffa0';   // CAGED shape teaching color
+                        fillTextReadable(caged, hx, stackY);
+                        stackY -= sz * 0.45;
+                    }
+                    if (guideTones) {
+                        ctx.fillStyle = '#d0a0ff';   // guide-tone teaching color
+                        fillTextReadable(guideTones, hx, stackY);
                     }
                 }
             }

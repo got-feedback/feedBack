@@ -10302,8 +10302,9 @@
                         // teaching-marks opt-in (mirrors the 2D overlay). Display
                         // only — never grading.
                         if (_drawTeachingMarks && firstInShapeRun && !chordWireHighDensity(ch)) {
-                            const _h = chordHarmonyLabels(ch.fn, bundle.chordTemplates?.[ch.id]?.voicing);
-                            if (_h.rn || _h.voicing) {
+                            const _tmpl = bundle.chordTemplates?.[ch.id];
+                            const _h = chordHarmonyLabels(ch.fn, _tmpl?.voicing, _tmpl?.caged, _tmpl?.guideTones);
+                            if (_h.rn || _h.voicing || _h.caged || _h.guideTones) {
                                 const hlW = 24 * K * _textSizeMul;
                                 const hlH = 9 * K * _textSizeMul;
                                 const frameLeft = cx - width / 2;
@@ -10322,8 +10323,10 @@
                                     s.scale.set(hlW, hlH, 1);
                                     hy += hlH;
                                 };
-                                _drawHarmony(_h.rn, '#ffcc66');       // sd teaching color
-                                _drawHarmony(_h.voicing, '#7fd1ff');  // fg teaching color
+                                _drawHarmony(_h.rn, '#ffcc66');         // sd teaching color
+                                _drawHarmony(_h.voicing, '#7fd1ff');    // fg teaching color
+                                _drawHarmony(_h.caged, '#a0ffa0');      // CAGED shape teaching color
+                                _drawHarmony(_h.guideTones, '#d0a0ff'); // guide-tone teaching color
                             }
                         }
 
@@ -11390,13 +11393,19 @@
             return String(sd);
         }
         /** Harmony annotations (§6.3.1 / §6.6): display labels for a chord's
-         * function (instance `fn.rn` Roman numeral) and template `voicing`
-         * string. '' for each when absent/malformed. Pure; shared with the 2D
-         * highway and node-tested. Display only — never grading. */
-        function chordHarmonyLabels(fn, voicing) {
+         * function (instance `fn.rn` Roman numeral) and template `voicing`,
+         * `caged` shape, and `guideTones`. '' for each when absent/malformed;
+         * `caged`/`guideTones` come back pre-formatted ("CAGED: E" / "gt 4,10").
+         * Pure; shared with the 2D highway and node-tested. Display only — never
+         * grading. */
+        function chordHarmonyLabels(fn, voicing, caged, guideTones) {
             const rn = (fn && typeof fn.rn === 'string') ? fn.rn.trim() : '';
             const vc = (typeof voicing === 'string') ? voicing.trim() : '';
-            return { rn, voicing: vc };
+            const cg = (typeof caged === 'string' && /^[CAGED]$/.test(caged.trim()))
+                ? 'CAGED: ' + caged.trim() : '';
+            const gt = Array.isArray(guideTones)
+                ? guideTones.filter(n => Number.isInteger(n) && n >= 0 && n <= 11) : [];
+            return { rn, voicing: vc, caged: cg, guideTones: gt.length ? 'gt ' + gt.join(',') : '' };
         }
 
         function bnvSampleAt(bnv, t) {

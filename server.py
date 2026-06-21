@@ -3746,7 +3746,7 @@ def get_version():
                 version = version_file.read_text().strip()
             except (OSError, UnicodeDecodeError):
                 pass
-    default_source_url = "https://github.com/got-feedback/feedback"
+    default_source_url = "https://github.com/got-feedback/feedBack"
     # APP_SOURCE_URL / APP_LICENSE_URL flow straight into <a href> in the UI,
     # so validate with urllib.parse rather than a bare prefix check — a prefix
     # check accepts malformed values like "https://" (no host) which produce

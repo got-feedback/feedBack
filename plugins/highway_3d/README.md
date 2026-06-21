@@ -1,6 +1,6 @@
 # 3D Highway
 
-A 3D note highway visualization for [Slopsmith](https://github.com/got-feedback/feedback) — an alternative to the default 2D highway, with a sense of depth and perspective inspired by stage views in modern rhythm games.
+A 3D note highway visualization for [Slopsmith](https://github.com/got-feedback/feedBack) — an alternative to the default 2D highway, with a sense of depth and perspective inspired by stage views in modern rhythm games.
 
 ## What you get
 

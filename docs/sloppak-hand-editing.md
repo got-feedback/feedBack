@@ -4,7 +4,7 @@ A `.sloppak` is just a zip of plain files: some YAML, some JSON, some OGG audio,
 
 This guide walks through the most common edits, aimed at musicians who are comfortable with a text editor and Audacity but don't live on the command line.
 
-> For the format **schema** (what every field means, how the wire format works, how to extend the format with new data types), see the authoritative [feedpak spec](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md) (the local [sloppak-spec.md](sloppak-spec.md) is now a pointer to it). This document is the **how-do-I-actually-edit-mine** companion.
+> For the format **schema** (what every field means, how the wire format works, how to extend the format with new data types), see the authoritative [feedpak spec](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md) (the local [sloppak-spec.md](sloppak-spec.md) is now a pointer to it). This document is the **how-do-I-actually-edit-mine** companion.
 
 ---
 
@@ -242,7 +242,7 @@ For 4-string bass, only indices 0–3 are meaningful; leave 4 and 5 at `0`.
 
 ### What *not* to put in `manifest.yaml`
 
-Don't add per-machine settings (audio device picks, MIDI port IDs), UI state, or your own play counts. The sloppak holds the song's authored data — anything that varies by user or machine lives in Slopsmith's config dir or the metadata DB. See [feedpak spec §9.5](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md#95-what-does-not-belong-in-a-feedpak) for the full list.
+Don't add per-machine settings (audio device picks, MIDI port IDs), UI state, or your own play counts. The sloppak holds the song's authored data — anything that varies by user or machine lives in Slopsmith's config dir or the metadata DB. See [feedpak spec §9.5](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md#95-what-does-not-belong-in-a-feedpak) for the full list.
 
 ---
 
@@ -261,6 +261,6 @@ For your own use, you can skip this entirely — Slopsmith reads the directory f
 
 ## Out of scope (for now)
 
-- **Authoring a sloppak from scratch** (no Guitar Pro / MusicXML source file) — that's a developer task. Start at [feedpak spec §8 (Reading and writing)](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md#8-reading-and-writing).
-- **Editing notes / chords in `arrangements/*.json`** — technically possible but extremely tedious by hand: hundreds of objects with short field names per song. The fields are documented in [feedpak spec §6 (Arrangement JSON)](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md#6-arrangement-json), but for any real chart edit you want the [Arrangement Editor plugin](https://github.com/got-feedback/feedback-plugin-editor).
+- **Authoring a sloppak from scratch** (no Guitar Pro / MusicXML source file) — that's a developer task. Start at [feedpak spec §8 (Reading and writing)](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md#8-reading-and-writing).
+- **Editing notes / chords in `arrangements/*.json`** — technically possible but extremely tedious by hand: hundreds of objects with short field names per song. The fields are documented in [feedpak spec §6 (Arrangement JSON)](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md#6-arrangement-json), but for any real chart edit you want the [Arrangement Editor plugin](https://github.com/got-feedback/feedBack-plugin-editor).
 - **Loudness normalization / advanced stem processing** — out of scope here; standard Audacity or ffmpeg workflows apply to any OGG file before you drop it into `stems/`.

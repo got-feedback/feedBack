@@ -3,7 +3,7 @@
 <img width="290" height="362" alt="grafik" src="https://github.com/user-attachments/assets/879440e9-b680-481b-9091-ddfa73319078" />
 
 
-A real-time guitar and bass tuner plugin for [Slopsmith](https://github.com/got-feedback/feedback).
+A real-time guitar and bass tuner plugin for [Slopsmith](https://github.com/got-feedback/feedBack).
 
 This plugin adds a floating "Tuner" button to the Slopsmith interface, providing a high-accuracy chromatic tuner with support for multiple presets, custom tunings, and automatic song tuning detection.
 

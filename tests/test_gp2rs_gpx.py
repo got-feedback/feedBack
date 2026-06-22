@@ -21,6 +21,7 @@ from gp2rs_gpx import (
     _safe_filename_stem,
     _note_is_tie,
     _note_has_vibrato,
+    _beat_has_tremolo,
     _note_midi,
     _gpx_percussion_midis,
     _gpx_tuning,
@@ -558,6 +559,55 @@ def test_convert_file_gp8_ascending_tuning_not_mirrored(tmp_path, monkeypatch):
     assert (5, 0) in placed   # high-e open note on RS string 5
 
 
+# Beat 0 carries a beat-level <Tremolo>; beat 1 does not. End-to-end proof that
+# the picked beat's note serializes tremolo="1" and the other stays "0".
+_GPIF_GUITAR_TREMOLO = """
+<GPIF>
+  <Score><Title>T</Title><Artist>A</Artist></Score>
+  <Tracks>
+    <Track id="0"><Name>Lead Guitar</Name>
+      <Property name="Tuning"><Pitches>40 45 50 55 59 64</Pitches></Property></Track>
+  </Tracks>
+  <MasterBars>
+    <MasterBar><Time>4/4</Time><Bars>0</Bars></MasterBar>
+  </MasterBars>
+  <Bars>
+    <Bar id="0"><Voices>0</Voices></Bar>
+  </Bars>
+  <Voices>
+    <Voice id="0"><Beats>0 1</Beats></Voice>
+  </Voices>
+  <Beats>
+    <Beat id="0"><Rhythm ref="r0"/><Tremolo>1/8</Tremolo><Notes>0</Notes></Beat>
+    <Beat id="1"><Rhythm ref="r0"/><Notes>1</Notes></Beat>
+  </Beats>
+  <Notes>
+    <Note id="0">
+      <Property name="String"><String>0</String></Property>
+      <Property name="Fret"><Fret>0</Fret></Property></Note>
+    <Note id="1">
+      <Property name="String"><String>5</String></Property>
+      <Property name="Fret"><Fret>0</Fret></Property></Note>
+  </Notes>
+  <Rhythms><Rhythm id="r0"><NoteValue>Quarter</NoteValue></Rhythm></Rhythms>
+</GPIF>
+"""
+
+
+def test_convert_file_gp8_tremolo_beat_flags_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(gp2rs_gpx, "_load_gpif", lambda _p: ET.fromstring(_GPIF_GUITAR_TREMOLO))
+    out_files = convert_file(
+        "dummy.gp", str(tmp_path),
+        track_indices=[0], arrangement_names={0: "Lead"},
+    )
+    root = ET.parse(out_files[0]).getroot()
+    tremolo_by_string = {int(n.get("string")): n.get("tremolo")
+                         for n in root.iter() if n.tag == "note"}
+    # Beat 0 note (RS string 0) was tremolo-picked; beat 1 note (string 5) wasn't.
+    assert tremolo_by_string[0] == "1"
+    assert tremolo_by_string[5] == "0"
+
+
 def test_vocal_pitch_sidecar_sorts_multi_voice_by_time():
     # Two voices in one bar. Voice 0 (traversed first) emits its lyric note at
     # t=0.5 (a no-lyric quarter precedes it); voice 1 (traversed second) emits
@@ -730,6 +780,40 @@ def test_note_vibrato_ignores_whammy_trembar_property():
                       '</Properties></Note>')
     tp = {p.get('name'): p for p in n.findall('.//Property')}
     assert _note_has_vibrato(n, tp) is False
+
+
+# ── _beat_has_tremolo (GP6/7/8 tremolo-picking import) ──────────────────────
+
+def test_beat_tremolo_direct_element():
+    # GPIF encodes tremolo picking as a direct <Tremolo>rate</Tremolo> child of
+    # <Beat> — the regression this fixes (GPX never read it). Rate-agnostic.
+    for rate in ("1/8", "1/16", "1/32"):
+        b = ET.fromstring(f'<Beat id="1"><Rhythm ref="1"/>'
+                          f'<Tremolo>{rate}</Tremolo></Beat>')
+        assert _beat_has_tremolo(b) is True
+
+
+def test_beat_tremolo_absent_is_false():
+    b = ET.fromstring('<Beat id="1"><Rhythm ref="1"/><Notes>1</Notes></Beat>')
+    assert _beat_has_tremolo(b) is False
+
+
+def test_beat_tremolo_is_direct_child_only():
+    # Matched as a direct child (not `.//`), so a <Tremolo> buried deeper must
+    # NOT trigger — guards against a false positive from unrelated nested markup.
+    b = ET.fromstring('<Beat id="1"><Properties>'
+                      '<Property name="X"><Tremolo>1/8</Tremolo></Property>'
+                      '</Properties></Beat>')
+    assert _beat_has_tremolo(b) is False
+
+
+def test_beat_tremolo_independent_of_whammy_trembar():
+    # VibratoWTremBar is the separate whammy-bar effect; a beat carrying only
+    # that (no <Tremolo>) is not tremolo picking.
+    b = ET.fromstring('<Beat id="1"><Properties>'
+                      '<Property name="VibratoWTremBar"><Strength>Slight</Strength></Property>'
+                      '</Properties></Beat>')
+    assert _beat_has_tremolo(b) is False
 
 
 # ── _gpif_left_fingering (GP7/GP8 per-note fret-hand finger -> fg) ───────────

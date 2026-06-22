@@ -722,6 +722,20 @@ def _note_has_vibrato(note_el: ET.Element, prop_map: dict) -> bool:
     return 'Vibrato' in prop_map or note_el.find('Vibrato') is not None
 
 
+def _beat_has_tremolo(beat_el: ET.Element) -> bool:
+    """True if a GP7/GP8 beat carries tremolo picking.
+
+    GPIF encodes tremolo picking as a DIRECT beat-level
+    ``<Tremolo>1/8</Tremolo>`` child of ``<Beat>`` (the value is the rate). The
+    RS note model has a single boolean tremolo flag with no rate, so the rate is
+    intentionally ignored — any tremolo-picked beat maps to note tremolo across
+    it. Matched as a direct child (not ``.//``) so it is never confused with the
+    whammy-bar ``VibratoWTremBar`` Property, a separate beat-level effect
+    handled elsewhere.
+    """
+    return beat_el.find('Tremolo') is not None
+
+
 # ---------------------------------------------------------------------------
 # list_tracks — mirrors gp2rs.list_tracks interface
 # ---------------------------------------------------------------------------
@@ -1695,6 +1709,17 @@ def convert_file(
                                         './/Property[@name="VibratoWTremBar"]') is not None:
                                     for _bn in beat_rs_notes:
                                         _bn.vibrato = True
+
+                                # Tremolo picking: GP7/GP8 encodes the rate as a
+                                # beat-level <Tremolo>1/8</Tremolo> child. The note
+                                # model has a single tremolo flag (no rate), so map
+                                # any tremolo-picked beat to note tremolo across it.
+                                # Independent of vibrato above — a note can carry
+                                # both. (Beat-level <Tremolo>, not the whammy
+                                # VibratoWTremBar Property, which is handled above.)
+                                if _beat_has_tremolo(beat_el):
+                                    for _bn in beat_rs_notes:
+                                        _bn.tremolo = True
 
                                 if len(beat_rs_notes) == 1:
                                     rs_notes.append(beat_rs_notes[0])

@@ -98,9 +98,9 @@
         section_map: 'practice', sectionmap: 'practice', stepmode: 'practice',
         guitar_theory: 'practice', fretboard: 'practice', tabview: 'practice',
         lyrics_karaoke: 'practice', chordgem: 'practice', player_guide: 'practice',
-        the_daily: 'practice', tutorials: 'practice',
+        the_daily: 'practice', tutorials: 'practice', virtuoso: 'practice',
         // games
-        flappy_bend: 'game', minigames: 'game', slopscale: 'game', chord_sprint: 'game',
+        flappy_bend: 'game', minigames: 'game', chord_sprint: 'game',
         // tools — import / manage / utility
         editor: 'tools', tabimport: 'tools', sloppak_converter: 'tools',
         profileimport: 'tools', find_more: 'tools', themes: 'tools',

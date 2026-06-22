@@ -3239,6 +3239,8 @@ async function loadSettings() {
     document.getElementById('demucs-server-url').value = data.demucs_server_url || '';
     const leftyEl = document.getElementById('setting-lefty');
     if (leftyEl) leftyEl.checked = highway.getLefty();
+    const autoplayExitEl = document.getElementById('setting-autoplay-exit');
+    if (autoplayExitEl) autoplayExitEl.checked = _autoplayExitEnabled();
     // Restore master-difficulty slider from persisted value (defaults
     // to 100 when the key is absent — no behaviour change for users
     // who've never touched the slider).
@@ -5693,6 +5695,135 @@ document.addEventListener('visibilitychange', () => {
     }
 });
 
+// ── Autoplay & auto-exit (global option, default ON) ──────────────────
+// One toggle (`autoplayExit` in localStorage) that (a) auto-starts a song
+// once it's ready and (b) returns to the launching menu when the song
+// ends. Absence of the key means enabled. The behaviour lives in core
+// (app.js, shared by the v3 + classic UIs); the end-of-song *score*
+// screen, when present, is a plugin and hooks the contract below.
+function _autoplayExitEnabled() {
+    try { return localStorage.getItem('autoplayExit') !== '0'; } catch (_) { return true; }
+}
+// Settings checkbox setter (onchange="setAutoplayExit(this.checked)").
+window.setAutoplayExit = function (on) {
+    try { localStorage.setItem('autoplayExit', on ? '1' : '0'); } catch (_) { /* private mode */ }
+    const el = document.getElementById('setting-autoplay-exit');
+    if (el && el.checked !== !!on) el.checked = !!on;
+};
+// Read-only view for plugins (e.g. a scoring plugin deciding whether to
+// auto-return after its results screen closes).
+Object.defineProperty(window.slopsmith, 'autoplayExit', {
+    get: _autoplayExitEnabled, configurable: true,
+});
+// One-shot launcher override for the player's return destination.
+window.slopsmith.setReturnScreen = function (id) {
+    window.slopsmith._nextReturnScreen = id || null;
+};
+// Resolve where the player should return on Esc / close / auto-exit.
+// A one-shot setReturnScreen() override wins (consumed here) — used by the
+// lessons catalog so a lesson returns to the lessons screen rather than the
+// library, even though the external tutorials plugin owns the playSong call.
+// Otherwise remember the actual launch screen; the element-exists guard
+// keeps the classic v2 UI (no #v3-* ids) from being stranded on a missing
+// screen, and unknown launches fall back to 'home'. The dashboard — classic
+// 'home' and the v3 shell's 'v3-home' — returns to the Songs list when it
+// exists (dashboard actions call playSong() directly, so its id is the
+// active screen at launch).
+function _resolvePlayerOrigin() {
+    const override = window.slopsmith && window.slopsmith._nextReturnScreen;
+    if (window.slopsmith) window.slopsmith._nextReturnScreen = null;
+    if (override && document.getElementById(override)) return override;
+    const launchFrom = document.querySelector('.screen.active');
+    const launchId = launchFrom && launchFrom.id;
+    if (launchId && launchId !== 'player' && document.getElementById(launchId)) {
+        return ((launchId === 'home' || launchId === 'v3-home') && document.getElementById('v3-songs'))
+            ? 'v3-songs' : launchId;
+    }
+    return 'home';
+}
+
+// Autoplay: one-shot flag armed by each fresh playSong(), consumed by the
+// next song:ready. song:ready also fires on arrangement switches / seeks,
+// which never arm the flag, so those don't auto-restart.
+let _pendingAutostart = false;
+window.slopsmith.on('song:ready', () => {
+    if (!_pendingAutostart) return;
+    _pendingAutostart = false;
+    if (!_autoplayExitEnabled() || isPlaying) return;
+    // Reuse the Play button's start path (handles HTML5 + _juceMode + count-in).
+    Promise.resolve(togglePlay()).catch((err) => console.warn('[app] autoplay failed:', err));
+});
+
+// Auto-exit: when the song ends, return to the launching menu. A scoring
+// plugin that shows an end-of-song results screen calls holdAutoExit() to
+// defer this; the user closing that screen (its Close button calls
+// window.closeCurrentSong()) performs the exit. With no results screen the
+// grace timer returns to the menu on its own.
+const AUTO_EXIT_GRACE_MS = 1500;
+let _autoExitTimer = null;
+let _autoExitHeld = false;
+// Bumped every time the auto-exit state is reset (new song via playSong, and
+// each song:ended). A hold's release() captures the generation at hold time
+// and no-ops once it changes, so a plugin that drops or fires its release
+// handle after the player has moved on can never navigate a fresh session —
+// callers don't need to balance the handle.
+let _autoExitGen = 0;
+function _clearAutoExit() {
+    if (_autoExitTimer) { clearTimeout(_autoExitTimer); _autoExitTimer = null; }
+    _autoExitHeld = false;
+    _autoExitGen++;
+}
+// Heuristic safety net for score-screen plugins that don't (yet) call
+// holdAutoExit(): if a visible full-screen results/dialog overlay is on top
+// when the grace timer fires, defer the auto-return and let that screen's
+// own close button drive the exit (its Close should call closeCurrentSong).
+// getClientRects() is used for the visibility test because it reports
+// position:fixed overlays correctly, unlike offsetParent.
+function _resultsOverlayVisible() {
+    let nodes;
+    try {
+        nodes = document.querySelectorAll('[role="dialog"][aria-modal="true"], .fixed.inset-0');
+    } catch (_) { return false; }
+    for (const el of nodes) {
+        if (!el || el.id === 'player') continue;            // never the player itself
+        if (el.classList && el.classList.contains('hidden')) continue;
+        if (el.getClientRects && el.getClientRects().length > 0) return true;
+    }
+    return false;
+}
+// Plugins call this synchronously from their own song:ended handler (core
+// runs first, so the timer is already pending) to claim the exit.
+window.slopsmith.holdAutoExit = function () {
+    if (_autoExitTimer) { clearTimeout(_autoExitTimer); _autoExitTimer = null; }
+    _autoExitHeld = true;
+    const gen = _autoExitGen;
+    let released = false;
+    return function release() {
+        // No-op once released, or once the session has moved on (a newer
+        // playSong / song:ended bumped the generation) — so a stale handle
+        // never navigates away from a fresh song.
+        if (released || gen !== _autoExitGen) return;
+        released = true;
+        if (typeof window.closeCurrentSong === 'function') window.closeCurrentSong();
+    };
+};
+window.slopsmith.on('song:ended', () => {
+    _clearAutoExit();
+    if (!_autoplayExitEnabled()) return;
+    // Only auto-exit from the player screen (ignore stale/duplicate ends).
+    const active = document.querySelector('.screen.active');
+    if (!active || active.id !== 'player') return;
+    _autoExitTimer = setTimeout(() => {
+        _autoExitTimer = null;
+        if (_autoExitHeld) return;            // a plugin explicitly claimed the exit
+        if (_resultsOverlayVisible()) return; // a score/results overlay is up; let it drive the exit
+        const cur = document.querySelector('.screen.active');
+        if (cur && cur.id === 'player' && typeof window.closeCurrentSong === 'function') {
+            window.closeCurrentSong();
+        }
+    }, AUTO_EXIT_GRACE_MS);
+});
+
 // Abort controller for cancelling pending requests when entering player
 let artAbortController = null;
 
@@ -5750,21 +5881,14 @@ async function playSong(filename, arrangement, options) {
     _hideSectionPracticeBar();
 
     currentFilename = filename;
+    // A fresh load arms autoplay; a pending auto-exit from the previous
+    // song is no longer relevant.
+    _pendingAutostart = true;
+    _clearAutoExit();
     // Remember which screen the player was launched from so Esc /
-    // navigation back from the player returns the user there
-    // (slopsmith#126). Falls back to 'home' if launched from
-    // somewhere unexpected (settings, a plugin screen, etc.).
-    const _launchFrom = document.querySelector('.screen.active');
-    const _launchId = _launchFrom && _launchFrom.id;
-    const _origin = (_launchId === 'v3-songs' || _launchId === 'home' || _launchId === 'favorites')
-        ? _launchId : 'home';
-    // In the v3 shell, `home` launches return to the v3 Songs screen. But this
-    // file is shared with the classic v2 UI, where #v3-songs does not exist —
-    // remapping there would make Esc call showScreen('v3-songs'), which throws
-    // on the missing element and strands the user on a blank screen. Only remap
-    // when the target screen is actually present.
-    _playerOriginScreen = (_origin === 'home' && document.getElementById('v3-songs'))
-        ? 'v3-songs' : _origin;
+    // navigation back from the player (and auto-exit) returns the user
+    // there (slopsmith#126).
+    _playerOriginScreen = _resolvePlayerOrigin();
     showScreen('player');
 
     // Wait for previous WebSocket to fully close before opening new one

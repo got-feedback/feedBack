@@ -146,6 +146,9 @@ function loadPlaySong(sandbox) {
         var isPlaying = true;
         var currentFilename = null;
         var _playerOriginScreen = null;
+        var _pendingAutostart = false;
+        function _clearAutoExit() {}
+        function _resolvePlayerOrigin() { return 'home'; }
         function _recordPlaybackBridge() {}
         function _cancelCountIn() {}
         function _resetJuceAudioShimChain() {}

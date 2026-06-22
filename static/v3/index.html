@@ -403,6 +403,13 @@
                             </label>
                         </div>
                         <div>
+                            <label class="flex items-center gap-3 cursor-pointer select-none">
+                                <input type="checkbox" id="setting-autoplay-exit" checked onchange="setAutoplayExit(this.checked)"
+                                    class="rounded border-gray-600 bg-dark-700 text-accent focus:ring-accent/40">
+                                <span class="text-sm text-gray-300">Autoplay &amp; auto-exit <span class="text-gray-500">(start songs/lessons automatically and return to the menu when the score screen closes)</span></span>
+                            </label>
+                        </div>
+                        <div>
                             <label class="text-sm font-medium text-gray-400 mb-2 block">Default Arrangement</label>
                             <select id="default-arrangement"
                                 onchange="persistSetting('default_arrangement', this.value)"

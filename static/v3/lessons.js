@@ -218,6 +218,33 @@
     // ── navigation into the plugin's own lesson view ─────────────────────---
     function launchLesson(packId, lessonId) {
         if (!packId || !lessonId) return;
+        // When the lesson's song auto-exits (or the player is closed), return
+        // to the lessons catalog to pick the next one — not the song library.
+        // playSong() consumes this one-shot override even though the external
+        // tutorials plugin owns the actual playSong call. The legitimate path
+        // is lessons → plugin-tutorials → player; if the launch is abandoned
+        // (plugin missing, deep-link fails, user backs out) the override would
+        // otherwise linger and mis-route the next library song. So clear it on
+        // the first navigation that leaves the launch flow (any screen other
+        // than the tutorials waypoint or the player that consumes it).
+        try {
+            if (window.slopsmith && typeof window.slopsmith.setReturnScreen === 'function') {
+                window.slopsmith.setReturnScreen('v3-lessons');
+                if (sm && typeof sm.on === 'function' && typeof sm.off === 'function') {
+                    const clearStale = (e) => {
+                        const id = e && e.detail && e.detail.id;
+                        if (id === 'plugin-tutorials') return; // expected waypoint — keep waiting
+                        // 'player' means playSong already consumed the override;
+                        // anything else means the launch was abandoned.
+                        if (id !== 'player' && window.slopsmith._nextReturnScreen === 'v3-lessons') {
+                            window.slopsmith.setReturnScreen(null);
+                        }
+                        sm.off('screen:changed', clearStale);
+                    };
+                    sm.on('screen:changed', clearStale);
+                }
+            }
+        } catch (_e) { /* non-fatal */ }
         // navigate() stores nav params AND calls showScreen(); the tutorials
         // plugin's init() reads getNavParams() to deep-link to {packId, lessonId}.
         if (sm && typeof sm.navigate === 'function') {

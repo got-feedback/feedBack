@@ -2703,6 +2703,14 @@
         // that CSS-box drift and re-frame, instead of the user having to
         // un/re-maximize the window.
         let _appliedW = 0, _appliedH = 0;
+        // True once applySize() has pinned the .h3d-wrap overlay to the
+        // highway canvas's offset box. Stays false while the canvas has no
+        // layout yet (init() can run before #highway has a real box, where
+        // applySize falls back to the parent-panel size and only sets the
+        // wrap height). The rAF loop re-pins once the canvas lays out even
+        // when the logical render size is unchanged — otherwise the overlay
+        // would stay at top:0;left:0;right:0 and expose a strip of #highway.
+        let _wrapPinned = false;
         let mBeatM = null, mBeatQ = null;
         let txtCache = {};
         // Cloned sprite materials cached on individual sprite instances
@@ -12959,8 +12967,14 @@
                 wrap.style.right = 'auto';
                 wrap.style.width = highwayCanvas.offsetWidth + 'px';
                 wrap.style.height = highwayCanvas.offsetHeight + 'px';
+                _wrapPinned = true;
             } else {
+                // Canvas not laid out yet (e.g. init ran before #highway had a
+                // real box and canvasSize() fell back to the parent panel).
+                // Only the height is meaningful here; leave _wrapPinned false
+                // so the rAF loop re-pins once the canvas materializes.
                 wrap.style.height = h + 'px';
+                _wrapPinned = false;
             }
             if (lyricsCanvas) { lyricsCanvas.width = w; lyricsCanvas.height = h; }
             _diagRenderCache.clear();
@@ -13340,6 +13354,17 @@
                     } else if (box.w > 0 && box.h > 0 &&
                             (Math.abs(box.w - _appliedW) > 1 || Math.abs(box.h - _appliedH) > 1)) {
                         applySize(box.w, box.h);
+                    } else if (!_wrapPinned && box.w > 0 && box.h > 0 &&
+                            highwayCanvas.offsetWidth > 0 && highwayCanvas.offsetHeight > 0) {
+                        //  3. The overlay pin couldn't be applied at init because
+                        //     #highway had no layout yet (offsetWidth/Height === 0),
+                        //     so applySize() only set the wrap height. The canvas has
+                        //     now laid out but to the same logical size, so neither
+                        //     drift branch above fires — re-run applySize to pin the
+                        //     wrap to the canvas box now that its offsets are real.
+                        //     Otherwise the overlay stays at top:0;left:0;right:0 and
+                        //     a strip of #highway is exposed on first load / split.
+                        applySize(box.w, box.h);
                     }
                 }
                 update(bundle);
@@ -13517,6 +13542,7 @@
                 _destroyed = true; _isReady = false; _diagChord = null; _diagPrev = null; _diagLastKey = null; _diagRenderCache.clear();
                 _lastHwW = 0; _lastHwH = 0;
                 _appliedW = 0; _appliedH = 0;
+                _wrapPinned = false;
                 _unsubscribeFocus(); teardown();
                 highwayCanvas = null;
             },

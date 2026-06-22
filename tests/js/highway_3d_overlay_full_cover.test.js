@@ -52,5 +52,28 @@ test('applySize pins the .h3d-wrap overlay to the highway canvas offset box', ()
 test('applySize falls back to the computed height when the canvas is not laid out', () => {
     const src = fs.readFileSync(screenJs, 'utf8');
     const fn = extractBlock(src, 'function applySize(w, h)');
-    assert.match(fn, /else\s*\{\s*wrap\.style\.height\s*=\s*h\s*\+\s*['"]px['"]/, 'must keep the computed-height fallback');
+    assert.match(fn, /else\s*\{\s*[\s\S]*wrap\.style\.height\s*=\s*h\s*\+\s*['"]px['"]/, 'must keep the computed-height fallback');
+});
+
+test('applySize records whether the overlay pin was applied (_wrapPinned)', () => {
+    const src = fs.readFileSync(screenJs, 'utf8');
+    const fn = extractBlock(src, 'function applySize(w, h)');
+    // Pin path sets the flag true; the not-laid-out fallback sets it false
+    // so the rAF loop knows the pin is still pending.
+    assert.match(fn, /_wrapPinned\s*=\s*true/, 'pin path must set _wrapPinned = true');
+    assert.match(fn, /_wrapPinned\s*=\s*false/, 'fallback path must set _wrapPinned = false');
+});
+
+test('the rAF loop re-pins the overlay once the canvas lays out (Codex P1)', () => {
+    // When init() pins via the parent-panel fallback (offset box still 0) and
+    // the canvas later lays out to the SAME logical size, neither size-drift
+    // branch fires. A dedicated branch must re-run applySize so the overlay
+    // gets pinned to the now-real canvas box instead of leaving the exposed
+    // strip the fix was meant to close.
+    const src = fs.readFileSync(screenJs, 'utf8');
+    assert.match(
+        src,
+        /else if\s*\(\s*!_wrapPinned\s*&&\s*box\.w\s*>\s*0\s*&&\s*box\.h\s*>\s*0\s*&&\s*highwayCanvas\.offsetWidth\s*>\s*0\s*&&\s*highwayCanvas\.offsetHeight\s*>\s*0\s*\)\s*\{\s*[\s\S]*?applySize\(\s*box\.w\s*,\s*box\.h\s*\)\s*;/,
+        'must re-pin via applySize when !_wrapPinned and the canvas has laid out',
+    );
 });

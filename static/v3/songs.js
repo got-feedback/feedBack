@@ -619,6 +619,33 @@
         }, { passive: true });
     }
 
+    // Pin the sticky toolbar directly beneath the sticky topbar. Both live in
+    // the #v3-main scroller, so without an explicit offset they share top:0 and
+    // the toolbar covers the topbar's song search. The topbar has two responsive
+    // rows, so its height is measured (and re-measured on resize) instead of
+    // hard-coded.
+    function positionToolbar() {
+        const topbar = document.getElementById('v3-topbar');
+        const bar = document.getElementById('v3-songs-toolbar');
+        if (!topbar || !bar) return;
+        bar.style.top = topbar.offsetHeight + 'px';
+    }
+    function bindToolbarReflow() {
+        if (state.resizeBound) return;
+        const topbar = document.getElementById('v3-topbar');
+        if (!topbar) return;
+        state.resizeBound = true;
+        // Observe the topbar itself: its height changes with viewport width AND
+        // when the song search is toggled in/out on screen changes. ResizeObserver
+        // fires once on observe(), so this also fixes up the initial position
+        // regardless of render() vs syncActive() ordering.
+        if (typeof ResizeObserver === 'function') {
+            new ResizeObserver(positionToolbar).observe(topbar);
+        } else {
+            window.addEventListener('resize', positionToolbar, { passive: true });
+        }
+    }
+
     // ── Tree ────────────────────────────────────────────────────────────────
     async function loadTree() {
         const host = document.getElementById('v3-songs-tree');
@@ -790,7 +817,7 @@
 
         root.innerHTML =
             '<div class="max-w-7xl mx-auto px-6 md:px-8 pb-8">' +
-            '<div class="sticky top-0 z-20 -mx-6 md:-mx-8 px-6 md:px-8 py-3 mb-4 bg-fb-sidebar/95 backdrop-blur border-b border-fb-border/40">' +
+            '<div id="v3-songs-toolbar" class="sticky z-20 -mx-6 md:-mx-8 px-6 md:px-8 py-3 mb-4 bg-fb-sidebar/95 backdrop-blur border-b border-fb-border/40">' +
             '<div class="flex flex-col md:flex-row md:items-end justify-between gap-4">' +
             '<div><p class="text-fb-textDim text-sm" id="v3-songs-count"></p></div>' +
             '<div class="flex flex-wrap gap-2">' +
@@ -870,6 +897,8 @@
         // before it tries to page deeper.
         await setView(state.view);
         bindScroll();
+        positionToolbar();
+        bindToolbarReflow();
         updateFilterBadge();
         state.built = true;
     }

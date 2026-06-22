@@ -112,6 +112,10 @@
             el.classList.toggle('text-fb-textDim', !on);
         });
         setTopbarTitle(titleFor(screenId));
+        // Show the song search only on the library screen. Everywhere else the
+        // box is irrelevant (and would silently no-op against v3Songs.search).
+        const searchWrap = document.getElementById('v3-search-wrap');
+        if (searchWrap) searchWrap.classList.toggle('hidden', screenId !== 'v3-songs');
         // NOTE: we deliberately do NOT reflect the screen into location.hash on
         // every navigation. app.js's audio 'error' handler suppresses empty-src
         // errors only when `audio.src === window.location.href`; a `#/...`
@@ -173,13 +177,16 @@
     function renderTopbar() {
         const bar = document.getElementById('v3-topbar');
         if (!bar) return;
-        bar.className = 'sticky top-0 z-20 bg-fb-sidebar/80 backdrop-blur';
+        bar.className = 'sticky top-0 z-30 bg-fb-sidebar/80 backdrop-blur';
         bar.innerHTML =
             // Row 1 — top utility bar: search.
             '<div class="flex items-center gap-4 px-4 md:px-8 pt-4">' +
             '<button id="v3-hamburger" class="md:hidden text-fb-textDim hover:text-fb-text shrink-0" aria-label="Menu">' +
             '<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>' +
-            '<div class="flex-1 max-w-md relative">' +
+            // Search is scoped to the library — syncActive() toggles `hidden` on
+            // this wrapper so it only shows on the v3-songs screen. It lives in
+            // the sticky topbar, so it stays put while the song grid scrolls.
+            '<div id="v3-search-wrap" class="flex-1 max-w-md relative hidden">' +
             '<svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-fb-textDim" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M21 21l-4-4"/></svg>' +
             '<input id="v3-search" type="search" placeholder="Search songs…" aria-label="Search songs" ' +
             'class="w-full bg-gray-800/50 border border-gray-700 rounded-md pl-10 pr-4 py-2 text-sm ' +

@@ -12957,16 +12957,31 @@
             // falls short of #highway — leaving a strip of the canvas exposed
             // (the reported gap, where the previous renderer's frame showed
             // through). The wrap is a sibling of highwayCanvas, so they share
-            // an offset parent; tracking the canvas's offset box keeps the
-            // overlay flush in single-player and splitscreen alike. Guarded on
-            // a laid-out canvas (offsetWidth/Height > 0); otherwise fall back
-            // to the computed height and the static top:0/left:0/right:0.
+            // an offset parent; tracking the canvas's box keeps the overlay
+            // flush in single-player and splitscreen alike.
+            //
+            // Derive the box from the SAME getBoundingClientRect measurements
+            // that drive ren.setSize(w, h) — NOT integer offsetTop/Width — so
+            // the overlay matches the renderer exactly. Under browser zoom or
+            // fractional flex layouts the canvas lands on sub-pixel bounds;
+            // offsetWidth/Top round to whole pixels and would leave the wrap up
+            // to 1px short of (or shifted from) the canvas, reopening the
+            // exposed edge strip. Position is taken relative to the containing
+            // block's padding edge (clientTop/Left strip the parent's border),
+            // which is what `top`/`left` resolve against for the absolutely
+            // positioned wrap. Guarded on a laid-out canvas (offsetWidth/Height
+            // > 0); otherwise fall back to the static top:0/left:0/right:0.
             if (highwayCanvas && highwayCanvas.offsetWidth > 0 && highwayCanvas.offsetHeight > 0) {
-                wrap.style.top = highwayCanvas.offsetTop + 'px';
-                wrap.style.left = highwayCanvas.offsetLeft + 'px';
+                const _pinParent = wrap.offsetParent || highwayCanvas.parentNode;
+                const _cr = highwayCanvas.getBoundingClientRect();
+                const _pr = _pinParent ? _pinParent.getBoundingClientRect() : { top: 0, left: 0 };
+                const _pbTop = _pinParent ? _pinParent.clientTop : 0;
+                const _pbLeft = _pinParent ? _pinParent.clientLeft : 0;
+                wrap.style.top = (_cr.top - _pr.top - _pbTop) + 'px';
+                wrap.style.left = (_cr.left - _pr.left - _pbLeft) + 'px';
                 wrap.style.right = 'auto';
-                wrap.style.width = highwayCanvas.offsetWidth + 'px';
-                wrap.style.height = highwayCanvas.offsetHeight + 'px';
+                wrap.style.width = _cr.width + 'px';
+                wrap.style.height = _cr.height + 'px';
                 _wrapPinned = true;
             } else {
                 // Canvas not laid out (e.g. init ran before #highway had a real

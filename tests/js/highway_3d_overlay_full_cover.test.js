@@ -31,7 +31,7 @@ function extractBlock(src, signature) {
     return src.slice(start, i);
 }
 
-test('applySize pins the .h3d-wrap overlay to the highway canvas offset box', () => {
+test('applySize pins the .h3d-wrap overlay to the highway canvas rect box', () => {
     const src = fs.readFileSync(screenJs, 'utf8');
     const fn = extractBlock(src, 'function applySize(w, h)');
     // Guarded on a laid-out canvas so we never pin to a zero box.
@@ -40,11 +40,17 @@ test('applySize pins the .h3d-wrap overlay to the highway canvas offset box', ()
         /highwayCanvas\s*&&\s*highwayCanvas\.offsetWidth\s*>\s*0\s*&&\s*highwayCanvas\.offsetHeight\s*>\s*0/,
         'must guard the pin on a laid-out canvas (offsetWidth/Height > 0)',
     );
-    // Track top/left and size to the canvas's own offset box.
-    assert.match(fn, /wrap\.style\.top\s*=\s*highwayCanvas\.offsetTop/, 'must track canvas offsetTop');
-    assert.match(fn, /wrap\.style\.left\s*=\s*highwayCanvas\.offsetLeft/, 'must track canvas offsetLeft');
-    assert.match(fn, /wrap\.style\.width\s*=\s*highwayCanvas\.offsetWidth/, 'must size to canvas offsetWidth');
-    assert.match(fn, /wrap\.style\.height\s*=\s*highwayCanvas\.offsetHeight/, 'must size to canvas offsetHeight');
+    // Size/position must come from getBoundingClientRect (fractional, matches
+    // ren.setSize), NOT integer offset* props which round and reopen the strip.
+    assert.match(fn, /highwayCanvas\.getBoundingClientRect\(\)/, 'must measure the canvas via getBoundingClientRect');
+    assert.doesNotMatch(fn, /wrap\.style\.width\s*=\s*highwayCanvas\.offsetWidth/, 'must NOT size to integer offsetWidth');
+    assert.doesNotMatch(fn, /wrap\.style\.height\s*=\s*highwayCanvas\.offsetHeight/, 'must NOT size to integer offsetHeight');
+    // Width/height set from the rect; position is parent-relative (padding edge).
+    assert.match(fn, /wrap\.style\.width\s*=\s*_cr\.width/, 'must size width to the canvas rect width');
+    assert.match(fn, /wrap\.style\.height\s*=\s*_cr\.height/, 'must size height to the canvas rect height');
+    assert.match(fn, /wrap\.style\.top\s*=\s*\(\s*_cr\.top\s*-\s*_pr\.top\s*-\s*_pbTop\s*\)/, 'top must be canvas rect relative to the containing block padding edge');
+    assert.match(fn, /wrap\.style\.left\s*=\s*\(\s*_cr\.left\s*-\s*_pr\.left\s*-\s*_pbLeft\s*\)/, 'left must be canvas rect relative to the containing block padding edge');
+    assert.match(fn, /clientTop/, 'must strip the parent border via clientTop');
     // right:0 must be released so the explicit width takes effect.
     assert.match(fn, /wrap\.style\.right\s*=\s*['"]auto['"]/, "must release right:0 (set 'auto') when pinning width");
 });

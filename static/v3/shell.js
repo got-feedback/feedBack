@@ -40,7 +40,7 @@
         // other plugins are reached solely via the single "Plugins" entry
         // above. Screens are injected async by the plugin loader, so go()'s
         // plugin- guard applies.
-        { key: 'slopscale',   screen: 'plugin-slopscale',   label: 'SlopScale - Practice', group: null, icon: 'target' },
+        { key: 'virtuoso',    screen: 'plugin-virtuoso',    label: 'Virtuoso - Practice', group: null, icon: 'target' },
         { key: 'rig_builder', screen: 'plugin-rig_builder', label: 'Rig Builder', group: null,      icon: 'amp' },
         { key: 'editor',      screen: 'plugin-editor',      label: 'Song Editor', group: null,      icon: 'edit' },
         // Not in the sidebar groups, but routable (profile badge → here).
@@ -51,7 +51,7 @@
     // group); a key that's the last item of the last group lands right after
     // that group. Each is gated on the plugin actually being installed.
     const PROMOTED_PLUGINS = [
-        { navKey: 'slopscale',   pluginId: 'slopscale',   slotId: 'v3-nav-slopscale',    anchorAfter: 'feedbarcade' },
+        { navKey: 'virtuoso',    pluginId: 'virtuoso',    slotId: 'v3-nav-virtuoso',    anchorAfter: 'feedbarcade' },
         { navKey: 'rig_builder', pluginId: 'rig_builder', slotId: 'v3-nav-rig-builder', anchorAfter: 'saved' },
         { navKey: 'editor',      pluginId: 'editor',      slotId: 'v3-nav-editor',     anchorAfter: 'songs' },
     ];

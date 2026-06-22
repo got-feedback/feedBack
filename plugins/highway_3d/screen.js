@@ -12969,10 +12969,17 @@
                 wrap.style.height = highwayCanvas.offsetHeight + 'px';
                 _wrapPinned = true;
             } else {
-                // Canvas not laid out yet (e.g. init ran before #highway had a
-                // real box and canvasSize() fell back to the parent panel).
-                // Only the height is meaningful here; leave _wrapPinned false
-                // so the rAF loop re-pins once the canvas materializes.
+                // Canvas not laid out (e.g. init ran before #highway had a real
+                // box, or a panel hide/show where canvasSize() falls back to the
+                // parent panel). Reset to the static anchor — if we had pinned
+                // before, the old top/left/right:auto/width would otherwise stay
+                // and the wrap would reappear at a stale horizontal position on
+                // the next show. Leave _wrapPinned false so the rAF loop re-pins
+                // once the canvas materializes again.
+                wrap.style.top = '0';
+                wrap.style.left = '0';
+                wrap.style.right = '0';
+                wrap.style.width = 'auto';
                 wrap.style.height = h + 'px';
                 _wrapPinned = false;
             }

@@ -49,10 +49,19 @@ test('applySize pins the .h3d-wrap overlay to the highway canvas offset box', ()
     assert.match(fn, /wrap\.style\.right\s*=\s*['"]auto['"]/, "must release right:0 (set 'auto') when pinning width");
 });
 
-test('applySize falls back to the computed height when the canvas is not laid out', () => {
+test('applySize fallback resets the static anchor and the computed height', () => {
     const src = fs.readFileSync(screenJs, 'utf8');
     const fn = extractBlock(src, 'function applySize(w, h)');
-    assert.match(fn, /else\s*\{\s*[\s\S]*wrap\.style\.height\s*=\s*h\s*\+\s*['"]px['"]/, 'must keep the computed-height fallback');
+    // The not-laid-out fallback must clear any stale pin styles (a prior pin
+    // leaves top/left/right:auto/width set) back to the original
+    // top:0;left:0;right:0;width:auto anchor, or the wrap reappears at a
+    // stale horizontal position after a panel hide/show.
+    const fallback = fn.slice(fn.indexOf('} else {'));
+    assert.match(fallback, /wrap\.style\.top\s*=\s*['"]0['"]/, 'fallback must reset top:0');
+    assert.match(fallback, /wrap\.style\.left\s*=\s*['"]0['"]/, 'fallback must reset left:0');
+    assert.match(fallback, /wrap\.style\.right\s*=\s*['"]0['"]/, 'fallback must reset right:0');
+    assert.match(fallback, /wrap\.style\.width\s*=\s*['"]auto['"]/, 'fallback must reset width:auto');
+    assert.match(fallback, /wrap\.style\.height\s*=\s*h\s*\+\s*['"]px['"]/, 'fallback must keep the computed height');
 });
 
 test('applySize records whether the overlay pin was applied (_wrapPinned)', () => {

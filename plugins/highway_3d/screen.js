@@ -2703,6 +2703,14 @@
         // that CSS-box drift and re-frame, instead of the user having to
         // un/re-maximize the window.
         let _appliedW = 0, _appliedH = 0;
+        // True once applySize() has pinned the .h3d-wrap overlay to the
+        // highway canvas's offset box. Stays false while the canvas has no
+        // layout yet (init() can run before #highway has a real box, where
+        // applySize falls back to the parent-panel size and only sets the
+        // wrap height). The rAF loop re-pins once the canvas lays out even
+        // when the logical render size is unchanged — otherwise the overlay
+        // would stay at top:0;left:0;right:0 and expose a strip of #highway.
+        let _wrapPinned = false;
         let mBeatM = null, mBeatQ = null;
         let txtCache = {};
         // Cloned sprite materials cached on individual sprite instances
@@ -12941,7 +12949,55 @@
             const baseDPR = _ssActive() ? Math.min(devicePixelRatio, 1.25) : Math.min(devicePixelRatio, 2);
             ren.setPixelRatio(_renderScale * baseDPR);
             ren.setSize(w, h);
-            wrap.style.height = h + 'px';
+            // Pin the overlay to #highway's exact box so it fully covers the
+            // canvas. The wrap is anchored to top:0/left:0/right:0 of its
+            // offset parent, which only lines up with #highway when the
+            // canvas sits at the parent's origin. The v3 player can place
+            // chrome above the canvas, shifting the wrap up so its lower edge
+            // falls short of #highway — leaving a strip of the canvas exposed
+            // (the reported gap, where the previous renderer's frame showed
+            // through). The wrap is a sibling of highwayCanvas, so they share
+            // an offset parent; tracking the canvas's box keeps the overlay
+            // flush in single-player and splitscreen alike.
+            //
+            // Derive the box from the SAME getBoundingClientRect measurements
+            // that drive ren.setSize(w, h) — NOT integer offsetTop/Width — so
+            // the overlay matches the renderer exactly. Under browser zoom or
+            // fractional flex layouts the canvas lands on sub-pixel bounds;
+            // offsetWidth/Top round to whole pixels and would leave the wrap up
+            // to 1px short of (or shifted from) the canvas, reopening the
+            // exposed edge strip. Position is taken relative to the containing
+            // block's padding edge (clientTop/Left strip the parent's border),
+            // which is what `top`/`left` resolve against for the absolutely
+            // positioned wrap. Guarded on a laid-out canvas (offsetWidth/Height
+            // > 0); otherwise fall back to the static top:0/left:0/right:0.
+            if (highwayCanvas && highwayCanvas.offsetWidth > 0 && highwayCanvas.offsetHeight > 0) {
+                const _pinParent = wrap.offsetParent || highwayCanvas.parentNode;
+                const _cr = highwayCanvas.getBoundingClientRect();
+                const _pr = _pinParent ? _pinParent.getBoundingClientRect() : { top: 0, left: 0 };
+                const _pbTop = _pinParent ? _pinParent.clientTop : 0;
+                const _pbLeft = _pinParent ? _pinParent.clientLeft : 0;
+                wrap.style.top = (_cr.top - _pr.top - _pbTop) + 'px';
+                wrap.style.left = (_cr.left - _pr.left - _pbLeft) + 'px';
+                wrap.style.right = 'auto';
+                wrap.style.width = _cr.width + 'px';
+                wrap.style.height = _cr.height + 'px';
+                _wrapPinned = true;
+            } else {
+                // Canvas not laid out (e.g. init ran before #highway had a real
+                // box, or a panel hide/show where canvasSize() falls back to the
+                // parent panel). Reset to the static anchor — if we had pinned
+                // before, the old top/left/right:auto/width would otherwise stay
+                // and the wrap would reappear at a stale horizontal position on
+                // the next show. Leave _wrapPinned false so the rAF loop re-pins
+                // once the canvas materializes again.
+                wrap.style.top = '0';
+                wrap.style.left = '0';
+                wrap.style.right = '0';
+                wrap.style.width = 'auto';
+                wrap.style.height = h + 'px';
+                _wrapPinned = false;
+            }
             if (lyricsCanvas) { lyricsCanvas.width = w; lyricsCanvas.height = h; }
             _diagRenderCache.clear();
             cam.aspect = w / h;
@@ -13320,6 +13376,17 @@
                     } else if (box.w > 0 && box.h > 0 &&
                             (Math.abs(box.w - _appliedW) > 1 || Math.abs(box.h - _appliedH) > 1)) {
                         applySize(box.w, box.h);
+                    } else if (!_wrapPinned && box.w > 0 && box.h > 0 &&
+                            highwayCanvas.offsetWidth > 0 && highwayCanvas.offsetHeight > 0) {
+                        //  3. The overlay pin couldn't be applied at init because
+                        //     #highway had no layout yet (offsetWidth/Height === 0),
+                        //     so applySize() only set the wrap height. The canvas has
+                        //     now laid out but to the same logical size, so neither
+                        //     drift branch above fires — re-run applySize to pin the
+                        //     wrap to the canvas box now that its offsets are real.
+                        //     Otherwise the overlay stays at top:0;left:0;right:0 and
+                        //     a strip of #highway is exposed on first load / split.
+                        applySize(box.w, box.h);
                     }
                 }
                 update(bundle);
@@ -13497,6 +13564,7 @@
                 _destroyed = true; _isReady = false; _diagChord = null; _diagPrev = null; _diagLastKey = null; _diagRenderCache.clear();
                 _lastHwW = 0; _lastHwH = 0;
                 _appliedW = 0; _appliedH = 0;
+                _wrapPinned = false;
                 _unsubscribeFocus(); teardown();
                 highwayCanvas = null;
             },

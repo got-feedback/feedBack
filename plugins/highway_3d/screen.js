@@ -754,7 +754,16 @@
             if (localStorage.getItem('highway_3d.fretSpacing') === m) return;
             localStorage.setItem('highway_3d.fretSpacing', m);
         } catch (_) {}
-        location.reload();
+        // Apply live rather than reloading the page — a full page reload
+        // reboots the SPA to the home screen (index.html's `.screen.active`),
+        // ejecting the user from Settings. Rebind the module-scope flag so
+        // panels mounted later this session pick up the new mode, recompute
+        // the fretX-derived scalars, then broadcast a change so every mounted
+        // panel rebuilds its board. Same live-update path as every other
+        // 3D-highway setting.
+        _h3dFretUniform = (m !== 'logarithmic');
+        _recomputeFretSpacingDerived();
+        _bgEmitChange('fretSpacing');
     };
 
     const fretMid = f => (f <= 0 ? -2 * K : (fretX(f - 1) + fretX(f)) / 2);
@@ -767,7 +776,10 @@
     }
     /** Reference column (~mid board): prior fixed K-based sprites matched this neighborhood. */
     const FRET_LABEL_SCALE_REF_FRET = 5;
-    const _fretLabelScaleRefW = Math.max(1e-8, fretColumnWorldW(FRET_LABEL_SCALE_REF_FRET));
+    // `let` (not `const`): recomputed by _recomputeFretSpacingDerived when the
+    // user flips Uniform/Logarithmic at runtime so label scaling tracks the
+    // new geometry without a page reload.
+    let _fretLabelScaleRefW = Math.max(1e-8, fretColumnWorldW(FRET_LABEL_SCALE_REF_FRET));
     function fretLabelScaleForFret(f) {
         const w = fretColumnWorldW(f);
         const m = w / _fretLabelScaleRefW;
@@ -823,7 +835,19 @@
     // World-units-per-fret near mid-neck. Used by the camera-X hysteresis
     // gate (issue #34) to convert a fret-equivalent dead zone into world
     // units. Pure function of SCALE — hoist out of update()'s hot path.
-    const FRET_WIDTH_MID = fretX(7) - fretX(6);
+    // `let` (not `const`): recomputed alongside _fretLabelScaleRefW when the
+    // fret-spacing mode flips at runtime — see _recomputeFretSpacingDerived.
+    let FRET_WIDTH_MID = fretX(7) - fretX(6);
+
+    // Recompute the fretX-derived scalars baked at module init. Called from
+    // h3dSetFretSpacing after _h3dFretUniform flips so label scaling and the
+    // camera hysteresis threshold track the newly chosen spacing — the live
+    // alternative to the old location.reload(), which ejected the user from
+    // Settings back to the home screen.
+    function _recomputeFretSpacingDerived() {
+        _fretLabelScaleRefW = Math.max(1e-8, fretColumnWorldW(FRET_LABEL_SCALE_REF_FRET));
+        FRET_WIDTH_MID = fretX(7) - fretX(6);
+    }
 
     function computeBPM(beats, t) {
         if (!beats || beats.length < 2) return 120;
@@ -6214,6 +6238,15 @@
             scene.add(bgGroup);
             _bgMountStyle();
             _bgListener = (changedKey) => {
+                if (changedKey === 'fretSpacing') {
+                    // _h3dFretUniform + the fretX-derived scalars were already
+                    // updated globally in h3dSetFretSpacing. Rebuild this
+                    // panel's static board geometry (fret wires, lanes, inlays)
+                    // so it re-lays-out for the new spacing; per-frame note
+                    // geometry reads fretX live and needs no rebuild.
+                    if (fretG) buildBoard();
+                    return;
+                }
                 if (changedKey === 'inlayLabelsVisible') {
                     _bgLoadSettings();
                     // Flip visibility on the already-built sprites; no

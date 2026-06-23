@@ -1,7 +1,7 @@
 {
   "id": "minigames",
   "name": "Minigames",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "bundled": true,
   "private": false,
   "screen": "screen.html",

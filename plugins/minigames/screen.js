@@ -961,7 +961,25 @@
   // Drain queue of plugins that loaded before us.
   (window.__feedBackMinigamesPending || []).forEach(register);
   window.__feedBackMinigamesPending = null;
+
+  // ── Back-compat for pre-rename minigame plugins ───────────────────────
+  // Minigame plugins published before the slopsmith→feedBack rename (#537)
+  // register against `window.slopsmithMinigames` and, when the SDK isn't up
+  // yet, queue to `window.__slopsmithMinigamesPending`. The rename moved the
+  // SDK to `window.feedBackMinigames` and only drains the feedBack queue, so
+  // those plugins' specs — including community ones we don't control — get
+  // stranded in the legacy queue and never register. Their FeedBarcade tiles
+  // then render as dead "Loading…" placeholders that do nothing on click.
+  // Alias the SDK under the old name and drain the legacy pending queue too.
+  // register() is keyed on spec.id, so a plugin that queued under both names
+  // still registers exactly once.
+  window.slopsmithMinigames = sdk;
+  (window.__slopsmithMinigamesPending || []).forEach(register);
+  window.__slopsmithMinigamesPending = null;
+
   window.dispatchEvent(new CustomEvent('feedBack-minigames-ready'));
+  // Legacy event name for any pre-rename listener still bound to it.
+  window.dispatchEvent(new CustomEvent('slopsmith-minigames-ready'));
 
   // ── Wire hub render to screen lifecycle ───────────────────────────────
   // FeedBack mounts plugin screens with id "plugin-<plugin_id>" and

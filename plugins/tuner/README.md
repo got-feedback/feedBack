@@ -34,17 +34,17 @@ This plugin adds a floating "Tuner" button to the FeedBack interface, providing 
 ## Installation
 
 ### Download a Release
-1. Download one of the [Releases](https://github.com/OmikronApex/feedBack-plugin-tuner/releases)
+1. Download one of the [Releases](https://github.com/OmikronApex/slopsmith-plugin-tuner/releases)
 2. Extract it to your plugins folder
 3. Restart FeedBack
 
 ### Update Manager
-The plugin is listed in the official plugin repository, so it can also be installed directly via the [Update Manager](https://github.com/masc0t/feedBack-update-manager)
+The plugin is listed in the official plugin repository, so it can also be installed directly via the [Update Manager](https://github.com/masc0t/slopsmith-update-manager)
 
 ### Git
 ```bash
 cd /path/to/feedBack/plugins
-git clone https://github.com/OmikronApex/feedBack-plugin-tuner.git tuner
+git clone https://github.com/OmikronApex/slopsmith-plugin-tuner.git tuner
 # Restart FeedBack (or restart your docker container)
 docker compose restart
 ```

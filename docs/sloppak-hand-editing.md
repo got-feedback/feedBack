@@ -73,7 +73,7 @@ The use case: the converted rhythm guitar sounds muddy (Demucs has a tough time 
 2. Open `manifest.yaml` in any text editor (Notepad++, VS Code, BBEdit, gedit — all fine; just **don't use Word**).
 3. Find the `stems:` block. Two things matter here:
    - **Order:** FeedBack's base `<audio>` element always plays the **first** stem listed in `stems[]`, regardless of `default:` flags. So if you want your custom stem to be what the player plays out-of-the-box (and what users without the Stems plugin will hear), put it **first**.
-   - **`default:` flags:** consulted by the [Stems plugin](https://github.com/topkoa/feedBack-plugin-stems) to decide which faders start un-muted. They do **not** affect what the base `<audio>` element plays — that's purely the first-stem rule above.
+   - **`default:` flags:** consulted by the [Stems plugin](https://github.com/topkoa/slopsmith-plugin-stems) to decide which faders start un-muted. They do **not** affect what the base `<audio>` element plays — that's purely the first-stem rule above.
 
    Example for a Demucs-split sloppak where you re-recorded the rhythm guitar:
 
@@ -110,7 +110,7 @@ The use case: the converted rhythm guitar sounds muddy (Demucs has a tough time 
 
 ### Step 5 — Reload and verify
 
-Reload the song in FeedBack. The [Stems plugin](https://github.com/topkoa/feedBack-plugin-stems) will show a fader for `rhythm_custom` next to the others. If you don't see it, check the cache notes in §1.
+Reload the song in FeedBack. The [Stems plugin](https://github.com/topkoa/slopsmith-plugin-stems) will show a fader for `rhythm_custom` next to the others. If you don't see it, check the cache notes in §1.
 
 ### Common gotchas
 

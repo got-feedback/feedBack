@@ -530,7 +530,7 @@ cover.jpg              Album art (optional)
 lyrics.json            Syllable-level lyrics (optional)
 ```
 
-Sloppak is the preferred format for new features. The [Stems plugin](https://github.com/topkoa/feedBack-plugin-stems) provides live stem mixing for sloppak songs.
+Sloppak is the preferred format for new features. The [Stems plugin](https://github.com/topkoa/slopsmith-plugin-stems) provides live stem mixing for sloppak songs.
 
 **Full developer reference:** the authoritative format spec now lives in its own repo —
 [got-feedback/feedpak-spec](https://github.com/got-feedback/feedpak-spec)

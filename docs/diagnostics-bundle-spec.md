@@ -177,7 +177,7 @@ entry explaining why.
       "capability_validation_warnings": [],
       "capability_unsupported_versions": [],
       "compatibility_shims": [],
-      "git": { "sha": "abc123d", "remote": "https://github.com/topkoa/feedBack-plugin-stems.git" }
+      "git": { "sha": "abc123d", "remote": "https://github.com/topkoa/slopsmith-plugin-stems.git" }
     }
   ],
   "orphans": [

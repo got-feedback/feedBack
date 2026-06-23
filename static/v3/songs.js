@@ -298,14 +298,64 @@
         if (window.syncLibrarySong && sid) window.syncLibrarySong(state.provider, sid, { playWhenReady: true });
     }
 
-    function accuracyBadge(filename) {
+    // Accuracy badge markup. `variant` is 'grid' (overlay pill on the card art,
+    // default) or 'tree' (inline percentage in the list row). Both carry the
+    // .fb-acc-badge class so a post-play refresh (repaintAccuracy) can find and
+    // replace them in place without re-rendering the whole list.
+    function accuracyBadge(filename, variant) {
         const acc = state.accuracy[filename];
         if (acc == null) return '';
         const pct = Math.round(acc * 100);
+        if (variant === 'tree') {
+            const color = acc >= 0.9 ? 'text-fb-good' : acc >= 0.5 ? 'text-fb-mid' : 'text-fb-low';
+            return '<span class="fb-acc-badge text-xs font-bold ' + color + '">' + pct + '%</span>';
+        }
         const color = acc >= 0.9 ? 'bg-fb-good' : (acc >= 0.5 ? 'bg-fb-mid' : 'bg-fb-low');
         const text = acc >= 0.5 && acc < 0.9 ? 'text-black' : 'text-white';
-        return '<span class="absolute bottom-0 right-0 ' + color + '/90 ' + text + ' px-2 py-0.5 rounded-tl-md text-xs font-bold flex items-center gap-1">' +
+        return '<span class="fb-acc-badge absolute bottom-0 right-0 ' + color + '/90 ' + text + ' px-2 py-0.5 rounded-tl-md text-xs font-bold flex items-center gap-1">' +
             '<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>' + pct + '%</span>';
+    }
+
+    // After a song is scored, the badge for that card is stale until the next
+    // full render(). Refresh state.accuracy from the server and patch the badge
+    // of any currently-rendered card/row in place (grid + tree). `_dirtyScores`
+    // tracks filenames scored while the library was off-screen, applied on enter.
+    const _dirtyScores = new Set();
+
+    function repaintAccuracy(key) {
+        const apply = (el, variant) => {
+            if (el.getAttribute('data-fn') !== key) return;
+            const old = el.querySelector('.fb-acc-badge');
+            const html = accuracyBadge(key, variant);
+            if (variant === 'grid') {
+                const art = el.querySelector('[data-v3-play]');
+                if (!art) return;
+                if (old) old.remove();
+                if (html) art.insertAdjacentHTML('beforeend', html);
+            } else if (old) {
+                if (html) old.outerHTML = html; else old.remove();
+            } else if (html) {
+                // No prior badge in this row — insert before the favorite button
+                // so it keeps its slot (after the format chip).
+                const fav = el.querySelector('[data-fav]');
+                if (fav) fav.insertAdjacentHTML('beforebegin', html);
+                else el.insertAdjacentHTML('beforeend', html);
+            }
+        };
+        document.querySelectorAll('#v3-songs-grid [data-fn]').forEach((el) => apply(el, 'grid'));
+        document.querySelectorAll('#v3-songs-tree [data-fn]').forEach((el) => apply(el, 'tree'));
+    }
+
+    async function applyScoreRefresh() {
+        if (!_dirtyScores.size) return;
+        const fresh = await jget('/api/stats/best');
+        // Fetch failed — keep the entries dirty so the next trigger (or screen
+        // enter) retries rather than silently dropping the badge update.
+        if (!fresh) return;
+        state.accuracy = fresh;
+        const keys = Array.from(_dirtyScores);
+        _dirtyScores.clear();
+        keys.forEach(repaintAccuracy);
     }
 
     // Source format of a song — prefer the server's `format` field, fall back
@@ -675,7 +725,7 @@
                     '<img src="' + esc(artUrl(s)) + '" alt="" loading="lazy" decoding="async" class="w-8 h-8 rounded object-cover bg-fb-card cursor-pointer" data-v3-play onerror="this.style.visibility=\'hidden\'">' +
                     '<span class="flex-1 min-w-0 cursor-pointer" data-v3-play><span class="block text-sm text-fb-text truncate">' + esc(s.title) + '</span></span>' +
                     (fl ? '<span class="text-[9px] font-bold px-1 py-0.5 rounded shrink-0 ' + (fl === 'FEEDPAK' ? 'bg-fb-primary/20 text-fb-primary' : 'bg-fb-card text-fb-textDim') + '">' + fl + '</span>' : '') +
-                    (state.accuracy[k] != null ? '<span class="text-xs font-bold ' + (state.accuracy[k] >= 0.9 ? 'text-fb-good' : state.accuracy[k] >= 0.5 ? 'text-fb-mid' : 'text-fb-low') + '">' + Math.round(state.accuracy[k] * 100) + '%</span>' : '') +
+                    accuracyBadge(k, 'tree') +
                     '<button data-fav class="opacity-0 group-hover:opacity-100 px-1 ' + (s.favorite ? 'text-fb-accent' : 'text-fb-textDim') + '">' + (s.favorite ? '♥' : '♡') + '</button>' +
                     '</div>'); }).join('') + '</div>').join('') + '</div></details>').join('');
         wireCards(host);
@@ -904,6 +954,11 @@
     }
 
     async function onV3SongsScreenEnter() {
+        // Pull in any scores recorded while the library was off-screen (the usual
+        // play→return flow) before the fast-paths below restore the cached DOM,
+        // so the just-played song's badge is current. The full render() path
+        // re-fetches accuracy itself, so this is a no-op cost there.
+        await applyScoreRefresh();
         const snap = _readLibraryScrollSnapshot();
         const hashMatch = !!(snap && snap.hash === _libraryStateHash());
         const domReady = state.built && !!document.getElementById('v3-songs-grid');
@@ -1015,6 +1070,20 @@
                 if (bar) bar.remove();
             }
         });
-        sm.on('song:stop', () => { /* refresh accuracy lazily next render */ });
+        // stats-recorder POSTs the score asynchronously and emits this once the
+        // server has the new best — that's the correct moment to refresh the
+        // badge (song:stop fires before the POST resolves, so it's too early).
+        // If the library is visible right now, repaint immediately; otherwise
+        // mark it dirty and onV3SongsScreenEnter applies it on return.
+        sm.on('stats:recorded', (e) => {
+            const fn = e && e.detail && e.detail.filename;
+            if (!fn) return;
+            _dirtyScores.add(fn);
+            // Only repaint now if the library is the active screen; otherwise
+            // leave it dirty for onV3SongsScreenEnter (applyScoreRefresh clears
+            // the set, so repainting against a hidden grid would drop the update).
+            const active = document.querySelector('.screen.active');
+            if (active && active.id === 'v3-songs') applyScoreRefresh();
+        });
     }
 })();

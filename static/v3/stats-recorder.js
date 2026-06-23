@@ -101,6 +101,9 @@
             if (window.v3Profile && typeof window.v3Profile.refresh === 'function') {
                 window.v3Profile.refresh();
             }
+            // Tell the library the song's best score may have changed so its
+            // card/list badge refreshes without waiting for a restart.
+            sm.emit('stats:recorded', { filename: body.filename, arrangement: body.arrangement });
         });
     }
 
@@ -157,6 +160,7 @@
             // treat it as a natural finish for calibration-retry feedback.
             await notifyProgression(response, body, true);
             if (window.v3Profile && typeof window.v3Profile.refresh === 'function') window.v3Profile.refresh();
+            sm.emit('stats:recorded', { filename: body.filename, arrangement: body.arrangement });
         });
     });
 

@@ -6,7 +6,7 @@
 
 `midi-input` is a **core-owned provider-coordinator** capability domain for MIDI
 device discovery, selection, and open/close session lifecycle — the MIDI analog
-of `audio-input` (spec 006). It gives every MIDI consumer in Slopsmith (the
+of `audio-input` (spec 006). It gives every MIDI consumer in FeedBack (the
 `input_setup` onboarding wizard, the `piano`/keys and `drums` plugins, and — as
 a follow-up — note-detection's Web-MIDI provider) **one device-access boundary**:
 one permission prompt, one source list, one redaction boundary.
@@ -68,13 +68,13 @@ shared listener session to an already-discovered source and never re-prompts.
 One shared open session per source across requesters (refcounted); the provider
 receives `source.close` only after the last requester releases. Live MIDI
 message delivery (for the "play a note / hit a pad" calibration check) is exposed
-to in-page consumers via the public `window.slopsmith.midiInput` session handle
+to in-page consumers via the public `window.feedBack.midiInput` session handle
 **only** — never as raw capability events or in diagnostics.
 
 ### Persistence & redaction
 
-Selected source persists under `slopsmith.midiInput.selectedLogicalSourceKey`.
-Diagnostics (`slopsmith.midi_input.diagnostics.v1`) carry provider ids, source
+Selected source persists under `feedBack.midiInput.selectedLogicalSourceKey`.
+Diagnostics (`feedBack.midi_input.diagnostics.v1`) carry provider ids, source
 ids/keys/kinds/availability, the selected key, and open-session keys; device
 **labels are redacted** and **no raw MIDI messages** are ever included.
 

@@ -112,8 +112,8 @@ test('every song:play/pause/ended emit uses _songEventPayload', () => {
     const src = fs.readFileSync(APP_JS, 'utf8');
     const lines = src.split('\n');
     // Accept aliased calls like `sm.emit(...)` (the JUCE shim caches
-    // window.slopsmith in `sm`) — not just literal `window.slopsmith.emit`.
-    const emitRe = /(?:window\.slopsmith|\w+)\.emit\(\s*['"]song:(play|pause|ended)['"]/;
+    // window.feedBack in `sm`) — not just literal `window.feedBack.emit`.
+    const emitRe = /(?:window\.feedBack|\w+)\.emit\(\s*['"]song:(play|pause|ended)['"]/;
     const okRe = /_songEventPayload\(\)|,\s*payload\s*\)/;
     const offending = [];
     for (const line of lines) {
@@ -134,7 +134,7 @@ test('there are at least 8 song:* emit sites threaded through the helper', () =>
     // count drops, someone removed an emit (regression) or refactored an
     // event away (intentional — this test then needs updating).
     const src = fs.readFileSync(APP_JS, 'utf8');
-    const matches = src.match(/(?:window\.slopsmith|\w+)\.emit\(\s*['"]song:(play|pause|ended)['"][^)]*\)/g) || [];
+    const matches = src.match(/(?:window\.feedBack|\w+)\.emit\(\s*['"]song:(play|pause|ended)['"][^)]*\)/g) || [];
     assert.ok(
         matches.length >= 8,
         `expected ≥8 song:* emits, found ${matches.length}`,

@@ -6,18 +6,18 @@
 
     function _register() {
         try {
-            window.slopsmithTour.register(PLUGIN_ID, { screens: SCREENS });
+            window.feedBackTour.register(PLUGIN_ID, { screens: SCREENS });
         } catch (e) {
             console.warn('[app_tour_settings] register failed', e);
         }
     }
 
-    if (window.slopsmithTour && typeof window.slopsmithTour.register === 'function') {
+    if (window.feedBackTour && typeof window.feedBackTour.register === 'function') {
         _register();
     } else {
         var deadline = performance.now() + 5000;
         var pollId = setInterval(function () {
-            if (window.slopsmithTour && typeof window.slopsmithTour.register === 'function') {
+            if (window.feedBackTour && typeof window.feedBackTour.register === 'function') {
                 clearInterval(pollId);
                 _register();
             } else if (performance.now() > deadline) {
@@ -38,9 +38,9 @@
         var s = document.createElement('style');
         s.id = STYLE_ID;
         s.textContent =
-            'body.' + NUDGE_CLASS + ' .slopsmith-tour-menu-btn { bottom: 68px; }' +
-            'body.' + NUDGE_CLASS + ' .slopsmith-tour-menu-popover { bottom: 112px; }' +
-            'body.' + NUDGE_CLASS + ' .slopsmith-tour-prompt { bottom: 112px; }';
+            'body.' + NUDGE_CLASS + ' .feedBack-tour-menu-btn { bottom: 68px; }' +
+            'body.' + NUDGE_CLASS + ' .feedBack-tour-menu-popover { bottom: 112px; }' +
+            'body.' + NUDGE_CLASS + ' .feedBack-tour-prompt { bottom: 112px; }';
         document.head.appendChild(s);
     }
 
@@ -53,8 +53,8 @@
         _ensureStyle();
         var active = document.querySelector('.screen.active');
         _applyNudge(active ? active.id : null);
-        if (window.slopsmith && typeof window.slopsmith.on === 'function') {
-            window.slopsmith.on('screen:changed', function (ev) {
+        if (window.feedBack && typeof window.feedBack.on === 'function') {
+            window.feedBack.on('screen:changed', function (ev) {
                 _applyNudge(ev && ev.detail && ev.detail.id);
             });
         }

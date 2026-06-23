@@ -1,5 +1,5 @@
 // Source-level guards for the visibility-aware rAF skip and the
-// highway:visibility event (slopsmith#246). The createHighway closure
+// highway:visibility event (feedBack#246). The createHighway closure
 // owns the canvas + WebGL context lifecycle that's too heavy to
 // reproduce in a vm sandbox — these checks lock in the wiring instead.
 
@@ -52,7 +52,7 @@ test('_emitVisibilityIfChanged is transition-only (no per-frame spam)', () => {
     assert.match(fn, /_lastVisible\s*=\s*v/, 'must update _lastVisible after a transition');
     assert.match(
         fn,
-        /window\.slopsmith\.emit\(\s*['"]highway:visibility['"][\s\S]*?visible:\s*v[\s\S]*?canvas/,
+        /window\.feedBack\.emit\(\s*['"]highway:visibility['"][\s\S]*?visible:\s*v[\s\S]*?canvas/,
         'must emit highway:visibility with { visible, canvas }',
     );
 });
@@ -74,7 +74,7 @@ test('rAF draw() loop calls _emitVisibilityIfChanged and skips when hidden', () 
     assert.ok(readyIdx < drawIdx, 'ready gate must run before renderer.draw');
 });
 
-test('draw() keeps an active custom renderer painting through an override-hide (slopsmith#819)', () => {
+test('draw() keeps an active custom renderer painting through an override-hide (feedBack#819)', () => {
     // The `_rendering` decision must distinguish a renderer-set override-hide
     // (setVisible(false) — canvas occluded by an opaque overlay, but the
     // active custom renderer still paints its own surface, e.g. Tab View's
@@ -140,12 +140,12 @@ test('3D Highway subscribes to highway:visibility and toggles wrap on hide', () 
     // Listener registration with the documented event name (in init).
     assert.match(
         initSceneBlock,
-        /window\.slopsmith\.on\(\s*['"]highway:visibility['"]/,
+        /window\.feedBack\.on\(\s*['"]highway:visibility['"]/,
         'initScene must subscribe to highway:visibility',
     );
     // Handler filters by canvas identity so splitscreen panels don't
     // hide each other's overlays — every instance receives every event
-    // on the shared slopsmith bus, so this gate is essential.
+    // on the shared feedBack bus, so this gate is essential.
     assert.match(
         initSceneBlock,
         /e\.detail\.canvas\s*!==\s*highwayCanvas/,
@@ -170,7 +170,7 @@ test('3D Highway subscribes to highway:visibility and toggles wrap on hide', () 
     // context-type-driven canvas swap. Per CLAUDE.md plugin contract.
     assert.match(
         initSceneBlock,
-        /window\.slopsmith\.on\(\s*['"]highway:canvas-replaced['"]/,
+        /window\.feedBack\.on\(\s*['"]highway:canvas-replaced['"]/,
         'initScene must track canvas swaps so the visibility gate keeps matching',
     );
     assert.match(
@@ -181,12 +181,12 @@ test('3D Highway subscribes to highway:visibility and toggles wrap on hide', () 
     // Teardown unbinds both listeners.
     assert.match(
         teardownBlock,
-        /window\.slopsmith\.off\(\s*['"]highway:visibility['"]/,
+        /window\.feedBack\.off\(\s*['"]highway:visibility['"]/,
         'teardown must unbind highway:visibility',
     );
     assert.match(
         teardownBlock,
-        /window\.slopsmith\.off\(\s*['"]highway:canvas-replaced['"]/,
+        /window\.feedBack\.off\(\s*['"]highway:canvas-replaced['"]/,
         'teardown must unbind highway:canvas-replaced',
     );
 });

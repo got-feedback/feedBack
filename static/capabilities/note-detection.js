@@ -19,10 +19,10 @@
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    const capabilities = window.slopsmith.capabilities;
+    window.feedBack = window.feedBack || {};
+    const capabilities = window.feedBack.capabilities;
     if (!capabilities || capabilities.version !== 1) return;
-    if (window.slopsmith.noteDetection && window.slopsmith.noteDetection.version === 1) return;
+    if (window.feedBack.noteDetection && window.feedBack.noteDetection.version === 1) return;
 
     // providerId → { id, label, kind, primitives } — kind is 'midi' (exact
     // verdicts from a digital instrument), 'engine' (desktop JUCE verifier),
@@ -79,7 +79,7 @@
     }
 
     function _contributeDiagnostics() {
-        const diagnostics = window.slopsmith && window.slopsmith.diagnostics;
+        const diagnostics = window.feedBack && window.feedBack.diagnostics;
         if (diagnostics && typeof diagnostics.contribute === 'function') {
             try {
                 const snap = _snapshot();
@@ -91,7 +91,7 @@
                     providers: snap.providers.map(({ label: _label, ...safe }) => safe),
                 };
                 diagnostics.contribute('note-detection-capability', {
-                    schema: 'slopsmith.note_detection_capability.v1',
+                    schema: 'feedBack.note_detection_capability.v1',
                     ...redacted,
                 });
             } catch (_) { /* diagnostics must not break detection */ }
@@ -329,7 +329,7 @@
         return true;
     }
     if (!_wrapLegacyNoteStateProvider()) {
-        const sm = window.slopsmith;
+        const sm = window.feedBack;
         if (typeof sm.on === 'function') {
             try { sm.on('song:loaded', () => { _wrapLegacyNoteStateProvider(); }); }
             catch (_) { /* best-effort */ }
@@ -339,7 +339,7 @@
         }
     }
 
-    window.slopsmith.noteDetection = {
+    window.feedBack.noteDetection = {
         version: 1,
         snapshot: _snapshot,
         reportHit: (detail) => _reportResult('hit', detail),

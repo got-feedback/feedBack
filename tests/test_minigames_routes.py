@@ -304,7 +304,7 @@ def test_registry_returns_minigame_plugin(tmp_path, monkeypatch):
     """Simulate a plugin directory with a minigame block and verify it shows
     up in the registry.
 
-    Uses SLOPSMITH_PLUGINS_DIR so the resolver scans a controlled directory
+    Uses FEEDBACK_PLUGINS_DIR so the resolver scans a controlled directory
     rather than the repo's live plugins/ tree.
     """
     plugins_dir = tmp_path / "plugins"
@@ -320,7 +320,7 @@ def test_registry_returns_minigame_plugin(tmp_path, monkeypatch):
         },
     }), encoding="utf-8")
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(plugins_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(plugins_dir))
 
     # Load a fresh module instance and call setup() so that _resolve_plugin_dirs
     # (defined as a closure inside setup()) picks up the monkeypatched env var.
@@ -367,7 +367,7 @@ def test_registry_deduplicates_by_plugin_id(tmp_path, monkeypatch):
             "minigame": {"name": subdir},
         }), encoding="utf-8")
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(plugins_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(plugins_dir))
 
     routes_path = (
         Path(__file__).parent.parent / "plugins" / "minigames" / "routes.py"

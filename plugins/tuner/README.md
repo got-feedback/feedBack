@@ -1,22 +1,22 @@
-# Slopsmith Tuner Plugin
+# FeedBack Tuner Plugin
 
 <img width="290" height="362" alt="grafik" src="https://github.com/user-attachments/assets/879440e9-b680-481b-9091-ddfa73319078" />
 
 
-A real-time guitar and bass tuner plugin for [Slopsmith](https://github.com/got-feedback/feedback).
+A real-time guitar and bass tuner plugin for [FeedBack](https://github.com/got-feedback/feedBack).
 
-This plugin adds a floating "Tuner" button to the Slopsmith interface, providing a high-accuracy chromatic tuner with support for multiple presets, custom tunings, and automatic song tuning detection.
+This plugin adds a floating "Tuner" button to the FeedBack interface, providing a high-accuracy chromatic tuner with support for multiple presets, custom tunings, and automatic song tuning detection.
 
 ## Features
 
 - **Real-time Pitch Detection**: Uses the YIN algorithm for robust and accurate frequency tracking.
 - **Multiple Presets**: Includes common guitar and bass tunings (Standard, Drop D, DADGAD, Open G, etc.).
-- **Automatic Song Tuning**: Detects and selects the correct tuning for the currently playing song in the Slopsmith player.
+- **Automatic Song Tuning**: Detects and selects the correct tuning for the currently playing song in the FeedBack player.
 - **Manual & Auto Tracking**: Automatically estimates the closest string or allows manual selection for focused tuning.
 - **Visual Feedback**: Large cents-deviation gauge, frequency display, and color-coded indicators.
 - **Custom Tunings**: Add your own tunings via note names (e.g., E2, A2) or Hz frequencies in the settings.
 - **Audio Device Selection**: Choose specific input devices and channels (Mono, Left, Right) for professional interfaces.
-- **Themable UI**: Styled with Tailwind CSS to match your Slopsmith theme.
+- **Themable UI**: Styled with Tailwind CSS to match your FeedBack theme.
 - **Visualizations**: Pick from different visualizations to suit your needs (Currently: Default, Strobe, Analogue Gauge, Mace Fx III, and Toilet Tuner)
 
 ## Available Visualizations
@@ -34,18 +34,18 @@ This plugin adds a floating "Tuner" button to the Slopsmith interface, providing
 ## Installation
 
 ### Download a Release
-1. Download one of the [Releases](https://github.com/OmikronApex/slopsmith-plugin-tuner/releases)
+1. Download one of the [Releases](https://github.com/OmikronApex/feedBack-plugin-tuner/releases)
 2. Extract it to your plugins folder
-3. Restart Slopsmith
+3. Restart FeedBack
 
 ### Update Manager
-The plugin is listed in the official plugin repository, so it can also be installed directly via the [Update Manager](https://github.com/masc0t/slopsmith-update-manager)
+The plugin is listed in the official plugin repository, so it can also be installed directly via the [Update Manager](https://github.com/masc0t/feedBack-update-manager)
 
 ### Git
 ```bash
-cd /path/to/slopsmith/plugins
-git clone https://github.com/OmikronApex/slopsmith-plugin-tuner.git tuner
-# Restart Slopsmith (or restart your docker container)
+cd /path/to/feedBack/plugins
+git clone https://github.com/OmikronApex/feedBack-plugin-tuner.git tuner
+# Restart FeedBack (or restart your docker container)
 docker compose restart
 ```
 
@@ -70,7 +70,7 @@ Click the ⚙️ icon in the tuner window to access:
 
 
 ### Plugin Manager
-Access advanced settings via the Slopsmith Plugin Manager (Settings -> Plugins -> Tuner):
+Access advanced settings via the FeedBack Plugin Manager (Settings -> Plugins -> Tuner):
 - **Floating Button**: Toggle the visibility of the tuner button on the main interface.
 - **Tuning Visibility**: Toggle which built-in tunings appear in your menu.
 - **Custom Tunings**: Define your own tuning presets by entering a name and a list of notes/frequencies.
@@ -82,7 +82,7 @@ Access advanced settings via the Slopsmith Plugin Manager (Settings -> Plugins -
 ## Changelog
 
 ### [1.3.1] - 2026-06-04
-- JUCE bridge audio input: when running inside Slopsmith Desktop the tuner taps the engine's raw audio stream (`getRawAudioFrame`) and runs its own tuning-optimised YIN over it, falling back to the browser microphone pipeline otherwise.
+- JUCE bridge audio input: when running inside FeedBack Desktop the tuner taps the engine's raw audio stream (`getRawAudioFrame`) and runs its own tuning-optimised YIN over it, falling back to the browser microphone pipeline otherwise.
 - Fixed octave-low / sub-harmonic pitch errors (canonical YIN absolute-threshold selection) and added octave-aware nearest-string matching.
 - "Free Tune" is now remembered as your last tuning, so it persists across sessions instead of resetting to a preset each time.
 - Relocated visualization SVG assets to `visualization/assets/`, served via the dedicated `/api/plugins/tuner/viz-assets/` route (supersedes the 1.3.0 note about the root `assets/` directory).
@@ -93,7 +93,7 @@ Access advanced settings via the Slopsmith Plugin Manager (Settings -> Plugins -
 - Added CHEF MT-3 visualization: inspired by the BOSS TU-3, featuring a 90° curved glass gauge arc, 51 tick marks, red 7-segment display, and rubber mode/brightness buttons.
 - Refactored `screen.js` into focused modules: audio pipeline extracted to `utils/audio.js`, UI layer extracted to `utils/ui.js` (shared-state factory pattern). `screen.js` reduced from ~1060 to ~300 lines.
 - Normalised `DEFAULT_TUNINGS` keys to instrument keys (`guitar-6`, `bass-4`, etc.) — removes the internal group-name lookup table.
-- Added plugin stylesheet (`assets/plugin.css`) via the Slopsmith styles contract, ensuring arbitrary Tailwind classes render correctly for runtime-installed users.
+- Added plugin stylesheet (`assets/plugin.css`) via the FeedBack styles contract, ensuring arbitrary Tailwind classes render correctly for runtime-installed users.
 - Moved SVG assets (`Bathroom.svg`, `Plunger.svg`, `Toiletbowl.svg`) to the root `assets/` directory; removed the now-redundant custom asset route from `routes.py`.
 - Moved Toilet Tuner to the end of the visualization picker list.
 

@@ -28,7 +28,7 @@ test('shouldSuppressMonitorMuteHint only for external modes', () => {
 });
 
 test('labels include internal, external, and spark options', () => {
-    assert.match(toneSource.LABELS.internal, /feed\[dB\]ack internal tone/i);
+    assert.match(toneSource.LABELS.internal, /fee\[dB\]ack internal tone/i);
     assert.match(toneSource.LABELS.external_hardware, /External amp/i);
     assert.match(toneSource.LABELS.spark_control_x, /Spark LIVE/i);
 });

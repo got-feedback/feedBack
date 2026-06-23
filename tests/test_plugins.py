@@ -1,5 +1,5 @@
 """Tests for plugins/__init__.py — namespace isolation for sibling
-modules and startup-time collision detection (slopsmith#33).
+modules and startup-time collision detection (feedBack#33).
 
 The plugin loader used to insert each plugin directory onto `sys.path`,
 which made bare `import sibling` fall through Python's per-name cache
@@ -31,7 +31,7 @@ def capture_logger(caplog, logger_name, level=logging.WARNING):
     logger for the duration of the ``with`` block, then restores its original
     level and ``propagate`` flag.  Bypasses pytest's default root-logger
     attachment so tests that set ``propagate=False`` on their logger still
-    capture records even when the ``slopsmith`` hierarchy hasn't set up
+    capture records even when the ``feedBack`` hierarchy hasn't set up
     handlers yet."""
     logger = logging.getLogger(logger_name)
     orig_level, orig_propagate = logger.level, logger.propagate
@@ -49,7 +49,7 @@ def capture_logger(caplog, logger_name, level=logging.WARNING):
 # Bare module names that this test module pre-populates into
 # sys.modules to simulate the bare-import path. Saved/restored by
 # the reset_plugin_state fixture so they don't leak to other test
-# files. Codex / Copilot review on PR for slopsmith#33.
+# files. Codex / Copilot review on PR for feedBack#33.
 _BARE_NAMES_USED = ("util", "extractor")
 
 
@@ -62,14 +62,14 @@ def reset_plugin_state(monkeypatch):
       * any `plugin_*` keys we add to `sys.modules`
       * the bare names this module simulates (`util`, `extractor`)
       * `sys.path` — `plugins.load_plugins()` mutates it
-    Also unsets `SLOPSMITH_PLUGINS_DIR` for the test's duration
+    Also unsets `FEEDBACK_PLUGINS_DIR` for the test's duration
     (via monkeypatch) so a CI env that pre-sets it can't leak
     real user plugins into a tmp_path-driven test. Per-module
     locks are owned by the standard import system
     (`importlib._bootstrap._module_locks`) and are not our
     responsibility to reset.
     """
-    monkeypatch.delenv("SLOPSMITH_PLUGINS_DIR", raising=False)
+    monkeypatch.delenv("FEEDBACK_PLUGINS_DIR", raising=False)
     plugins = importlib.import_module("plugins")
     saved_loaded = list(plugins.LOADED_PLUGINS)
     saved_pending = dict(plugins.PENDING_PLUGINS)
@@ -249,7 +249,7 @@ def test_collision_warning_fires_for_shared_module_name(tmp_path, reset_plugin_s
     plugins = reset_plugin_state
     _make_plugin(tmp_path, "rs1extract", sibling_files={"extractor": "X = 1\n"})
     _make_plugin(tmp_path, "discextract", sibling_files={"extractor": "Y = 2\n"})
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
     assert "Module-name collision" in caplog.text
     assert "'extractor' (module)" in caplog.text
@@ -261,7 +261,7 @@ def test_collision_warning_silent_when_names_unique(tmp_path, reset_plugin_state
     plugins = reset_plugin_state
     _make_plugin(tmp_path, "alpha", sibling_files={"alpha_helper": "A = 1\n"})
     _make_plugin(tmp_path, "beta", sibling_files={"beta_helper": "B = 2\n"})
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
     assert "Module-name collision" not in caplog.text
 
@@ -276,7 +276,7 @@ def test_collision_warning_excludes_routes_and_dunders(tmp_path, reset_plugin_st
     p2 = _make_plugin(tmp_path, "two", sibling_files={"unique_two": "V = 2\n"})
     (p1 / "__init__.py").write_text("")
     (p2 / "__init__.py").write_text("")
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
     assert "Module-name collision" not in caplog.text
 
@@ -294,7 +294,7 @@ def test_collision_warning_dedupes_per_plugin(tmp_path, reset_plugin_state, capl
     pkg_dir = plugin_dir / "extractor"
     pkg_dir.mkdir()
     (pkg_dir / "__init__.py").write_text("FROM = 'package'\n")
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
     # Only one plugin is involved, so no cross-plugin warning fires.
     assert "Module-name collision" not in caplog.text
@@ -313,7 +313,7 @@ def test_collision_warning_still_fires_when_two_plugins_each_have_both_forms(
         pkg_dir = plugin_dir / "extractor"
         pkg_dir.mkdir()
         (pkg_dir / "__init__.py").write_text(f"OWNER = '{pid}-package'\n")
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
     collision_records = [r for r in caplog.records if "Module-name collision" in r.getMessage()]
     assert len(collision_records) == 1
@@ -373,7 +373,7 @@ def test_load_sibling_handles_dotted_plugin_id_via_escape(tmp_path, reset_plugin
     able to use load_sibling — the helper escapes `.` in the
     plugin_id portion of the cache key so the synthetic parent
     package is still well-formed. Spotted across codex review
-    rounds on PR for slopsmith#33."""
+    rounds on PR for feedBack#33."""
     plugins = reset_plugin_state
     plugin_dir = tmp_path / "rdns"
     plugin_dir.mkdir()
@@ -496,7 +496,7 @@ def test_load_sibling_does_not_alias_bare_imported_file_module(tmp_path, reset_p
     body) would route through the bare global cache, undoing the
     isolation. Trade-off: module-level state in util splits across
     two copies until the plugin removes its bare imports. Spotted
-    by codex review on PR for slopsmith#33 round 8."""
+    by codex review on PR for feedBack#33 round 8."""
     plugins = reset_plugin_state
     plugin_dir = _make_plugin(tmp_path, "mixmig")
     util_path = plugin_dir / "util.py"
@@ -562,7 +562,7 @@ def test_load_plugins_skips_non_string_id(tmp_path, reset_plugin_state, caplog):
     (bad_dir / "plugin.json").write_text('{"id": 42, "name": "bad"}')
     _make_plugin(tmp_path, "good", sibling_files={"util": "X = 1\n"})
     fake_app = type("FakeApp", (), {})()
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, fake_app, tmp_path)
     assert "must be a string" in caplog.text
     assert "int" in caplog.text  # type name surfaced
@@ -581,7 +581,7 @@ def test_load_plugins_warns_on_falsy_non_string_id(tmp_path, reset_plugin_state,
         bad_dir = tmp_path / f"bad{i}"
         bad_dir.mkdir()
         (bad_dir / "plugin.json").write_text(f'{{"id": {bad_value}, "name": "x"}}')
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
     # Each malformed manifest produces a "must be a string" warning;
     # none are silently dropped.
@@ -735,7 +735,7 @@ def test_load_sibling_loads_package_form(tmp_path, reset_plugin_state):
     load_sibling exactly like a single-file `.py` sibling. The
     collision-warning scanner directs maintainers of package-form
     plugins toward load_sibling, so the helper has to actually
-    support them. Codex review on PR for slopsmith#33."""
+    support them. Codex review on PR for feedBack#33."""
     plugins = reset_plugin_state
     plugin_dir = _make_plugin(tmp_path, "pkgplugin")
     pkg_dir = plugin_dir / "extractor"
@@ -754,7 +754,7 @@ def test_load_sibling_prefers_package_over_file_when_both_exist(tmp_path, reset_
     in the same directory, the package form wins — matches CPython's
     own import-resolution precedence so bare `import extractor` and
     `load_sibling('extractor')` always run the same code path.
-    Spotted by codex review on PR for slopsmith#33."""
+    Spotted by codex review on PR for feedBack#33."""
     plugins = reset_plugin_state
     plugin_dir = _make_plugin(tmp_path, "both")
     (plugin_dir / "extractor.py").write_text("FROM = 'file'\n")
@@ -783,7 +783,7 @@ def test_load_sibling_disambiguates_underscored_ids_and_names(tmp_path, reset_pl
     must NOT collide in sys.modules. The `.` separator + bijective
     `_` -> `_5f_` encoding of plugin_id make the cache key
     unambiguous (the old `_` separator collapsed both to
-    `plugin_a_b_c`). Codex review on PR for slopsmith#33."""
+    `plugin_a_b_c`). Codex review on PR for feedBack#33."""
     plugins = reset_plugin_state
     p1 = _make_plugin(tmp_path, "a_b", sibling_files={"c": "WHO = 'a_b/c'\n"})
     p2 = _make_plugin(tmp_path, "a", sibling_files={"b_c": "WHO = 'a/b_c'\n"})
@@ -808,7 +808,7 @@ def test_load_sibling_disambiguates_underscored_ids_and_names(tmp_path, reset_pl
 def test_collision_warning_detects_package_form(tmp_path, reset_plugin_state, caplog):
     """A plugin shipping `extractor/__init__.py` collides with another
     plugin's `extractor.py` the same way two `.py` files would. The
-    scanner picks up packages too. Codex review on PR for slopsmith#33."""
+    scanner picks up packages too. Codex review on PR for feedBack#33."""
     plugins = reset_plugin_state
     # Plugin one: extractor.py
     _make_plugin(tmp_path, "as_module", sibling_files={"extractor": "X = 1\n"})
@@ -817,7 +817,7 @@ def test_collision_warning_detects_package_form(tmp_path, reset_plugin_state, ca
     pkg_dir = plugin_pkg / "extractor"
     pkg_dir.mkdir()
     (pkg_dir / "__init__.py").write_text("Y = 2\n")
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
     assert "Module-name collision" in caplog.text
     assert "extractor" in caplog.text
@@ -836,7 +836,7 @@ def test_collision_warning_detects_two_packages(tmp_path, reset_plugin_state, ca
         pkg = plugin_dir / "shared_pkg"
         pkg.mkdir()
         (pkg / "__init__.py").write_text(f"# {pid}\n")
-    with capture_logger(caplog, "slopsmith.plugins"):
+    with capture_logger(caplog, "feedBack.plugins"):
         _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
     assert "Module-name collision" in caplog.text
     assert "shared_pkg" in caplog.text
@@ -876,12 +876,12 @@ def test_per_plugin_context_does_not_leak_load_sibling_across_plugins(tmp_path, 
 
 # ── Bundled plugins always win over user-installed copies ────────────────────
 
-def test_bundled_plugin_always_wins_over_slopsmith_plugins_dir_copy(
+def test_bundled_plugin_always_wins_over_feedBack_plugins_dir_copy(
     tmp_path, reset_plugin_state, monkeypatch, caplog
 ):
-    """Bundled plugins always win over user-installed copies in SLOPSMITH_PLUGINS_DIR.
+    """Bundled plugins always win over user-installed copies in FEEDBACK_PLUGINS_DIR.
 
-    Even though SLOPSMITH_PLUGINS_DIR is scanned first, a user-installed copy
+    Even though FEEDBACK_PLUGINS_DIR is scanned first, a user-installed copy
     with the same id as a bundled plugin is evicted in favour of the bundled
     version. The loader emits a warning naming the ignored user copy.
     """
@@ -902,7 +902,7 @@ def test_bundled_plugin_always_wins_over_slopsmith_plugins_dir_copy(
         json.dumps({"id": "highway_3d", "name": "highway_3d", "routes": "routes.py", "bundled": True})
     )
 
-    # Simulate a user-installed plugins directory (SLOPSMITH_PLUGINS_DIR).
+    # Simulate a user-installed plugins directory (FEEDBACK_PLUGINS_DIR).
     user_dir = tmp_path / "user"
     user_dir.mkdir()
     _make_plugin(
@@ -913,7 +913,7 @@ def test_bundled_plugin_always_wins_over_slopsmith_plugins_dir_copy(
         ),
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     fake_app.state = type("State", (), {})()
@@ -922,7 +922,7 @@ def test_bundled_plugin_always_wins_over_slopsmith_plugins_dir_copy(
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = bundled_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins"):
+        with capture_logger(caplog, "feedBack.plugins"):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -968,13 +968,13 @@ def test_bundled_plugin_wins_over_user_copy_and_logs_warning(
         json.dumps({"id": "highway_3d", "name": "3D Highway (user)"})
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = bundled_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins"):
+        with capture_logger(caplog, "feedBack.plugins"):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1025,13 +1025,13 @@ def test_bundled_plugin_wins_over_verbatim_user_copy(
         json.dumps({"id": "highway_3d", "name": "3D Highway (custom)", "bundled": True})
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = bundled_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins"):
+        with capture_logger(caplog, "feedBack.plugins"):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1093,7 +1093,7 @@ def test_bundled_plugin_wins_over_copy_in_same_plugins_dir(
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = plugins_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins"):
+        with capture_logger(caplog, "feedBack.plugins"):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1151,7 +1151,7 @@ def test_bundled_plugin_wins_over_copy_in_same_plugins_dir_bundled_sorts_first(
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = plugins_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins"):
+        with capture_logger(caplog, "feedBack.plugins"):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1214,7 +1214,7 @@ def test_bundled_plugin_wins_over_verbatim_copy_in_same_plugins_dir(
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = plugins_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins"):
+        with capture_logger(caplog, "feedBack.plugins"):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1243,15 +1243,15 @@ def test_bundled_wins_with_multiple_stale_copies(
     """Bundled plugin wins when multiple stale copies exist simultaneously.
 
     Exercises the exact #181 layout: the user has both an external
-    ``SLOPSMITH_PLUGINS_DIR/highway_3d`` copy AND a stale in-tree clone at
+    ``FEEDBACK_PLUGINS_DIR/highway_3d`` copy AND a stale in-tree clone at
     ``plugins/3dhighway``, alongside the real bundled ``plugins/highway_3d``.
 
     Scan order:
-    1. SLOPSMITH_PLUGINS_DIR scanned first → user_dir/highway_3d registered.
+    1. FEEDBACK_PLUGINS_DIR scanned first → user_dir/highway_3d registered.
     2. PLUGINS_DIR scanned next (sorted):
        - ``3dhighway`` sorts before ``highway_3d`` → duplicate, neither is bundled
          → discarded with a warning naming the specific plugin_dir.
-       - ``highway_3d`` → bundled; evicts the SLOPSMITH_PLUGINS_DIR copy; wins.
+       - ``highway_3d`` → bundled; evicts the FEEDBACK_PLUGINS_DIR copy; wins.
 
     Both stale paths must be named in warning log messages.
     """
@@ -1275,7 +1275,7 @@ def test_bundled_wins_with_multiple_stale_copies(
         json.dumps({"id": "highway_3d", "name": "3D Highway", "bundled": True})
     )
 
-    # Simulate a user-installed plugins directory (SLOPSMITH_PLUGINS_DIR).
+    # Simulate a user-installed plugins directory (FEEDBACK_PLUGINS_DIR).
     user_dir = tmp_path / "user"
     user_dir.mkdir()
     user_plugin_dir = user_dir / "highway_3d"
@@ -1284,13 +1284,13 @@ def test_bundled_wins_with_multiple_stale_copies(
         json.dumps({"id": "highway_3d", "name": "3D Highway (user)"})
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = plugins_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins"):
+        with capture_logger(caplog, "feedBack.plugins"):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1345,14 +1345,14 @@ def test_fallback_to_user_copy_when_bundled_routes_fail(
         "def setup(app, ctx):\n    app.state.origin = 'user_fallback'\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     fake_app.state = type("State", (), {})()
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = bundled_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins", level=logging.WARNING):
+        with capture_logger(caplog, "feedBack.plugins", level=logging.WARNING):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1414,7 +1414,7 @@ def test_fallback_when_bundled_sorts_first_and_routes_fail(
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = plugins_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins", level=logging.WARNING):
+        with capture_logger(caplog, "feedBack.plugins", level=logging.WARNING):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1467,13 +1467,13 @@ def test_plugin_absent_when_both_routes_fail(
         "def setup(app, ctx):\n    raise RuntimeError('user also broken')\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = bundled_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins", level=logging.WARNING):
+        with capture_logger(caplog, "feedBack.plugins", level=logging.WARNING):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1514,7 +1514,7 @@ def test_partial_route_registration_warning(
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = bundled_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins", level=logging.WARNING):
+        with capture_logger(caplog, "feedBack.plugins", level=logging.WARNING):
             plugins.load_plugins(fake_app, {})
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1565,7 +1565,7 @@ def test_sibling_module_cache_purged_before_fallback(
         "    app.state.helper_origin = helper.ORIGIN\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     fake_app.state = type("State", (), {})()
@@ -1613,7 +1613,7 @@ def test_fallback_success_clears_error_in_progress_events(
         "def setup(app, ctx):\n    pass\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     events = []
     fake_app = type("FakeApp", (), {})()
@@ -1675,7 +1675,7 @@ def test_plugins_complete_loaded_count_when_both_routes_fail(
         "def setup(app, ctx):\n    raise RuntimeError('user also broken')\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     events = []
     fake_app = type("FakeApp", (), {})()
@@ -1741,7 +1741,7 @@ def test_fallback_preserves_plugin_order(
     )
     (user_hw / "routes.py").write_text("def setup(app, ctx): pass\n")
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     saved_dir = plugins.PLUGINS_DIR
@@ -1788,7 +1788,7 @@ def test_fallback_not_registered_when_user_copy_has_no_routes(
         json.dumps({"id": "highway_3d", "name": "3D Highway (user)"})
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     saved_dir = plugins.PLUGINS_DIR
@@ -1837,7 +1837,7 @@ def test_fallback_skipped_when_setup_was_mid_flight_on_timeout(
         "def setup(app, ctx):\n    app.state.fallback_ran = True\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     # Inject a route_setup_fn that simulates a mid-flight timeout by raising
     # a TimeoutError with setup_mid_flight=True.
@@ -1851,7 +1851,7 @@ def test_fallback_skipped_when_setup_was_mid_flight_on_timeout(
     saved_dir = plugins.PLUGINS_DIR
     plugins.PLUGINS_DIR = bundled_dir
     try:
-        with capture_logger(caplog, "slopsmith.plugins", level=logging.WARNING):
+        with capture_logger(caplog, "feedBack.plugins", level=logging.WARNING):
             plugins.load_plugins(fake_app, {}, route_setup_fn=_mid_flight_timeout_setup_fn)
     finally:
         plugins.PLUGINS_DIR = saved_dir
@@ -1900,7 +1900,7 @@ def test_fallback_entry_has_fallback_true_field(
     )
     (user_plugin_dir / "routes.py").write_text("def setup(app, ctx):\n    pass\n")
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     saved_dir = plugins.PLUGINS_DIR
@@ -1963,7 +1963,7 @@ def test_fallback_proceeds_when_install_requirements_returns_false(
         "def setup(app, ctx):\n    app.state.fallback_ran = True\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
     # Simulate _install_requirements failing (read-only filesystem, optional
     # dep, etc.) — same scenario the main loop tolerates.
     monkeypatch.setattr(plugins, "_install_requirements", lambda *a, **kw: False)
@@ -2060,7 +2060,7 @@ def test_fallback_routes_failure_emits_plugin_error(
         "def setup(app, ctx):\n    raise RuntimeError('fallback also broken')\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     events: list = []
@@ -2188,7 +2188,7 @@ def test_sibling_purge_does_not_affect_other_plugin_with_same_prefix(
         "def setup(app, ctx):\n    app.state.a_fallback_ran = True\n"
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     fake_app.state = type("State", (), {})()
@@ -2253,13 +2253,13 @@ def test_bundled_flag_requires_both_in_tree_directory_and_manifest_field(
 
     user_dir = tmp_path / "user"
     user_dir.mkdir()
-    # User plugin in SLOPSMITH_PLUGINS_DIR that forges "bundled": true.
+    # User plugin in FEEDBACK_PLUGINS_DIR that forges "bundled": true.
     (user_dir / "fake_bundled").mkdir()
     (user_dir / "fake_bundled" / "plugin.json").write_text(
         json.dumps({"id": "fake_bundled", "name": "Fake Bundled", "bundled": True})
     )
 
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     saved_dir = plugins.PLUGINS_DIR
@@ -2589,7 +2589,7 @@ def test_pending_then_incremental_publish_observed_during_setup(tmp_path, reset_
 def test_stale_load_pass_cannot_republish_after_newer_pass(tmp_path, reset_plugin_state):
     """A still-running load pass must NOT republish into the registries after a
     NEWER load_plugins() pass has cleared them (re-entrancy race: a "reload
-    plugins" action, SLOPSMITH_SYNC_STARTUP hot-reload, or test teardown firing
+    plugins" action, FEEDBACK_SYNC_STARTUP hot-reload, or test teardown firing
     while the first pass's background install thread is mid-flight).
 
     The loader bumps a generation token at the start of every pass; _graduate()
@@ -3309,7 +3309,7 @@ def test_install_requirements_marker_is_stable_across_calls(tmp_path, reset_plug
 def test_settings_html_served_as_utf8_regardless_of_host_locale(
     tmp_path, reset_plugin_state, monkeypatch
 ):
-    """Regression for slopsmith-desktop#166 — mojibake in the Settings UI.
+    """Regression for feedBack-desktop#166 — mojibake in the Settings UI.
 
     The ``settings.html`` plugin endpoint must read its file with an
     explicit ``encoding="utf-8"``.  Without it, ``Path.read_text()`` falls
@@ -3955,7 +3955,7 @@ def test_disable_during_fallback_aborts_fallback_mount(tmp_path, reset_plugin_st
     (user_dir / "highway_3d" / "routes.py").write_text(
         "def setup(app, ctx):\n    app.state.origin = 'user_fallback'\n"
     )
-    monkeypatch.setenv("SLOPSMITH_PLUGINS_DIR", str(user_dir))
+    monkeypatch.setenv("FEEDBACK_PLUGINS_DIR", str(user_dir))
 
     fake_app = type("FakeApp", (), {})()
     fake_app.state = type("State", (), {})()

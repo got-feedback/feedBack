@@ -72,7 +72,7 @@ function buildSandbox() {
         // we don't need them to fire — the emit happens before beginCount.
         setTimeout: () => 0,
 
-        // Stubbed slopsmith DOM dependencies.
+        // Stubbed feedBack DOM dependencies.
         audio: { pause() {} },
         jucePlayer: { pause: () => Promise.resolve(), play: () => Promise.resolve(true) },
         highway: { setTime() {}, getBPM: () => 120 },
@@ -98,7 +98,7 @@ function buildSandbox() {
 
         // Spy: records every emit call so the test can assert.
         window: {
-            slopsmith: {
+            feedBack: {
                 emit(event, detail) { emitCalls.push({ event, detail }); },
                 isPlaying: false,
             },
@@ -121,7 +121,7 @@ test('loop:restart fires once when wrap path runs', async () => {
     // accidental revert before we even run the behavior assertion.
     assert.match(
         startCountInSrc,
-        /window\.slopsmith\.emit\(\s*['"]loop:restart['"]/,
+        /window\.feedBack\.emit\(\s*['"]loop:restart['"]/,
         'startCountIn is missing the loop:restart emit',
     );
 
@@ -229,7 +229,7 @@ test('loop:restart fires after highway.setTime, before beginCount', () => {
     const setTimeIdx = setTimeMatches.length
         ? wrapStart + setTimeMatches[setTimeMatches.length - 1].index
         : -1;
-    const emitRel = wrapSlice.search(/window\.slopsmith\.emit\(\s*['"]loop:restart['"]/);
+    const emitRel = wrapSlice.search(/window\.feedBack\.emit\(\s*['"]loop:restart['"]/);
     const emitIdx = emitRel === -1 ? -1 : wrapStart + emitRel;
     const afterEmit = emitIdx === -1 ? '' : fn.slice(emitIdx);
     const beginCallMatch = afterEmit.match(/(?<!function\s)\bbeginCount\s*\(/);

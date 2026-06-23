@@ -39,7 +39,7 @@ jobs:
             first=$(printf '%s\n' "$hits" | head -n1)
             file=$(printf '%s' "$first" | cut -d: -f1)
             line=$(printf '%s' "$first" | cut -d: -f2)
-            echo "::error file=${file},line=${line}::print() or traceback.print_exc() found in server.py, lib/, or a bundled plugin routes.py. Use the slopsmith logger (lib/logging_setup.py) — see issues #155 / #242."
+            echo "::error file=${file},line=${line}::print() or traceback.print_exc() found in server.py, lib/, or a bundled plugin routes.py. Use the feedBack logger (lib/logging_setup.py) — see issues #155 / #242."
             exit 1
           fi
 
@@ -56,7 +56,7 @@ jobs:
 
   tailwind-fresh:
     # Guard that the committed static/tailwind.min.css is in sync with source.
-    # The Play CDN's runtime JIT was removed (slopsmith-desktop#110); a prebuilt
+    # The Play CDN's runtime JIT was removed (feedBack-desktop#110); a prebuilt
     # stylesheet only contains classes the scanner saw at build time, so stale
     # CSS silently ships unstyled elements. Rebuild and fail on any diff.
     name: tailwind-fresh

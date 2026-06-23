@@ -19,8 +19,8 @@ bar-indexed tempo map, per-beat rhythm durations (dots + tuplets; see
 ``_beat_secs`` for the one deliberate double-dot divergence), and
 ``_note_midi`` — so the
 notation beats line up with the RS-XML notes the highway plays (see
-slopsmith#618 for the longer-term goal of sharing the note-building walk
-itself, and slopsmith#261 for the time-signature-denominator pitfalls the
+feedBack#618 for the longer-term goal of sharing the note-building walk
+itself, and feedBack#261 for the time-signature-denominator pitfalls the
 ``beat_groups`` emission here exists to avoid re-introducing).
 
 Where this plugs in: ``gp2rs_gpx.convert_file`` calls
@@ -43,7 +43,7 @@ from pathlib import Path
 
 import notation as notation_mod
 
-log = logging.getLogger("slopsmith.lib.gp2notation")
+log = logging.getLogger("feedBack.lib.gp2notation")
 
 
 # GPX NoteValue string → notation duration denominator (sloppak-spec §5.3:

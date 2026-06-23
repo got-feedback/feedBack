@@ -1,9 +1,9 @@
 /**
- * Tailwind CSS build config for slopsmith core.
+ * Tailwind CSS build config for feedBack core.
  *
  * Replaces the Play CDN (`cdn.tailwindcss.com`) JIT runtime that
  * previously scanned the DOM ~1.8x/sec on the main thread, causing
- * sustained frame drops with the 3D highway. See slopsmith-desktop#110.
+ * sustained frame drops with the 3D highway. See feedBack-desktop#110.
  *
  * Regenerate `static/tailwind.min.css` with:
  *   bash scripts/build-tailwind.sh
@@ -13,7 +13,7 @@
 module.exports = {
     content: [
         './static/**/*.{html,js}',
-        // fee[dB]ack v0.3.0 shell + screens (additive, behind SLOPSMITH_UI=v3).
+        // fee[dB]ack v0.3.0 shell + screens (additive, behind FEEDBACK_UI=v3).
         // Subsumed by the recursive ./static/** glob above, but listed
         // explicitly so the v3 tree's Tailwind coverage is obvious.
         './static/v3/**/*.{html,js}',
@@ -37,7 +37,7 @@ module.exports = {
                 // fee[dB]ack v0.3.0 palette (additive). Namespaced under `fb`
                 // so it never clashes with the legacy `accent`/`dark`/`gold`
                 // tokens the 0.2.9 stylesheet still builds against.
-                // See ~/Repositories/slopsmith-feedback-v030/design/01-design-system.md §1.
+                // See ~/Repositories/feedBack-feedback-v030/design/01-design-system.md §1.
                 fb: {
                     bg: '#0f172a',        // app background (navy)
                     sidebar: '#111827',   // sidebar

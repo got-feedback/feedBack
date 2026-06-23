@@ -1,16 +1,16 @@
-# slopsmith-plugin-minigames
+# feedBack-plugin-minigames
 
-The minigame framework for [Slopsmith](https://github.com/got-feedback/feedback).
+The minigame framework for [FeedBack](https://github.com/got-feedback/feedBack).
 
 This plugin provides:
 
 - A **Minigames hub** screen that discovers every installed minigame plugin and lists them as tiles with leaderboards.
 - A **shared profile** (XP, level, unlocks, totals) that aggregates runs across every minigame.
-- A JS **SDK** exposed at `window.slopsmithMinigames` that minigame plugins use to access scoring, HUD primitives, run persistence, and a scheduler — so individual minigames do not need their own DSP or backend.
+- A JS **SDK** exposed at `window.feedBackMinigames` that minigame plugins use to access scoring, HUD primitives, run persistence, and a scheduler — so individual minigames do not need their own DSP or backend.
 
 ## Writing a minigame
 
-A minigame is a standard Slopsmith plugin that:
+A minigame is a standard FeedBack plugin that:
 
 1. Adds a `minigame` block to its `plugin.json`:
 
@@ -33,7 +33,7 @@ A minigame is a standard Slopsmith plugin that:
 2. On script load, registers itself with the SDK using the safe late-binding
    pattern (minigame plugins may load before the SDK; the pending queue
    handles both orderings — the SDK drains it on init, and the
-   `slopsmith-minigames-ready` event is an alternative for plugins that prefer
+   `feedBack-minigames-ready` event is an alternative for plugins that prefer
    event-driven registration):
 
    > **Important:** `spec.id` must exactly match the `id` field in `plugin.json`.
@@ -51,20 +51,20 @@ A minigame is a standard Slopsmith plugin that:
      stop:  () => { /* tear down */ },
    };
 
-   if (window.slopsmithMinigames) {
-     window.slopsmithMinigames.register(spec);
+   if (window.feedBackMinigames) {
+     window.feedBackMinigames.register(spec);
    } else {
-     (window.__slopsmithMinigamesPending = window.__slopsmithMinigamesPending || []).push(spec);
+     (window.__feedBackMinigamesPending = window.__feedBackMinigamesPending || []).push(spec);
    }
    ```
 
-3. Calls `window.slopsmithMinigames.end({ score, durationMs, modifiers, meta })` when the run ends.
+3. Calls `window.feedBackMinigames.end({ score, durationMs, modifiers, meta })` when the run ends.
 
-See [`slopsmith-plugin-flappy-bend`](https://github.com/got-feedback/feedback-plugin-flappy-bend) for a working example.
+See [`feedBack-plugin-flappy-bend`](https://github.com/got-feedback/feedBack-plugin-flappy-bend) for a working example.
 
 ## SDK reference
 
-`window.slopsmithMinigames` exposes:
+`window.feedBackMinigames` exposes:
 
 - `register(spec)` — declare a minigame
 - `start(gameId, opts)` / `end(result)` — lifecycle
@@ -77,4 +77,4 @@ See [`slopsmith-plugin-flappy-bend`](https://github.com/got-feedback/feedback-pl
 
 ## Dependencies
 
-- `slopsmith-plugin-notedetect` >= 1.10.0 — required for discrete/chord scoring modes (continuous mode is self-contained).
+- `feedBack-plugin-notedetect` >= 1.10.0 — required for discrete/chord scoring modes (continuous mode is self-contained).

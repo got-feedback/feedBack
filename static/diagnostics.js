@@ -1,4 +1,4 @@
-// Slopsmith diagnostics — client console capture + hardware probe + contribute API.
+// FeedBack diagnostics — client console capture + hardware probe + contribute API.
 //
 // Loaded ASAP from index.html so the console-wrap is in place before
 // app.js (and any plugins) start logging. See
@@ -6,7 +6,7 @@
 (function () {
     'use strict';
 
-    if (window.slopsmith && window.slopsmith.diagnostics) return; // idempotent
+    if (window.feedBack && window.feedBack.diagnostics) return; // idempotent
 
     const MAX_ENTRIES = 500;
     const MAX_ENTRY_BYTES = 4096;
@@ -162,14 +162,14 @@
     function _detectRuntime() {
         const ua = _ua();
         if (/Electron\//.test(ua)) {
-            const versions = (window.slopsmithElectron && window.slopsmithElectron.versions) || {};
+            const versions = (window.feedBackElectron && window.feedBackElectron.versions) || {};
             return {
                 kind: 'electron',
                 electron: versions.electron || null,
                 chrome: versions.chrome || null,
                 node: versions.node || null,
                 v8: versions.v8 || null,
-                app_version: (window.slopsmithElectron && window.slopsmithElectron.appVersion) || null,
+                app_version: (window.feedBackElectron && window.feedBackElectron.appVersion) || null,
             };
         }
         return { kind: 'browser' };
@@ -283,7 +283,7 @@
     // Regexp matching localStorage key names that are likely to contain
     // secrets. Values for matching keys are replaced with "<redacted>"
     // regardless of the user's redaction toggle, since plugin authors
-    // commonly store tokens in localStorage (cf. slopsmith plugin guide).
+    // commonly store tokens in localStorage (cf. feedBack plugin guide).
     const _LS_SECRET_KEY_RE = /(?:^|[-_.])(api[_-]?key|token|secret|password|passwd|pwd|auth|bearer|credential|apikey)($|[-_.])/i;
 
     function snapshotLocalStorage() {
@@ -355,8 +355,8 @@
         }, { plugin_count: 0, ui_contribution_count: 0, runtime_domain_count: 0 });
     }
 
-    window.slopsmith = window.slopsmith || {};
-    window.slopsmith.diagnostics = {
+    window.feedBack = window.feedBack || {};
+    window.feedBack.diagnostics = {
         snapshot: snapshotConsole,
         snapshotConsole,
         snapshotHardware,

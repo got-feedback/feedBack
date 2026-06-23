@@ -2,7 +2,7 @@
  * fee[dB]ack v0.3.0 — first-run home tour.
  *
  * Registers a spotlight tour over the home-page cards with the shared tour
- * engine (window.slopsmithTour / Shepherd) and auto-runs it once, the first
+ * engine (window.feedBackTour / Shepherd) and auto-runs it once, the first
  * time the user lands on the home page after completing onboarding. It stays
  * replayable forever from the per-screen "?" tour menu (registered with
  * screens: ['v3-home']).
@@ -72,7 +72,7 @@
     }
 
     function register() {
-        var t = window.slopsmithTour;
+        var t = window.feedBackTour;
         if (!t || typeof t.register !== 'function') return false;
         t.register(TOUR_ID, {
             name: 'Welcome tour',     // label in the "?" tour menu
@@ -88,7 +88,7 @@
     // honour the engine's own seen/dismissed state so it never repeats and a
     // dismissal isn't nagged. Stays replayable from the "?" menu either way.
     function startFirstRun() {
-        var t = window.slopsmithTour;
+        var t = window.feedBackTour;
         if (!t || typeof t.start !== 'function') return;
         try {
             if (t.hasSeen(TOUR_ID) || t.hasDismissed(TOUR_ID)) return;
@@ -118,12 +118,12 @@
     // can't start the tour immediately — there is no home screen to spotlight
     // yet. Arm it to run the first time the user lands back on v3-home.
     function armPendingFirstRun() {
-        var t = window.slopsmithTour;
+        var t = window.feedBackTour;
         if (!t || typeof t.start !== 'function') return;
         try {
             if (t.hasSeen(TOUR_ID) || t.hasDismissed(TOUR_ID)) return;
         } catch (e) { /* private mode — fall through */ }
-        var sm = window.slopsmith;
+        var sm = window.feedBack;
         if (!sm || typeof sm.on !== 'function') return;
         var onScreen = function (e) {
             if (!(e && e.detail && e.detail.id === 'v3-home')) return;
@@ -135,7 +135,7 @@
 
     window.v3OnboardingTour = { startFirstRun: startFirstRun, armPendingFirstRun: armPendingFirstRun };
 
-    // tour-engine.js assigns window.slopsmithTour at script-eval time, so if it
+    // tour-engine.js assigns window.feedBackTour at script-eval time, so if it
     // is loaded before us register() succeeds immediately; otherwise retry once
     // the DOM (and the engine) are ready.
     if (!register()) {

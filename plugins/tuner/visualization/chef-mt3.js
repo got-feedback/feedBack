@@ -1,5 +1,5 @@
 /**
- * CHEF MT-3 tuner visualization for the Slopsmith tuner plugin.
+ * CHEF MT-3 tuner visualization for the FeedBack tuner plugin.
  *
  * Inspired by classic chromatic pedal tuners:
  *   - Shiny black rectangular panel with chamfered edges and corner screws

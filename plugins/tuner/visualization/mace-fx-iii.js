@@ -1,5 +1,5 @@
 /**
- * Mace Fx III style tuner visualization for the Slopsmith tuner plugin.
+ * Mace Fx III style tuner visualization for the FeedBack tuner plugin.
  *
  * Inspired by hardware rack tuner displays:
  *   - Dark navy LCD background

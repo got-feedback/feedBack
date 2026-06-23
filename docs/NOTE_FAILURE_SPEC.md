@@ -13,7 +13,7 @@ late, wrong pitch, or not played at all.
 
 ## Prerequisites
 
-This feature depends on the **note detection plugin** (`slopsmith-plugin-notedetect`),
+This feature depends on the **note detection plugin** (`feedBack-plugin-notedetect`),
 which provides real-time pitch detection via server-side aubio/YIN over WebSocket.
 The detection plugin streams `DetectedNote` events; this spec describes the
 **matching, judgment, and rendering** layer that consumes those events.
@@ -55,10 +55,10 @@ Guitar → USB Adapter → sounddevice (server)
    Wire format: `{ note: "A2", freq: 110.0, confidence: 0.92, time: 1.234 }`
 
    > **Plugin naming note:** The detection plugin's repository is named
-   > `slopsmith-plugin-notedetect`, but the plugin registers with the id
+   > `feedBack-plugin-notedetect`, but the plugin registers with the id
    > `note_detect` (snake_case). Its HTTP/WebSocket routes therefore appear
-   > under `/api/plugins/note_detect/…`. There is no `window.slopsmithPlugin_*`
-   > global pattern in Slopsmith — to check whether the detection plugin is
+   > under `/api/plugins/note_detect/…`. There is no `window.feedBackPlugin_*`
+   > global pattern in FeedBack — to check whether the detection plugin is
    > available at runtime, attempt a fetch to `/api/plugins/note_detect/status`
    > (or similar) or consult the `/api/plugins` list. Use the repo name only
    > in documentation links.
@@ -335,7 +335,7 @@ The tracker must handle A-B looping:
 | `loopA`, `loopB`             | Current A-B loop boundaries              |
 | `audio.currentTime`          | Actual audio playback position           |
 
-### New Events Emitted (via `window.slopsmith.emit`)
+### New Events Emitted (via `window.feedBack.emit`)
 
 | Event                        | Payload                                  |
 |------------------------------|------------------------------------------|
@@ -373,7 +373,7 @@ There are three distinct threshold tiers — keep them conceptually separate:
 | `hitGlowDuration`      | 0.5     | Green glow fade time (sec)                                     |
 
 Persist these settings in plugin-local storage (e.g. `localStorage` prefixed
-with the plugin id). Do **not** assume they can be saved through Slopsmith's
+with the plugin id). Do **not** assume they can be saved through FeedBack's
 `/api/settings` endpoint under a `notedetect_feedback` key — the current server
 only persists a fixed set of known settings keys. If backend support for a
 dedicated persisted key is added later, this plugin may migrate to `/api/settings`.

@@ -33,7 +33,7 @@
     // the pedal photos measure ~57.5% down), so they stay aligned at any size.
     var JACK_FRAC = 0.575;
 
-    var sm = window.slopsmith;
+    var sm = window.feedBack;
 
     // ---- pure geometry helpers (exported for tests) -----------------------
 

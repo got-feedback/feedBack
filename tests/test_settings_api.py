@@ -1,5 +1,5 @@
 """Tests for server.py /api/settings — partial-update safety and the
-master_difficulty key added in slopsmith#48 PR 2.
+master_difficulty key added in feedBack#48 PR 2.
 
 The endpoint must merge only keys present in the request body so that
 single-key POSTs (like the difficulty slider's oninput fire-and-forget)
@@ -55,7 +55,7 @@ def client(tmp_path, monkeypatch):
     # Forcing a fresh import inside the patched env means each test
     # gets an isolated meta_db + config dir.
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SKIP_STARTUP_TASKS", "1")
+    monkeypatch.setenv("FEEDBACK_SKIP_STARTUP_TASKS", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     test_client = _DirectSettingsClient(server)
@@ -479,7 +479,7 @@ def test_is_first_scan_false_when_some_songs_cached(tmp_path, scan_module):
 # and side-effect-free, but that bypass means the FastAPI route registration,
 # request parsing, and lifespan/startup wiring would never get exercised. The
 # tests below restore that coverage by going through a real `TestClient`, with
-# `SLOPSMITH_SKIP_STARTUP_TASKS=1` so plugin loading and the background scan
+# `FEEDBACK_SKIP_STARTUP_TASKS=1` so plugin loading and the background scan
 # don't reach for the user's filesystem.
 
 def _snapshot_loaded_plugins():
@@ -507,13 +507,13 @@ def api_client(tmp_path, monkeypatch, isolate_logging):
     which is the only place the skip-tasks branch is actually exercised.
 
     Pulls in `isolate_logging` from tests/conftest.py — the startup hook
-    calls `configure_logging()`, which mutates global slopsmith/uvicorn
+    calls `configure_logging()`, which mutates global feedBack/uvicorn
     handlers and structlog defaults; without snapshot/restore those
     changes leak into later tests and the suite becomes order-dependent."""
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SKIP_STARTUP_TASKS", "1")
+    monkeypatch.setenv("FEEDBACK_SKIP_STARTUP_TASKS", "1")
     sys.modules.pop("server", None)
     plugins_snapshot = _snapshot_loaded_plugins()
     server = importlib.import_module("server")
@@ -581,7 +581,7 @@ def test_api_post_settings_null_string_is_noop_via_testclient(api_client, tmp_pa
 
 
 def test_skip_startup_tasks_drives_startup_to_complete(api_client):
-    """With SLOPSMITH_SKIP_STARTUP_TASKS set, the startup hook must:
+    """With FEEDBACK_SKIP_STARTUP_TASKS set, the startup hook must:
       * skip plugin loading and the background scan,
       * leave the status in a terminal `complete` phase with running=False,
       * reset current_plugin/loaded/total so stale data from a prior import
@@ -608,7 +608,7 @@ def test_skip_startup_tasks_does_not_call_load_plugins_or_scan(tmp_path, monkeyp
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SKIP_STARTUP_TASKS", "1")
+    monkeypatch.setenv("FEEDBACK_SKIP_STARTUP_TASKS", "1")
     sys.modules.pop("server", None)
     plugins_snapshot = _snapshot_loaded_plugins()
     server = importlib.import_module("server")
@@ -650,7 +650,7 @@ def test_skip_startup_tasks_clears_stale_plugin_registry(tmp_path, monkeypatch, 
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SKIP_STARTUP_TASKS", "1")
+    monkeypatch.setenv("FEEDBACK_SKIP_STARTUP_TASKS", "1")
 
     # Snapshot the registry as the importer left it so we can restore it
     # after this test mutates it — otherwise the cleared state would leak

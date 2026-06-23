@@ -3,8 +3,8 @@
 The full format specification that used to live here has moved to its own repository and is now
 the **authoritative, versioned reference**:
 
-> **📖 https://github.com/got-feedback/feedback-feedpak-spec**
-> — normative spec ([`spec/feedpak-v1.md`](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md)),
+> **📖 https://github.com/got-feedback/feedpak-spec**
+> — normative spec ([`spec/feedpak-v1.md`](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md)),
 > JSON Schemas, examples, and a reference validator.
 
 Update bookmarks to point there. This page is a thin pointer kept at the original path so existing
@@ -14,7 +14,7 @@ links keep resolving.
 
 The published format is named **feedpak** (extension `.feedpak`, manifest key `feedpak_version`).
 This codebase still uses the legacy **sloppak** name internally — `lib/sloppak.py`, the
-`.sloppak` extension, `SLOPSMITH_*` env vars, etc. **They describe the same on-disk format.** The
+`.sloppak` extension, `FEEDBACK_*` env vars, etc. **They describe the same on-disk format.** The
 rename is repo/public-facing only for now (see the top-level workspace `CLAUDE.md`), so when the
 spec says `feedpak` / `feedpak_version`, the packs this server reads and writes today are the same
 structure under the `.sloppak` name. The internal rename is a separate, later effort.
@@ -45,5 +45,5 @@ concepts to the code that reads and writes them. It is **not** part of the forma
 > **Note on older section references.** Some inline code comments in this repo cite section
 > numbers from the previous version of this document (e.g. "sloppak-spec §5.3"). The external spec
 > renumbered its sections, so those citations are approximate — find the topic by name in the
-> [feedpak spec](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md)
+> [feedpak spec](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md)
 > rather than by the old number.

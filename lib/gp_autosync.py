@@ -30,7 +30,7 @@ import zipfile
 import io
 from pathlib import Path
 
-_log = logging.getLogger("slopsmith.lib.gp_autosync")
+_log = logging.getLogger("feedBack.lib.gp_autosync")
 
 # ── Dependency check ──────────────────────────────────────────────────────────
 

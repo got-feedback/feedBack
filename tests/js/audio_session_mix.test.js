@@ -4,9 +4,9 @@ const { loadAudioSession } = require('./audio_session_test_harness');
 
 test('audio-mix commands inspect register and unregister participants', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const events = [];
-    window.slopsmith.on('audio-mix:participant-registered', event => events.push(event.detail.payload.participantId));
+    window.feedBack.on('audio-mix:participant-registered', event => events.push(event.detail.payload.participantId));
 
     const registered = await api.dispatch({
         capability: 'audio-mix',
@@ -29,12 +29,12 @@ test('audio-mix commands inspect register and unregister participants', async ()
     assert.equal(inspected.payload.participants.some(p => p.participantId === 'plugin.delay'), true);
     assert.equal(events.includes('plugin.delay'), true);
     assert.equal(removed.status, 'applied');
-    assert.equal(window.slopsmith.audioSession.snapshot().domains['audio-mix'].participants.some(p => p.participantId === 'plugin.delay'), false);
+    assert.equal(window.feedBack.audioSession.snapshot().domains['audio-mix'].participants.some(p => p.participantId === 'plugin.delay'), false);
 });
 
 test('audio-mix registration reports incompatible participants explicitly', async () => {
     const window = loadAudioSession();
-    const result = await window.slopsmith.capabilities.dispatch({
+    const result = await window.feedBack.capabilities.dispatch({
         capability: 'audio-mix',
         command: 'register-participant',
         source: 'test',
@@ -43,13 +43,13 @@ test('audio-mix registration reports incompatible participants explicitly', asyn
 
     assert.equal(result.status, 'incompatible-version');
     assert.equal(result.outcome, 'incompatible-version');
-    assert.equal(window.slopsmith.audioSession.snapshot().recentOutcomes.at(-1).outcome, 'incompatible-version');
+    assert.equal(window.feedBack.audioSession.snapshot().recentOutcomes.at(-1).outcome, 'incompatible-version');
 });
 
 test('audio-mix lists required participant kinds and commits provider fader values', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
     audioSession.startSession({ sessionId: 'main:test-song', songKey: 'test-song', songFormat: 'sloppak' });
 
     let pluginValue = 0.25;
@@ -99,10 +99,10 @@ test('audio-mix lists required participant kinds and commits provider fader valu
 
 test('audio-mix reports invalid unavailable and timed-out fader operations', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const events = [];
-    window.slopsmith.on('audio-mix:fader-unavailable', event => events.push(event.detail.payload.participantId));
-    window.slopsmith.audioSession.startSession({ sessionId: 'main:test-song' });
+    window.feedBack.on('audio-mix:fader-unavailable', event => events.push(event.detail.payload.participantId));
+    window.feedBack.audioSession.startSession({ sessionId: 'main:test-song' });
 
     await api.dispatch({
         capability: 'audio-mix',
@@ -150,7 +150,7 @@ test('audio-mix reports invalid unavailable and timed-out fader operations', asy
 
 test('audio-mix keeps pre-session participants pending then attaches them on session start', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await api.dispatch({
         capability: 'audio-mix',
@@ -166,7 +166,7 @@ test('audio-mix keeps pre-session participants pending then attaches them on ses
         },
     });
     const pending = await api.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
-    window.slopsmith.audioSession.startSession({ sessionId: 'main:next-song' });
+    window.feedBack.audioSession.startSession({ sessionId: 'main:next-song' });
     const active = await api.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
 
     assert.equal(pending.payload.faders.find(fader => fader.participantId === 'plugin.presession').availability, 'pending');
@@ -175,7 +175,7 @@ test('audio-mix keeps pre-session participants pending then attaches them on ses
 
 test('audio-mix registration is idempotent and song switching keeps known participants without stale route', async () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
     audioSession.startSession({ sessionId: 'main:first-song', songKey: 'first-song' });
     audioSession.setRoute({ routeKind: 'stems', availability: 'available' });
 
@@ -189,11 +189,11 @@ test('audio-mix registration is idempotent and song switching keeps known partic
             operations: ['fader.get-value', 'fader.set-value'],
         });
     }
-    const beforeStop = await window.slopsmith.capabilities.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
+    const beforeStop = await window.feedBack.capabilities.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
     audioSession.stopSession('song switch');
     const stopped = audioSession.snapshot();
     audioSession.startSession({ sessionId: 'main:second-song', songKey: 'second-song' });
-    const afterStart = await window.slopsmith.capabilities.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
+    const afterStart = await window.feedBack.capabilities.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
 
     assert.equal(beforeStop.payload.faders.filter(fader => fader.participantId === 'plugin.rehydrated').length, 1);
     assert.equal(stopped.domains['audio-mix'].route.availability, 'unavailable');
@@ -207,7 +207,7 @@ test('re-registering a mix participant without handlers preserves the existing s
     // wiped the fader.set-value handler installed at init — the mixer slider
     // then moved visually but never applied the volume (archive and sloppak).
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
     audioSession.startSession({ sessionId: 'main:test-song', songKey: 'test-song', songFormat: 'sloppak' });
 
     const applied = [];

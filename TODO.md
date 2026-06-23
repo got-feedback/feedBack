@@ -22,5 +22,5 @@ too sharp / too flat / not played).
 - **[Implementation Plan](docs/NOTE_FAILURE_PLAN.md)** — 7 phases from
   detection foundation through section grading and polish
 - **Note Detection Plugin Plan** — see the
-  [slopsmith-plugin-notedetect](https://github.com/topkoa/slopsmith-plugin-notedetect)
+  [feedBack-plugin-notedetect](https://github.com/topkoa/feedBack-plugin-notedetect)
   repository (Phase 0 foundation)

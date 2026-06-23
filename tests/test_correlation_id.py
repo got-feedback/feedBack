@@ -1,7 +1,7 @@
 """Integration test for CorrelationIdMiddleware wiring in server.py.
 
 Verifies that every HTTP response carries the X-Request-ID header that was
-introduced alongside the structured logging bootstrap (slopsmith#155).
+introduced alongside the structured logging bootstrap (feedBack#155).
 Requests that include an X-Request-ID should echo it; requests without it
 should receive a server-generated ID.  A cross-cutting end-to-end test
 additionally asserts that the ID propagates into log output.
@@ -25,7 +25,7 @@ from asgi_correlation_id import CorrelationIdMiddleware
 def client(tmp_path, monkeypatch):
     """Minimal server client with background I/O suppressed."""
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     monkeypatch.setattr(server, "load_plugins", lambda *a, **kw: None)
@@ -96,7 +96,7 @@ def test_request_id_appears_in_log_line(monkeypatch):
     logging_setup.configure_logging()
 
     buf = io.StringIO()
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         if isinstance(h, logging.StreamHandler) and not isinstance(
             h, logging.FileHandler
         ):
@@ -108,7 +108,7 @@ def test_request_id_appears_in_log_line(monkeypatch):
 
     @mini_app.get("/probe")
     def probe():
-        logging.getLogger("slopsmith.probe").info("probe_event")
+        logging.getLogger("feedBack.probe").info("probe_event")
         return {"ok": True}
 
     known_id = str(uuid.uuid4())
@@ -135,7 +135,7 @@ def test_server_app_request_id_propagated_to_logs(monkeypatch, tmp_path):
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.delenv("LOG_FILE", raising=False)
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
 
     sys.modules.pop("server", None)
     server_mod = importlib.import_module("server")
@@ -145,7 +145,7 @@ def test_server_app_request_id_propagated_to_logs(monkeypatch, tmp_path):
     # Add a probe route to server.app so the test can trigger a log write.
     @server_mod.app.get("/_test_log_probe")
     def _probe():
-        logging.getLogger("slopsmith.server").info("server_probe_event")
+        logging.getLogger("feedBack.server").info("server_probe_event")
         return {"ok": True}
 
     known_id = str(uuid.uuid4())
@@ -153,9 +153,9 @@ def test_server_app_request_id_propagated_to_logs(monkeypatch, tmp_path):
     try:
         with TestClient(server_mod.app) as tc:
             # startup_events() has now run (including its configure_logging() call),
-            # so the slopsmith handlers are freshly created.  Redirect their stream
+            # so the feedBack handlers are freshly created.  Redirect their stream
             # to buf NOW, after startup, so we capture the probe request's output.
-            for h in logging.getLogger("slopsmith").handlers:
+            for h in logging.getLogger("feedBack").handlers:
                 if isinstance(h, logging.StreamHandler) and not isinstance(
                     h, logging.FileHandler
                 ):

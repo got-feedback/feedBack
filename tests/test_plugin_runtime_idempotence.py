@@ -25,7 +25,7 @@ def test_plugin_loader_guards_duplicate_hydration_and_scripts():
     source = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 
     assert "let _loadPluginsInFlight = false" in source
-    assert "window.slopsmith._loadedPluginScripts" in source
+    assert "window.feedBack._loadedPluginScripts" in source
     assert "document.querySelectorAll('.screen[id^=\"plugin-\"]')" in source
 
 
@@ -45,13 +45,13 @@ def test_plugin_loader_unmounts_contributions_for_removed_plugins():
     assert "for (const [pluginId, contributions] of _pluginUiContributions)" in source
     assert "const stalePlugin = { id: pluginId }" in source
     assert "await _commandUiDomain(contribution.domain, 'unmount', stalePlugin, contribution)" in source
-    assert "window.slopsmith?.capabilities?.unregisterParticipant?.(pluginId)" in source
+    assert "window.feedBack?.capabilities?.unregisterParticipant?.(pluginId)" in source
     assert "_pluginUiContributions.delete(pluginId)" in source
 
 
 
 def test_capability_visualizer_waits_for_registry_instead_of_hard_error():
-    source = _sibling_file("slopsmith-plugin-capability-visualizer", "screen.js").read_text(encoding="utf-8")
+    source = _sibling_file("feedBack-plugin-capability-visualizer", "screen.js").read_text(encoding="utf-8")
 
     assert "scheduleRegistryRetry" in source
     assert "Capability runtime is loading..." in source
@@ -74,7 +74,7 @@ def test_capability_registry_exposes_claim_dispatch_and_ready_contracts():
     for token in ["function claim(", "function release(", "async function dispatch(", "function subscribe(", "getDiagnostics: snapshotDiagnostics"]:
         assert token in source
     assert "activeClaims" in source
-    assert "slopsmith:capabilities:ready" in source
+    assert "feedBack:capabilities:ready" in source
     assert "outcome: 'overridden'" in source
 
 
@@ -122,7 +122,7 @@ def test_capability_events_do_not_bridge_deferred_surfaces():
 
     for token in ["return 'ui.navigation'", "return 'note-detection'", "eventName.startsWith('viz:') || eventName.startsWith('highway:')"]:
         assert token not in app_source
-    for token in ["'navigate'", "'screen:changed'", "function _navigate(", "window.slopsmith.navigate(id, params)"]:
+    for token in ["'navigate'", "'screen:changed'", "function _navigate(", "window.feedBack.navigate(id, params)"]:
         assert token not in capability_source
 
 
@@ -131,7 +131,7 @@ def test_plugin_loader_registers_manifest_capability_declarations():
 
     assert "const capabilityPlugins = fetchedPlugins.slice().sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')))" in source
     assert "capabilityApi.registerParticipants(capabilityPlugins)" in source
-    assert "window.slopsmith.capabilities.registerParticipants(plugins)" not in source
+    assert "window.feedBack.capabilities.registerParticipants(plugins)" not in source
     assert "plugin-manifest-load" in source
 
 
@@ -141,12 +141,12 @@ def test_app_event_bus_dispatches_locally_and_preserves_juce_stop_state():
     assert "this.dispatchEvent(new CustomEvent(event, { detail }))" in source
     assert "const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || isPlaying" in source
     assert "sm.emit('song:resume', payload)" in source
-    assert "window.slopsmith.emit('song:resume', payload)" in source
+    assert "window.feedBack.emit('song:resume', payload)" in source
 
 
 def test_nam_and_stems_use_owner_claim_dispatch_semantics():
-    nam_source = _sibling_text("slopsmith-plugin-nam-tone", "screen.js", "NAM_STEM_CLAIM_ID = 'nam.amp-active'")
-    stems_source = _sibling_text("slopsmith-plugin-stems", "screen.js", "claimSnapshots")
+    nam_source = _sibling_text("feedBack-plugin-nam-tone", "screen.js", "NAM_STEM_CLAIM_ID = 'nam.amp-active'")
+    stems_source = _sibling_text("feedBack-plugin-stems", "screen.js", "claimSnapshots")
 
     assert "NAM_STEM_CLAIM_ID = 'nam.amp-active'" in nam_source
     assert "api.dispatch({" in nam_source
@@ -164,22 +164,22 @@ def test_nam_and_stems_use_owner_claim_dispatch_semantics():
 
 
 def test_nam_screen_uses_stable_singleton_hooks_for_rehydration():
-    source = _sibling_text("slopsmith-plugin-nam-tone", "screen.js", "window.__slopsmithNamHooks")
-    manifest = _sibling_text("slopsmith-plugin-nam-tone", "plugin.json", "capability-pipelines.v1")
+    source = _sibling_text("feedBack-plugin-nam-tone", "screen.js", "window.__feedBackNamHooks")
+    manifest = _sibling_text("feedBack-plugin-nam-tone", "plugin.json", "capability-pipelines.v1")
 
     assert "plugin-runtime-idempotent.v1" in manifest
     assert "capability-pipelines.v1" in manifest
-    assert "window.__slopsmithNamHooks" in source
+    assert "window.__feedBackNamHooks" in source
     assert "hookState.impl" in source
     assert "if (hookState.installed) return" in source
 
 
 def test_stems_screen_uses_stable_singleton_hooks_for_rehydration():
-    source = _sibling_text("slopsmith-plugin-stems", "screen.js", "window.__slopsmithStemsHooks")
-    manifest = _sibling_text("slopsmith-plugin-stems", "plugin.json", "capability-pipelines.v1")
+    source = _sibling_text("feedBack-plugin-stems", "screen.js", "window.__feedBackStemsHooks")
+    manifest = _sibling_text("feedBack-plugin-stems", "plugin.json", "capability-pipelines.v1")
 
     assert "plugin-runtime-idempotent.v1" in manifest
     assert "capability-pipelines.v1" in manifest
-    assert "window.__slopsmithStemsHooks" in source
+    assert "window.__feedBackStemsHooks" in source
     assert "hookState.impl" in source
     assert "if (hookState.installed) return" in source

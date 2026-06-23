@@ -101,8 +101,8 @@ test('app.js color manager name-maps to both highways, with identity no-op + bui
     const idfn = extractBlock(src, 'function _hwcMappingIsIdentity(sc, isBass)');
     assert.match(idfn, /return isBass \? sc <= 4 : sc <= 6/, 'identity must be 4-string bass / ≤6-string guitar');
     // Re-apply on song load (string count can change the slot→index mapping).
-    assert.match(src, /window\.slopsmith\.on\('viz:renderer:ready', reapplyHighwayStringColors\)/, 'must re-apply when a viz renderer becomes ready');
-    assert.match(src, /window\.slopsmith\.on\('song:loaded', reapplyHighwayStringColors\)/, 'must re-apply on song load');
+    assert.match(src, /window\.feedBack\.on\('viz:renderer:ready', reapplyHighwayStringColors\)/, 'must re-apply when a viz renderer becomes ready');
+    assert.match(src, /window\.feedBack\.on\('song:loaded', reapplyHighwayStringColors\)/, 'must re-apply on song load');
 });
 
 // ── Executable: dim/bright derivation math ────────────────────────────────

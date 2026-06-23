@@ -147,7 +147,7 @@
         <p class="text-xs text-gray-500 mb-2">
             Upload an MP4 or WebM (&le;50&nbsp;MB). Plays muted, looped
             in the fog band when the style above is set to
-            <em>Custom video</em>. Bytes stay on the slopsmith server,
+            <em>Custom video</em>. Bytes stay on the feedBack server,
             not in the browser.
         </p>
         <div class="flex items-center gap-2">
@@ -725,7 +725,7 @@
             // localStorage values are stored as UTF-16 (two bytes per
             // character), so the on-disk footprint is ~2.67× the raw
             // file size. localStorage quotas are typically 5 MB per
-            // origin and slopsmith already uses some of that for other
+            // origin and feedBack already uses some of that for other
             // settings, so a 1.5 MB raw limit (≈4 MB on disk) leaves
             // safe headroom; the read-back verification below catches
             // remaining edge cases where the write still gets refused.

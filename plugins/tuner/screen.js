@@ -1,7 +1,7 @@
-// Guitar/Bass Tuner Plugin for Slopsmith
+// Guitar/Bass Tuner Plugin for FeedBack
 (function() {
     'use strict';
-    const _TUNER_STORAGE_KEY = 'slopsmith_tuner_settings';
+    const _TUNER_STORAGE_KEY = 'feedBack_tuner_settings';
 
     // ── Player sync state ─────────────────────────────────────────────
     let _onScreenChanged = null;
@@ -104,18 +104,18 @@
 
     function _tuningIdentityKey(songInfo) {
         if (!songInfo || !Array.isArray(songInfo.tuning) || !songInfo.tuning.length) return null;
-        const ctx = (typeof window.slopsmith?.songTuningContext === 'function')
-            ? window.slopsmith.songTuningContext(songInfo)
+        const ctx = (typeof window.feedBack?.songTuningContext === 'function')
+            ? window.feedBack.songTuningContext(songInfo)
             : {
                 stringCount: songInfo.stringCount,
                 arrangement: songInfo.arrangement,
                 arrangement_smart_name: songInfo.arrangement_smart_name,
             };
-        const isBass = (typeof window.slopsmith?.isBassArrangement === 'function')
-            ? window.slopsmith.isBassArrangement(ctx)
+        const isBass = (typeof window.feedBack?.isBassArrangement === 'function')
+            ? window.feedBack.isBassArrangement(ctx)
             : (songInfo.arrangement || '').toLowerCase().includes('bass');
-        const sc = (typeof window.slopsmith?.effectiveStringCount === 'function')
-            ? window.slopsmith.effectiveStringCount(songInfo.tuning, ctx)
+        const sc = (typeof window.feedBack?.effectiveStringCount === 'function')
+            ? window.feedBack.effectiveStringCount(songInfo.tuning, ctx)
             : (songInfo.stringCount || songInfo.tuning.length);
         if (!sc || sc <= 0) return null;
         const offsets = songInfo.tuning.slice(0, sc);
@@ -125,7 +125,7 @@
 
     function _autoOpenSessionKey(songInfo) {
         if (!songInfo) return '';
-        const cur = window.slopsmith?.currentSong;
+        const cur = window.feedBack?.currentSong;
         const filename = (cur && cur.filename) || songInfo.filename || songInfo.title || 'unknown';
         const arr = (cur && cur.arrangementIndex != null)
             ? cur.arrangementIndex
@@ -142,7 +142,7 @@
     async function _maybeAutoOpenOnTuningChange() {
         if (!document.getElementById('player')?.classList.contains('active')) return;
 
-        const songInfo = window.highway?.getSongInfo?.() || window.slopsmith?.currentSong;
+        const songInfo = window.highway?.getSongInfo?.() || window.feedBack?.currentSong;
         if (!songInfo) return;
 
         const tuningKey = _tuningIdentityKey(songInfo);
@@ -181,11 +181,11 @@
     }
 
     function _installAutoOpenListeners() {
-        if (_onAutoOpenSongLoading || !window.slopsmith?.on) return;
+        if (_onAutoOpenSongLoading || !window.feedBack?.on) return;
         _onAutoOpenSongLoading = _onAutoOpenSongLoadingHandler;
         _onAutoOpenSongReady = () => { _maybeAutoOpenOnTuningChange(); };
-        window.slopsmith.on('song:loading', _onAutoOpenSongLoading);
-        window.slopsmith.on('song:ready', _onAutoOpenSongReady);
+        window.feedBack.on('song:loading', _onAutoOpenSongLoading);
+        window.feedBack.on('song:ready', _onAutoOpenSongReady);
     }
 
     // ── Player sync helpers ───────────────────────────────────────────
@@ -196,18 +196,18 @@
             || (onPlayer && songInfo?.tuning?.length);
         if (songInfo?.tuning?.length && wantCurrent) {
             _state.selectedTuningName = '_current';
-            const ctx = (typeof window.slopsmith?.songTuningContext === 'function')
-                ? window.slopsmith.songTuningContext(songInfo)
+            const ctx = (typeof window.feedBack?.songTuningContext === 'function')
+                ? window.feedBack.songTuningContext(songInfo)
                 : {
                     stringCount: songInfo.stringCount,
                     arrangement: songInfo.arrangement,
                     arrangement_smart_name: songInfo.arrangement_smart_name,
                 };
-            const isBass = (typeof window.slopsmith?.isBassArrangement === 'function')
-                ? window.slopsmith.isBassArrangement(ctx)
+            const isBass = (typeof window.feedBack?.isBassArrangement === 'function')
+                ? window.feedBack.isBassArrangement(ctx)
                 : (songInfo.arrangement || '').toLowerCase().includes('bass');
-            const sc = (typeof window.slopsmith?.effectiveStringCount === 'function')
-                ? window.slopsmith.effectiveStringCount(songInfo.tuning, ctx)
+            const sc = (typeof window.feedBack?.effectiveStringCount === 'function')
+                ? window.feedBack.effectiveStringCount(songInfo.tuning, ctx)
                 : (songInfo.stringCount || songInfo.tuning.length);
             _state.currentSongOffsets = songInfo.tuning.slice(0, sc);
             _state.currentSongIsBass = isBass;
@@ -378,14 +378,14 @@
         _outsideClickClose = () => { if (_state.enabled) disable(); };
         setTimeout(() => { if (_outsideClickClose) document.addEventListener('click', _outsideClickClose, { once: true }); }, 0);
 
-        if (window.slopsmith && !_onScreenChanged) {
+        if (window.feedBack && !_onScreenChanged) {
             _onScreenChanged = () => { disable(); };
             _onSongReady = () => {
                 _tunerUIApi.renderTuningOptions();
                 if (_state.selectedTuningName === '_current') _syncCurrentTuning();
             };
-            window.slopsmith.on('screen:changed', _onScreenChanged);
-            window.slopsmith.on('song:ready', _onSongReady);
+            window.feedBack.on('screen:changed', _onScreenChanged);
+            window.feedBack.on('song:ready', _onSongReady);
         }
 
         _state.uiContainer?.querySelector('.tuner-mic-error')?.remove();
@@ -413,8 +413,8 @@
         if (_outsideClickClose) { document.removeEventListener('click', _outsideClickClose); _outsideClickClose = null; }
         if (_state.activeViz) { _state.activeViz.destroy(); _state.activeViz = null; }
         if (_state.uiContainer) { _state.uiContainer.classList.add('hidden'); _state.uiContainer.classList.remove('flex'); }
-        if (_onScreenChanged) { window.slopsmith?.off('screen:changed', _onScreenChanged); _onScreenChanged = null; }
-        if (_onSongReady) { window.slopsmith?.off('song:ready', _onSongReady); _onSongReady = null; }
+        if (_onScreenChanged) { window.feedBack?.off('screen:changed', _onScreenChanged); _onScreenChanged = null; }
+        if (_onSongReady) { window.feedBack?.off('song:ready', _onSongReady); _onSongReady = null; }
         if (window._tunerAudio) window._tunerAudio.stop();
         if (_state.vizContainer) _state.vizContainer.innerHTML = '';
         if (window.tuner?.updateButtons) window.tuner.updateButtons();
@@ -426,7 +426,7 @@
             ).catch(e => console.warn('Tuner: badge audio resume failed:', e && e.message ? e.message : e));
         }
         if (wasEnabled && onPlayer) {
-            const songInfo = window.highway?.getSongInfo?.() || window.slopsmith?.currentSong;
+            const songInfo = window.highway?.getSongInfo?.() || window.feedBack?.currentSong;
             if (songInfo) _autoOpenDismissedSessionKey = _autoOpenSessionKey(songInfo);
         }
     }

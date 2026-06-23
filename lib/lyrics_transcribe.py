@@ -23,14 +23,14 @@ Engine selection
 Two transcription paths share a common output:
 
 * `transcribe_vocals_remote(path, server_url, ...)` — POST the vocal
-  stem to the `/align` endpoint on a slopsmith-demucs-server (Byron's
+  stem to the `/align` endpoint on a feedBack-demucs-server (got-feedBack's
   reference server already hosts WhisperX alongside Demucs at the same
   URL).
 
 * `transcribe_vocals_local(path, ...)` — load WhisperX in-process. Heavy
   (~3 GB of model weights for `large-v2` + the wav2vec2 aligner) and
   slow on CPU. Deferred imports of `whisperx`, `torch`, and `soundfile`
-  keep the rest of slopsmith free of those dependencies.
+  keep the rest of feedBack free of those dependencies.
 
 Callers pick between them based on a `whisperx.server_url` config and
 fall back as appropriate. This module does not read config — both
@@ -58,7 +58,7 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-log = logging.getLogger("slopsmith.lib.lyrics_transcribe")
+log = logging.getLogger("feedBack.lib.lyrics_transcribe")
 
 ProgressCB = Optional[Callable[[float, str, str], None]]
 
@@ -179,7 +179,7 @@ _MIN_WORD_DURATION = 0.05
 
 # Semver for the lyric-transcription artifact contract that gets stamped
 # into the sloppak manifest's `lyric_transcription` block alongside the
-# engine + model. Bump per the semantics defined in slopsmith#357 (the
+# engine + model. Bump per the semantics defined in feedBack#357 (the
 # parent `stem_separation` RFC):
 #   * patch — metadata-only or implementation fixes; no regeneration
 #   * minor — backward-compatible additions

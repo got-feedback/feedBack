@@ -1,8 +1,8 @@
 """Plugin-registered FastAPI routes for the 3dhighway visualization plugin.
 
-Registered by slopsmith core via plugin.json's "routes" field — the
+Registered by feedBack core via plugin.json's "routes" field — the
 loader at plugins/__init__.py:589–604 imports this module and calls
-setup(app, context). context["config_dir"] points at the slopsmith
+setup(app, context). context["config_dir"] points at the feedBack
 data directory; we namespace user uploads under
 {config_dir}/plugin_uploads/highway_3d/.
 

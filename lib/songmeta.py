@@ -10,7 +10,7 @@ source of truth, so the change survives both incremental and full rescans.
 only the keys present are overwritten, so an edit of just the title can't blank
 out the artist.
 
-Only slopsmith's own ``.sloppak`` format (zip- or directory-form) is writable.
+Only feedBack's own ``.sloppak`` format (zip- or directory-form) is writable.
 Unknown / unsupported shapes return False and the caller keeps the DB-only
 update.
 """

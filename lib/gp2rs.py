@@ -10,7 +10,7 @@ from pathlib import Path
 
 import guitarpro
 
-log = logging.getLogger("slopsmith.lib.gp2rs")
+log = logging.getLogger("feedBack.lib.gp2rs")
 
 _YEAR_RE = re.compile(r"\b(1[89]\d{2}|20\d{2})\b")
 
@@ -1122,7 +1122,7 @@ def _build_xml(
 
     # Tuning. RS2014 schema names 6 string slots; we always emit those
     # for compatibility, and emit additional string6+ attributes (up to
-    # `len(tuning)-1`) for 7+ string arrangements. Slopsmith parses
+    # `len(tuning)-1`) for 7+ string arrangements. FeedBack parses
     # them; the format ignores them.
     tuning_el = ET.SubElement(root, "tuning")
     for i in range(max(6, len(tuning))):

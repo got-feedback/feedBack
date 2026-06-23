@@ -36,7 +36,7 @@ _state = {
     "db_path": None,
     "profile_path": None,
     "plugins_dir_resolver": None,
-    "log": logging.getLogger("slopsmith.plugin.minigames"),
+    "log": logging.getLogger("feedBack.plugin.minigames"),
     # fee[dB]ack v0.3.0 unified XP: when running inside core these point at the
     # single core XP store (server.py plugin_context). XP then flows to ONE
     # store the profile badge reads. Absent when the plugin runs standalone,
@@ -282,7 +282,7 @@ def _list_minigame_plugins(force_refresh: bool = False) -> list:
             "version":   data.get("version"),
         }
         # Deduplicate by plugin_id: first entry wins (resolver returns
-        # SLOPSMITH_PLUGINS_DIR before the bundled siblings, so an explicit
+        # FEEDBACK_PLUGINS_DIR before the bundled siblings, so an explicit
         # override takes precedence over the in-tree snapshot — same winner
         # selection as the core plugin loader).
         if plugin_id not in seen_ids:
@@ -328,7 +328,7 @@ def setup(app, context):
 
     # The plugin loader doesn't currently expose a list-other-plugins helper,
     # so derive the plugin directories from environment + conventions:
-    #   1. SLOPSMITH_PLUGINS_DIR env var (explicit override)
+    #   1. FEEDBACK_PLUGINS_DIR env var (explicit override)
     #   2. The directory that contains this plugin (plugin_self.parent) —
     #      covers the common case where all plugins live in one flat dir.
     #   3. plugin_self.parent.parent / "plugins" — covers the layout where
@@ -336,7 +336,7 @@ def setup(app, context):
     # Duplicates are removed via a seen-set keyed on resolved paths.
     def _resolve_plugin_dirs():
         roots = []
-        env_dir = os.environ.get("SLOPSMITH_PLUGINS_DIR")
+        env_dir = os.environ.get("FEEDBACK_PLUGINS_DIR") or os.environ.get("SLOPSMITH_PLUGINS_DIR")
         if env_dir:
             roots.append(Path(env_dir))
         # Built-in plugins/ next to server.py (one level above this file's

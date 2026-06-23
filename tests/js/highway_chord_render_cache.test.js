@@ -3,7 +3,7 @@
 // regression that drops one of the three keys, or forgets to reset the
 // derived state, will fail in CI.
 //
-// Background: see slopsmith#412 and the Copilot review thread that
+// Background: see feedBack#412 and the Copilot review thread that
 // surfaced the `chordTemplates` ordering edge case (templates can land
 // after the final `chords` chunk; `isOpen()`-derived `nonZeroNotes`
 // would otherwise stay stale until the next chord transition).

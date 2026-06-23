@@ -11,12 +11,12 @@ from fastapi.testclient import TestClient
 def client_and_server(tmp_path, monkeypatch):
     """Loopback TestClient — simulates the Electron desktop calling from 127.0.0.1.
 
-    SLOPSMITH_SYNC_STARTUP=1 prevents background scan/plugin threads from
+    FEEDBACK_SYNC_STARTUP=1 prevents background scan/plugin threads from
     spawning and leaking into other tests.  load_plugins and startup_scan are
     stubbed to no-ops so startup completes instantly.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     monkeypatch.setattr(server, "load_plugins", lambda *a, **kw: None)
@@ -41,12 +41,12 @@ def client_and_server(tmp_path, monkeypatch):
 def non_loopback_client(tmp_path, monkeypatch):
     """Non-loopback TestClient — default 'testclient' host simulates an external caller.
 
-    SLOPSMITH_SYNC_STARTUP=1 prevents background scan/plugin threads from
+    FEEDBACK_SYNC_STARTUP=1 prevents background scan/plugin threads from
     spawning and leaking into other tests.  load_plugins and startup_scan are
     stubbed to no-ops so startup completes instantly.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     monkeypatch.setattr(server, "load_plugins", lambda *a, **kw: None)

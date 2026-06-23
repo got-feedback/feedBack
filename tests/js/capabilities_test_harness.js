@@ -45,7 +45,7 @@ function createWindow(options = {}) {
         document: {
             getElementById(id) { return elements.get(id) || null; },
         },
-        slopsmith: {
+        feedBack: {
             emit(type, detail) {
                 window.dispatchEvent(new CustomEvent(type, { detail }));
             },

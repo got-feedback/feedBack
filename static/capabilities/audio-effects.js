@@ -2,13 +2,13 @@
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    const capabilities = window.slopsmith.capabilities;
+    window.feedBack = window.feedBack || {};
+    const capabilities = window.feedBack.capabilities;
     if (!capabilities || capabilities.version !== 1) return;
-    if (window.slopsmith.audioEffects && window.slopsmith.audioEffects.version === 1) return;
+    if (window.feedBack.audioEffects && window.feedBack.audioEffects.version === 1) return;
 
-    const SCHEMA = 'slopsmith.audio_effects.diagnostics.v1';
-    const PLAN_SCHEMA = 'slopsmith.audio_effects.chain_plan.v1';
+    const SCHEMA = 'feedBack.audio_effects.diagnostics.v1';
+    const PLAN_SCHEMA = 'feedBack.audio_effects.chain_plan.v1';
     const OWNER_ID = 'core.audio.effects';
     const DEFAULT_ROUTE_KEY = 'desktop-main';
     const DEFAULT_TIMEOUT_MS = 2000;
@@ -354,7 +354,7 @@
 
     function _emit(event, detail) {
         try {
-            if (window.slopsmith && typeof window.slopsmith.emit === 'function') window.slopsmith.emit(event, detail);
+            if (window.feedBack && typeof window.feedBack.emit === 'function') window.feedBack.emit(event, detail);
         } catch (_) { /* best effort */ }
     }
 
@@ -378,7 +378,7 @@
     }
 
     function _desktopExecutor() {
-        const desktop = window.slopsmithDesktop && window.slopsmithDesktop.audioEffects;
+        const desktop = window.feedBackDesktop && window.feedBackDesktop.audioEffects;
         if (!desktop || typeof desktop.loadChainPlan !== 'function') return null;
         const handlers = { loadChainPlan: desktop.loadChainPlan.bind(desktop) };
         if (typeof desktop.releaseRoute === 'function') handlers.releaseRoute = desktop.releaseRoute.bind(desktop);
@@ -388,9 +388,9 @@
         if (typeof desktop.setRouteGain === 'function') handlers.setRouteGain = desktop.setRouteGain.bind(desktop);
         return {
             executorId: 'desktop-native',
-            pluginId: 'slopsmith-desktop',
+            pluginId: 'feedBack-desktop',
             routeKey: DEFAULT_ROUTE_KEY,
-            label: 'Slopsmith Desktop native audio',
+            label: 'FeedBack Desktop native audio',
             enabled: true,
             availability: 'available',
             sourceMode: 'native',
@@ -1382,7 +1382,7 @@
         const shims = [
             { shimId: 'audio-effects.legacy-tone-controls', capability: 'audio-effects', source: OWNER_ID, legacySurface: 'legacy tone/effect controls', reason: 'Legacy tone controls are attributed until providers use native audio-effects route operations.' },
             { shimId: 'audio-effects.legacy-nam-routing', capability: 'audio-effects', source: OWNER_ID, legacySurface: 'NAM tone native-preset route interception', reason: 'Legacy NAM/Rig Builder route interception remains a migration bridge until providers resolve chain plans natively.' },
-            { shimId: 'audio-effects.legacy-native-load', capability: 'audio-effects', source: OWNER_ID, legacySurface: 'window.slopsmithDesktop.audio.loadPreset', reason: 'Direct Desktop native preset loading is attributed until providers route physical loads through compatible audio-effects executors.' },
+            { shimId: 'audio-effects.legacy-native-load', capability: 'audio-effects', source: OWNER_ID, legacySurface: 'window.feedBackDesktop.audio.loadPreset', reason: 'Direct Desktop native preset loading is attributed until providers route physical loads through compatible audio-effects executors.' },
             { shimId: 'audio-effects.legacy-tone-db', capability: 'audio-effects', source: OWNER_ID, legacySurface: 'nam_tone.db tone_mappings', reason: 'Legacy NAM tone database mapping access is attributed until providers use the core audio-effects mapping index exclusively.' },
             { shimId: 'audio-effects.legacy-midi-amp', capability: 'audio-effects', source: OWNER_ID, legacySurface: 'MIDI amp/external effect handoff', reason: 'Legacy external effect handoffs are attributed until provider route operations land.' },
         ];
@@ -1390,7 +1390,7 @@
     }
 
     function _contributeDiagnostics() {
-        const diagnostics = window.slopsmith && window.slopsmith.diagnostics;
+        const diagnostics = window.feedBack && window.feedBack.diagnostics;
         if (diagnostics && typeof diagnostics.contribute === 'function') {
             try { diagnostics.contribute('audio-effects', snapshot()); }
             catch (_) { /* diagnostics must not break playback */ }
@@ -1429,7 +1429,7 @@
         getDiagnostics: snapshot,
     };
 
-    window.slopsmith.audioEffects = api;
+    window.feedBack.audioEffects = api;
     _registerDomain();
     _registerBridgeMetadata();
     _contributeDiagnostics();

@@ -62,10 +62,10 @@ function loadClose(sandbox, src) {
     vm.runInContext(code, sandbox);
 }
 
-test('closeCurrentSong is exported on window and window.slopsmith', () => {
+test('closeCurrentSong is exported on window and window.feedBack', () => {
     const src = fs.readFileSync(APP_JS, 'utf8');
     assert.match(src, /window\.closeCurrentSong\s*=\s*closeCurrentSong/);
-    assert.match(src, /window\.slopsmith\.closeCurrentSong\s*=\s*closeCurrentSong/);
+    assert.match(src, /window\.feedBack\.closeCurrentSong\s*=\s*closeCurrentSong/);
 });
 
 test('closeCurrentSong uses _playerOriginScreen when set', async () => {

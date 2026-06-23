@@ -1,4 +1,4 @@
-// Slopsmith capability registry and dispatcher.
+// FeedBack capability registry and dispatcher.
 (function () {
     'use strict';
 
@@ -30,8 +30,8 @@
         };
     }
 
-    function _ensureSlopsmithEventBus() {
-        const existing = window.slopsmith && typeof window.slopsmith === 'object' ? window.slopsmith : null;
+    function _ensureFeedBackEventBus() {
+        const existing = window.feedBack && typeof window.feedBack === 'object' ? window.feedBack : null;
         const hasEventTarget = existing
             && typeof existing.addEventListener === 'function'
             && typeof existing.removeEventListener === 'function'
@@ -53,12 +53,12 @@
         bus.off = function (event, fn, options) {
             this.removeEventListener(event, fn, options);
         };
-        window.slopsmith = bus;
+        window.feedBack = bus;
         return bus;
     }
 
-    _ensureSlopsmithEventBus();
-    if (window.slopsmith.capabilities && window.slopsmith.capabilities.version === 1) return;
+    _ensureFeedBackEventBus();
+    if (window.feedBack.capabilities && window.feedBack.capabilities.version === 1) return;
 
     const VALID_ROLES = new Set([
         'owner', 'coordinator', 'provider', 'executor', 'observer', 'requester', 'transformer', 'handler',
@@ -209,7 +209,7 @@
 
     const VALID_SETTING_TYPES = new Set(['toggle', 'range', 'select']);
 
-    // Normalize per-instance control descriptors (slopsmith#849) declared on a
+    // Normalize per-instance control descriptors (feedBack#849) declared on a
     // capability. Lenient (drops malformed entries rather than failing the whole
     // declaration): the server-side validator in plugins/__init__.py already
     // strict-checks the /api/plugins manifest path; this keeps runtime
@@ -661,7 +661,7 @@
             lifecycle: 'plugin-defined',
             label: 'Plugin-defined',
             tone: 'info',
-            summary: 'Declared by a plugin or test fixture rather than registered as a core Slopsmith domain.',
+            summary: 'Declared by a plugin or test fixture rather than registered as a core FeedBack domain.',
         };
     }
 
@@ -863,12 +863,12 @@
         _notifySubscribers(event, detail);
         _notifySubscribers(`${capabilityName}:${event}`, detail);
         try {
-            if (window.slopsmith && typeof window.slopsmith.emit === 'function') {
-                window.slopsmith.emit(`${capabilityName}:${event}`, detail);
-                window.slopsmith.emit('capability:event', detail);
+            if (window.feedBack && typeof window.feedBack.emit === 'function') {
+                window.feedBack.emit(`${capabilityName}:${event}`, detail);
+                window.feedBack.emit('capability:event', detail);
             } else {
                 window.dispatchEvent(new CustomEvent(`${capabilityName}:${event}`, { detail }));
-                window.dispatchEvent(new CustomEvent('slopsmith:capability:event', { detail }));
+                window.dispatchEvent(new CustomEvent('feedBack:capability:event', { detail }));
             }
         } catch (err) {
             console.warn('[capabilities] event dispatch failed:', err);
@@ -1238,7 +1238,7 @@
         if (!source || typeof source !== 'object') return 'legacy-runtime';
         const candidate = source.source || source.pluginId || source.owner || source.requester || source.providerId || source.id;
         if (candidate) return String(candidate);
-        const activePluginId = window.slopsmith && (window.slopsmith._loadingPluginId || window.slopsmith._activePluginId);
+        const activePluginId = window.feedBack && (window.feedBack._loadingPluginId || window.feedBack._activePluginId);
         return activePluginId ? String(activePluginId) : 'legacy-runtime';
     }
 
@@ -1413,7 +1413,7 @@
     function snapshotDiagnostics() {
         const pipelineSummaries = inspect();
         const snapshot = {
-            schema: 'slopsmith.capabilities.diagnostics.v1',
+            schema: 'feedBack.capabilities.diagnostics.v1',
             pipelines: pipelineSummaries,
             participants: pipelineSummaries.flatMap(pipeline => Array.isArray(pipeline.participants) ? pipeline.participants : []),
             recentDecisions: recentDecisions.slice(),
@@ -1447,14 +1447,14 @@
             capabilitiesChangeScheduled = false;
             const detail = { timestamp: _now() };
             try {
-                window.dispatchEvent(new CustomEvent('slopsmith:capabilities:changed', { detail }));
+                window.dispatchEvent(new CustomEvent('feedBack:capabilities:changed', { detail }));
             } catch (_err) { /* capability diagnostics must not break runtime behavior */ }
         });
     }
 
     function _contributeDiagnostics() {
         if (contributing) return;
-        const diagnostics = window.slopsmith && window.slopsmith.diagnostics;
+        const diagnostics = window.feedBack && window.feedBack.diagnostics;
         if (diagnostics && typeof diagnostics.contribute === 'function') {
             contributing = true;
             try { diagnostics.contribute('capabilities', snapshotDiagnostics()); }
@@ -1494,7 +1494,7 @@
         recordUserOverride,
     };
 
-    window.slopsmith.capabilities = api;
+    window.feedBack.capabilities = api;
 
     registerParticipant('core', {
         diagnostics: {
@@ -1533,7 +1533,7 @@
         },
     });
     try {
-        window.dispatchEvent(new CustomEvent('slopsmith:capabilities:ready', { detail: api }));
+        window.dispatchEvent(new CustomEvent('feedBack:capabilities:ready', { detail: api }));
         _notifySubscribers('registered', { capability: '*', pluginId: 'core', timestamp: _now() });
     } catch (_) {}
 })();

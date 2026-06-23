@@ -1,4 +1,4 @@
-// The public plugin API: window.slopsmith.highwayColors. The facade is a thin,
+// The public plugin API: window.feedBack.highwayColors. The facade is a thin,
 // stable wrapper over the (private) string-color manager in app.js. These tests
 // extract _hwcInstallFacade and run it against a fake window/bus with stubbed
 // manager functions, so the documented surface + wiring are locked in.
@@ -49,7 +49,7 @@ function buildFacade() {
         emit(e, d) { (listeners[e] || []).slice().forEach((f) => f({ detail: d })); },
         _count: (e) => (listeners[e] || []).length,
     };
-    const win = { slopsmith: bus, highway: { getStringColors: () => ['#aaaaaa'] } };
+    const win = { feedBack: bus, highway: { getStringColors: () => ['#aaaaaa'] } };
     const HWC_SLOTS = [
         { key: 'highE', label: 'High E', sub: '1st' }, { key: 'B', label: 'B', sub: '2nd' },
         { key: 'G', label: 'G', sub: '3rd' }, { key: 'D', label: 'D', sub: '4th' },
@@ -74,7 +74,7 @@ function buildFacade() {
         stubs.applyHighwayStringColors, stubs.encodeHighwayColorShare, stubs.decodeHighwayColorShare,
     );
     installer();
-    return { api: win.slopsmith.highwayColors, win, bus, calls, installer, stubs };
+    return { api: win.feedBack.highwayColors, win, bus, calls, installer, stubs };
 }
 
 test('initHighwayColors installs the facade', () => {
@@ -159,5 +159,5 @@ test('repeated onChange with the same handler unsubscribes independently (no lea
 test('install is idempotent (does not replace an existing facade)', () => {
     const { api, win, installer } = buildFacade();
     installer();
-    assert.equal(win.slopsmith.highwayColors, api, 'second install must be a no-op');
+    assert.equal(win.feedBack.highwayColors, api, 'second install must be a no-op');
 });

@@ -25,14 +25,14 @@ test('plugin fresh starts require user action and incompatible playback particip
     const fixture = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'plugin_capabilities', 'unsupported_capability_version.json'), 'utf8'));
     fixture.id = 'future_playback';
     fixture.capabilities = { playback: { roles: ['owner'], commands: ['inspect'], runtime: true, version: 999, handlers: { inspect: () => ({ outcome: 'handled' }) } } };
-    incompatibleWindow.slopsmith.capabilities.registerParticipants([fixture]);
-    const result = await incompatibleWindow.slopsmith.capabilities.dispatch({ capability: 'playback', command: 'inspect', requester: 'test' });
+    incompatibleWindow.feedBack.capabilities.registerParticipants([fixture]);
+    const result = await incompatibleWindow.feedBack.capabilities.dispatch({ capability: 'playback', command: 'inspect', requester: 'test' });
     assert.equal(result.status, 'incompatible-version');
 });
 
 test('same-priority latest controls remain non-stale while user-priority commands deny background automation', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
     const firstPause = await dispatch(window, 'pause', { requesterId: 'plugin.a', priority: 'normal' });
     const normalResume = await dispatch(window, 'resume', { requesterId: 'plugin.b', priority: 'normal' });
@@ -48,7 +48,7 @@ test('legacy bridge hits are attributed to playback compatibility shims', () => 
     const window = loadPlayback();
     const bridgeEvents = captureEvents(window, 'playback:bridge-hit');
 
-    window.slopsmith.playback.recordBridgeHit({
+    window.feedBack.playback.recordBridgeHit({
         bridgeId: 'playback.window-play-song',
         legacySurface: 'window.playSong',
         source: 'core.app',
@@ -56,7 +56,7 @@ test('legacy bridge hits are attributed to playback compatibility shims', () => 
     });
 
     const playback = diagnosticsSnapshot(window);
-    const runtime = window.slopsmith.capabilities.snapshotDiagnostics();
+    const runtime = window.feedBack.capabilities.snapshotDiagnostics();
     const shim = runtime.compatibilityShims.find(item => item.capability === 'playback' && item.legacySurface === 'window.playSong');
 
     assert.equal(bridgeEvents.length, 1);
@@ -68,10 +68,10 @@ test('legacy bridge hits are attributed to playback compatibility shims', () => 
 
 test('legacy song events update playback state without exposing raw filenames', () => {
     const window = loadPlayback();
-    window.slopsmith.emit('song:loading', { filename: '/Users/example/Secret Folder/Artist - Song_p.archive', arrangement: 0 });
-    window.slopsmith.emit('song:loaded', makeTarget({ filename: '/Users/example/Secret Folder/Artist - Song_p.archive' }));
-    window.slopsmith.emit('song:play', { time: 4, audioT: 4, chartT: 4 });
-    window.slopsmith.emit('song:seek', { from: 4, to: 12, reason: 'seek-by' });
+    window.feedBack.emit('song:loading', { filename: '/Users/example/Secret Folder/Artist - Song_p.archive', arrangement: 0 });
+    window.feedBack.emit('song:loaded', makeTarget({ filename: '/Users/example/Secret Folder/Artist - Song_p.archive' }));
+    window.feedBack.emit('song:play', { time: 4, audioT: 4, chartT: 4 });
+    window.feedBack.emit('song:seek', { from: 4, to: 12, reason: 'seek-by' });
 
     const playback = diagnosticsSnapshot(window);
     const encoded = JSON.stringify(playback);
@@ -89,8 +89,8 @@ test('route changes are captured as redaction-safe playback lifecycle events', (
     const changing = captureEvents(window, 'playback:route-changing');
     const changed = captureEvents(window, 'playback:route-changed');
 
-    window.slopsmith.playback.recordRouteChange({ routeKind: 'desktop-native', state: 'switching', preservedTime: true, safeReason: 'desktop engine active' });
-    window.slopsmith.playback.recordRouteChange({ routeKind: 'desktop-native', state: 'active', preservedTime: true, safeReason: 'desktop route active' });
+    window.feedBack.playback.recordRouteChange({ routeKind: 'desktop-native', state: 'switching', preservedTime: true, safeReason: 'desktop engine active' });
+    window.feedBack.playback.recordRouteChange({ routeKind: 'desktop-native', state: 'active', preservedTime: true, safeReason: 'desktop route active' });
 
     const playback = diagnosticsSnapshot(window);
     assert.equal(changing.length, 1);

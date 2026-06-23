@@ -21,7 +21,7 @@ const SRC = path.join(__dirname, '..', '..', 'static', 'v3', 'plugins-page.js');
 function loadPage(opts) {
     opts = opts || {};
     const store = opts.store || {};
-    const win = { slopsmith: null };
+    const win = { feedBack: null };
     win.localStorage = {
         getItem: (k) => (k in store ? store[k] : null),
         setItem: (k, v) => { if (opts.throwOnSet) throw new Error('quota'); store[k] = String(v); },

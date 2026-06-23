@@ -69,14 +69,14 @@ test('player arrangement pin saves the selected arrangement name', async ({ page
       .join('');
     select.value = '2';
     // @ts-ignore - browser app namespace
-    window.slopsmith.currentSong = {
+    window.feedBack.currentSong = {
       filename: 'demo.archive',
       arrangement: 'Rhythm',
       arrangementIndex: 2,
       arrangements,
     };
     // @ts-ignore - browser app namespace
-    window.slopsmith.emit('song:loaded', window.slopsmith.currentSong);
+    window.feedBack.emit('song:loaded', window.feedBack.currentSong);
   });
 
   const pin = page.locator('#arr-default-pin');
@@ -137,14 +137,14 @@ test('player arrangement pin preserves non-built-in arrangement names', async ({
       .join('');
     select.value = '2';
     // @ts-ignore - browser app namespace
-    window.slopsmith.currentSong = {
+    window.feedBack.currentSong = {
       filename: 'demo.archive',
       arrangement: 'Rhythm',
       arrangementIndex: 2,
       arrangements,
     };
     // @ts-ignore - browser app namespace
-    window.slopsmith.emit('song:loaded', window.slopsmith.currentSong);
+    window.feedBack.emit('song:loaded', window.feedBack.currentSong);
   });
 
   await page.locator('#arr-default-pin').click();
@@ -191,14 +191,14 @@ test('failed settings save does not mark arrangement default as persisted', asyn
       .join('');
     select.value = '2';
     // @ts-ignore - browser app namespace
-    window.slopsmith.currentSong = {
+    window.feedBack.currentSong = {
       filename: 'demo.archive',
       arrangement: 'Rhythm',
       arrangementIndex: 2,
       arrangements,
     };
     // @ts-ignore - browser app namespace
-    window.slopsmith.emit('song:loaded', window.slopsmith.currentSong);
+    window.feedBack.emit('song:loaded', window.feedBack.currentSong);
   });
 
   const pin = page.locator('#arr-default-pin');

@@ -1,7 +1,7 @@
 """
 lib/gp2rs_gpx.py — Guitar Pro 6 (.gpx) support shim for gp2rs.
 
-Drop this file into slopsmith/lib/ alongside gp2rs.py.
+Drop this file into feedBack/lib/ alongside gp2rs.py.
 No third-party dependencies — pure Python stdlib only.
 
 Public API mirrors the two functions that the editor plugin calls:
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from safepath import safe_join
 
-_log = logging.getLogger("slopsmith.lib.gp2rs_gpx")
+_log = logging.getLogger("feedBack.lib.gp2rs_gpx")
 
 
 def _safe_filename_stem(name: str) -> str:

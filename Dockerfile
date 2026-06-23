@@ -47,11 +47,11 @@ RUN cmake -S /tmp/vgmstream -B /tmp/vgmstream/build \
 # and update FFMPEG_RELEASE + both SHA256 ARGs below.
 FROM alpine:3.20 AS ffmpeg-fetcher
 ARG TARGETARCH
-ARG FFMPEG_RELEASE=autobuild-2026-06-01-15-02
-ARG FFMPEG_BUILD_AMD64=ffmpeg-n7.1.4-7-gadcf20da26-linux64-gpl-7.1.tar.xz
-ARG FFMPEG_BUILD_ARM64=ffmpeg-n7.1.4-7-gadcf20da26-linuxarm64-gpl-7.1.tar.xz
-ARG FFMPEG_SHA256_AMD64=afde55344990650c117fbb7cb36b38d2ab6790b06beb06a9c43a9300c9ce277a
-ARG FFMPEG_SHA256_ARM64=03c8a7d9a7cf48d017a22a7c31acfdc8e76c5cb193923f883b0338c7baf0bd28
+ARG FFMPEG_RELEASE=autobuild-2026-06-19-23-17
+ARG FFMPEG_BUILD_AMD64=ffmpeg-n7.1.4-145-g4cbf7a4b3d-linux64-gpl-7.1.tar.xz
+ARG FFMPEG_BUILD_ARM64=ffmpeg-n7.1.4-145-g4cbf7a4b3d-linuxarm64-gpl-7.1.tar.xz
+ARG FFMPEG_SHA256_AMD64=03c0431e0d1aa75cc343d83bda9d2d4cd8eaa37f35b7b93465e9ff6864f5d7f8
+ARG FFMPEG_SHA256_ARM64=74629b88342fd94eea12b7481c8b8560ca6d497744123c0a27b98f39d767fd93
 RUN apk add --no-cache curl xz \
     && arch="${TARGETARCH:-$(apk --print-arch)}" \
     && case "$arch" in \
@@ -70,7 +70,7 @@ RUN apk add --no-cache curl xz \
 # ── Stage 1d: Build the Tailwind stylesheet over the FULL plugin set ──────
 # The committed static/tailwind.min.css is generated against only the in-tree
 # plugins. Rather than ship it as-is (leaving baked-in plugins' classes
-# unstyled now that the Play CDN's runtime JIT is gone — slopsmith#411),
+# unstyled now that the Play CDN's runtime JIT is gone — feedBack#411),
 # rebuild it here, after static/ + plugins/ are present, so the sheet covers
 # whatever plugins are baked into the image. Runs in a throwaway node stage so
 # this build-time toolchain never lands in the final image; the runtime node
@@ -94,9 +94,9 @@ FROM python:3.12-slim
 # Re-declare the ffmpeg ARGs so their values are available to LABEL below.
 # ARG values don't cross stage boundaries in multi-stage builds; defaults
 # must be repeated here to take effect when no --build-arg is supplied.
-ARG FFMPEG_RELEASE=autobuild-2026-06-01-15-02
-ARG FFMPEG_BUILD_AMD64=ffmpeg-n7.1.4-7-gadcf20da26-linux64-gpl-7.1.tar.xz
-ARG FFMPEG_BUILD_ARM64=ffmpeg-n7.1.4-7-gadcf20da26-linuxarm64-gpl-7.1.tar.xz
+ARG FFMPEG_RELEASE=autobuild-2026-06-19-23-17
+ARG FFMPEG_BUILD_AMD64=ffmpeg-n7.1.4-145-g4cbf7a4b3d-linux64-gpl-7.1.tar.xz
+ARG FFMPEG_BUILD_ARM64=ffmpeg-n7.1.4-145-g4cbf7a4b3d-linuxarm64-gpl-7.1.tar.xz
 
 # Apply latest security updates to base packages (clears glibc deb13u3 and
 # similar). Done first so any subsequent installs resolve against the
@@ -112,7 +112,7 @@ RUN apt-get update \
 # package drags in the full codec + TLS + graphics dependency tree
 # (mbedtls, gnutls28, mesa, x264, tiff, openjpeg2, libcaca, harfbuzz,
 # cairo, openldap, libcdio…), almost all of which has unfixed CVEs and
-# none of which Slopsmith uses. We pull a static ffmpeg binary further
+# none of which FeedBack uses. We pull a static ffmpeg binary further
 # down instead.
 #
 # vgmstream-cli is also built with -DUSE_FFMPEG=OFF (see stage 1b), so
@@ -142,7 +142,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Node + the pinned Tailwind CLI for RUNTIME stylesheet regeneration. When a
-# plugin is installed into SLOPSMITH_PLUGINS_DIR at runtime (or discovered
+# plugin is installed into FEEDBACK_PLUGINS_DIR at runtime (or discovered
 # there on startup), the server rebuilds static/tailwind.min.css so the
 # plugin's classes are styled — the image-baked sheet only covered in-tree
 # plugins (see lib/tailwind_rebuild.py). tailwindcss is installed globally so
@@ -176,10 +176,10 @@ COPY --from=ffmpeg-fetcher /out/LICENSE.txt /usr/share/doc/ffmpeg/LICENSE.txt
 RUN chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
 # Record provenance so the exact BtbN source can be located for GPL compliance
 # or debugging. Inspect with: docker inspect <image> | grep -A5 ffmpeg
-LABEL org.slopsmith.ffmpeg.release="${FFMPEG_RELEASE}" \
-      org.slopsmith.ffmpeg.source.amd64="${FFMPEG_BUILD_AMD64}" \
-      org.slopsmith.ffmpeg.source.arm64="${FFMPEG_BUILD_ARM64}" \
-      org.slopsmith.ffmpeg.upstream="https://github.com/BtbN/FFmpeg-Builds"
+LABEL org.feedBack.ffmpeg.release="${FFMPEG_RELEASE}" \
+      org.feedBack.ffmpeg.source.amd64="${FFMPEG_BUILD_AMD64}" \
+      org.feedBack.ffmpeg.source.arm64="${FFMPEG_BUILD_ARM64}" \
+      org.feedBack.ffmpeg.upstream="https://github.com/BtbN/FFmpeg-Builds"
 
 # Native vgmstream-cli built against the image's own libraries
 COPY --from=vgmstream-builder /out/vgmstream-cli /usr/local/bin/vgmstream-cli

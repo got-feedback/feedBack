@@ -116,8 +116,8 @@
             if (r.ok) {
                 const profile = await r.json();
                 applyCosmetics(profile.cosmetics);
-                if (window.slopsmith && typeof window.slopsmith.emit === 'function') {
-                    window.slopsmith.emit('v3:cosmetics-applied', profile.cosmetics || {});
+                if (window.feedBack && typeof window.feedBack.emit === 'function') {
+                    window.feedBack.emit('v3:cosmetics-applied', profile.cosmetics || {});
                 }
             }
         } catch (e) { /* offline — keep current look */ }
@@ -134,7 +134,7 @@
     refresh();
     // Re-apply when an equip/unequip happens anywhere (shop screen, capability
     // command from a plugin).
-    if (window.slopsmith && typeof window.slopsmith.on === 'function') {
-        window.slopsmith.on('progression:cosmetic-equipped', refresh);
+    if (window.feedBack && typeof window.feedBack.on === 'function') {
+        window.feedBack.on('progression:cosmetic-equipped', refresh);
     }
 })();

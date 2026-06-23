@@ -4,8 +4,8 @@ const { loadAudioSession, diagnosticsSnapshot, makeInputProvider, makeMonitoring
 
 test('audio session host registers active core domains and contributes diagnostics', () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const diagnostics = window.slopsmith.diagnostics.snapshotContributions();
+    const api = window.feedBack.capabilities;
+    const diagnostics = window.feedBack.diagnostics.snapshotContributions();
 
     for (const domain of ['audio-mix', 'audio-input', 'audio-monitoring']) {
         const pipeline = api.inspect(domain);
@@ -15,12 +15,12 @@ test('audio session host registers active core domains and contributes diagnosti
     const stemsPipeline = api.inspect('stems');
     assert.equal(stemsPipeline.review.lifecycle, 'active');
     assert.equal(stemsPipeline.participants.some(p => p.pluginId === 'core.audio.session' && p.roles.includes('coordinator') && !p.roles.includes('owner')), true);
-    assert.equal(diagnostics['audio-session'].schema, 'slopsmith.audio_session.diagnostics.v1');
+    assert.equal(diagnostics['audio-session'].schema, 'feedBack.audio_session.diagnostics.v1');
 });
 
 test('audio session lifecycle and snapshots redact source identity with per-snapshot pseudonyms', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     audioSession.startSession({ sessionId: 'main:/Users/example/DLC/song.archive', songKey: '/Users/example/DLC/song.archive', songFormat: 'archive' });
     audioSession.setRoute({ routeKind: 'html5', availability: 'available', deviceLabel: 'Scarlett 2i2 Serial 1234' });
@@ -36,7 +36,7 @@ test('audio session lifecycle and snapshots redact source identity with per-snap
 
 test('audio-input diagnostics redact source ids labels handles and bounded reasons', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await api.dispatch({
         capability: 'audio-input',
@@ -72,7 +72,7 @@ test('audio-input diagnostics redact source ids labels handles and bounded reaso
 
 test('audio-input shares compatible open sessions and closes provider after last release', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = [];
 
     await api.dispatch({
@@ -110,7 +110,7 @@ test('audio-input shares compatible open sessions and closes provider after last
 
 test('audio diagnostics record bounded runtime outcomes and domain statuses', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     for (let i = 0; i < 120; i += 1) {
         audioSession.recordOutcome({ domain: 'audio-input', operation: 'select-source', participantId: 'test', outcome: 'degraded', status: 'unavailable', reason: `missing-${i}` });
@@ -124,8 +124,8 @@ test('audio diagnostics record bounded runtime outcomes and domain statuses', ()
 
 test('disabled missing incompatible unsupported and timeout paths are diagnosable', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
 
     audioSession.registerMixParticipant({ participantId: 'disabled-fader', availability: 'disabled' });
     assert.equal(audioSession.snapshot().domains['audio-mix'].participants[0].availability, 'disabled');
@@ -154,8 +154,8 @@ test('disabled missing incompatible unsupported and timeout paths are diagnosabl
 
 test('audio-mix diagnostics include faders routes analysers bridge hits and redacted outcomes', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
     audioSession.startSession({ sessionId: 'main:/Users/example/DLC/song.archive', songKey: '/Users/example/DLC/song.archive' });
     audioSession.setRoute({ routeKind: 'desktop', availability: 'degraded', deviceLabel: 'Secret Studio Output', fallbackReason: 'fallback token=abc123 at /Users/example/device' });
     audioSession.setAnalyser({ source: 'plugin', availability: 'available', participantId: 'plugin.visualizer', reason: 'ok', rawFft: [1, 2, 3] });
@@ -197,7 +197,7 @@ test('audio-mix diagnostics include faders routes analysers bridge hits and reda
 
 test('audio-monitoring diagnostics redact provider source session handles and private payloads', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const input = makeInputProvider({
         providerId: 'secret_input',
         sourceId: 'USB Interface Hardware ABC1234',
@@ -228,7 +228,7 @@ test('audio-monitoring diagnostics redact provider source session handles and pr
     delete providerPayload.safeLabel;
     await api.dispatch({ capability: 'audio-monitoring', command: 'register-provider', source: monitoring.provider.providerId, payload: providerPayload });
     const started = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { requesterId: 'user', authorization: 'user-action', requiredChannelShape: 'mono' } });
-    window.slopsmith.audioSession.recordOutcome({ domain: 'audio-monitoring', operation: 'start', participantId: 'secret_monitor', providerId: 'secret_monitor', monitoringId: started.payload.monitoringId, sourceId: 'USB Interface Hardware ABC1234', openSessionId: 'open raw id 1234', requesterId: 'user', outcome: 'failed', status: 'timeout', reason: 'failed at /Users/barlind/private secret=abc123' });
+    window.feedBack.audioSession.recordOutcome({ domain: 'audio-monitoring', operation: 'start', participantId: 'secret_monitor', providerId: 'secret_monitor', monitoringId: started.payload.monitoringId, sourceId: 'USB Interface Hardware ABC1234', openSessionId: 'open raw id 1234', requesterId: 'user', outcome: 'failed', status: 'timeout', reason: 'failed at /Users/barlind/private secret=abc123' });
 
     const snapshot = diagnosticsSnapshot(window);
     const encoded = JSON.stringify(snapshot);

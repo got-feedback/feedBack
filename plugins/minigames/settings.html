@@ -22,14 +22,14 @@
     if (!btn || !status) return;
     btn.addEventListener('click', async () => {
       if (!confirm('Wipe all minigame XP, unlocks, and run history? This cannot be undone.')) return;
-      if (!window.slopsmithMinigames?.resetProfile) {
+      if (!window.feedBackMinigames?.resetProfile) {
         status.textContent = 'Minigames SDK not loaded — reload the page and try again.';
         return;
       }
       btn.disabled = true;
       status.textContent = 'Wiping…';
       try {
-        await window.slopsmithMinigames.resetProfile();
+        await window.feedBackMinigames.resetProfile();
         status.textContent = 'Profile reset.';
       } catch (e) {
         status.textContent = 'Failed: ' + String(e?.message || e);

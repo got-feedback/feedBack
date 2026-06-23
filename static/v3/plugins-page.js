@@ -13,7 +13,7 @@
  */
 (function () {
     'use strict';
-    var sm = window.slopsmith;
+    var sm = window.feedBack;
     var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
 
@@ -209,7 +209,7 @@
         return '<div class="v3-pedal' + (off ? ' v3-pedal-off' : '') + '" data-id="' + esc(p.id) + '" tabindex="0" role="button" ' +
             'aria-label="' + esc((p.name || p.id) + action) + '" title="' + esc(tip) + '"' + style + '>' +
             '<span class="v3-pedal-glow" aria-hidden="true"></span>' +
-            (p.bundled ? '<span class="v3-pedal-bundled" title="Ships with Slopsmith core">core</span>' : '') +
+            (p.bundled ? '<span class="v3-pedal-bundled" title="Ships with FeedBack core">core</span>' : '') +
             '<span class="v3-pedal-offbadge" aria-hidden="true">off</span>' +
             '<div class="v3-pedal-label">' +
             '<img class="v3-pedal-thumb" alt="" loading="lazy" src="' + esc(thumbUrl(p)) + '">' +

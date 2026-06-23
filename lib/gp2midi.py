@@ -8,7 +8,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-log = logging.getLogger("slopsmith.lib.gp2midi")
+from env_compat import getenv_compat
+
+log = logging.getLogger("feedBack.lib.gp2midi")
 
 import guitarpro
 from midiutil import MIDIFile
@@ -152,15 +154,15 @@ def _find_soundfont() -> str | None:
     """Locate a .sf2 soundfont for MIDI rendering.
 
     Precedence:
-      1. ``SLOPSMITH_SOUNDFONT`` env var (user override / desktop-app-supplied)
+      1. ``FEEDBACK_SOUNDFONT`` env var (user override / desktop-app-supplied)
       2. Bundled ``<RESOURCESPATH>/soundfonts/*.sf2`` (Electron desktop builds)
       3. Common system locations per OS.
     """
-    override = os.environ.get("SLOPSMITH_SOUNDFONT")
+    override = getenv_compat("FEEDBACK_SOUNDFONT")
     if override:
         if os.path.isfile(override):
             return override
-        log.warning("SLOPSMITH_SOUNDFONT is set to %r but that file does not exist; falling back to other sources", override)
+        log.warning("FEEDBACK_SOUNDFONT is set to %r but that file does not exist; falling back to other sources", override)
 
     resources = os.environ.get("RESOURCESPATH")
     if resources:
@@ -187,10 +189,10 @@ def _find_soundfont() -> str | None:
     elif sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
         if appdata:
-            # "Slopsmith" matches slopsmith-desktop's Electron productName
-            # (app.getPath('userData') resolves to %APPDATA%\Slopsmith on Windows).
+            # "FeedBack" matches feedBack-desktop's Electron productName
+            # (app.getPath('userData') resolves to %APPDATA%\FeedBack on Windows).
             for pattern in (
-                os.path.join(appdata, "Slopsmith", "soundfonts", "*.sf2"),
+                os.path.join(appdata, "FeedBack", "soundfonts", "*.sf2"),
                 os.path.join(appdata, "SoundFonts", "*.sf2"),
             ):
                 candidates += sorted(glob.glob(pattern))
@@ -218,16 +220,16 @@ def _soundfont_install_hint() -> str:
             "or FluidR3_GM from musical-artifacts.com) and either place the .sf2 "
             "file in /usr/local/share/sounds/sf2/ (Intel) or "
             "/opt/homebrew/share/sounds/sf2/ (Apple Silicon), or set the "
-            "SLOPSMITH_SOUNDFONT environment variable to its full path."
+            "FEEDBACK_SOUNDFONT environment variable to its full path."
         )
     if sys.platform == "win32":
         return (
             "Download a soundfont (e.g. GeneralUser GS from schristiancollins.com or "
             "FluidR3_GM from musical-artifacts.com) and either place the .sf2 file in "
-            "%APPDATA%\\Slopsmith\\soundfonts\\ or set the SLOPSMITH_SOUNDFONT "
+            "%APPDATA%\\FeedBack\\soundfonts\\ or set the FEEDBACK_SOUNDFONT "
             "environment variable to its full path."
         )
-    return "Set SLOPSMITH_SOUNDFONT to the full path of a .sf2 file."
+    return "Set FEEDBACK_SOUNDFONT to the full path of a .sf2 file."
 
 
 def _fluidsynth_install_hint() -> str:

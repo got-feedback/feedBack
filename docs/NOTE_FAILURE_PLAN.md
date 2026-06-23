@@ -9,10 +9,10 @@ Depends on: `docs/NOTE_FAILURE_SPEC.md` (read that first)
 **Goal:** Working note detection plugin streaming detected notes via WebSocket.
 
 This phase was previously tracked in a separate NOTE_DETECTION_PLUGIN_PLAN
-document (in the `slopsmith-plugin-notedetect` repository). The relevant scope
+document (in the `feedBack-plugin-notedetect` repository). The relevant scope
 is summarized here to avoid relying on an internal git-only reference:
 
-- [ ] Plugin skeleton: `slopsmith-plugin-notedetect/` with plugin.json, routes.py, screen.js
+- [ ] Plugin skeleton: `feedBack-plugin-notedetect/` with plugin.json, routes.py, screen.js
 - [ ] Port TonalRecall YIN detection (aubio + sounddevice) to routes.py
 - [ ] WebSocket at `/api/plugins/note_detect/stream` streaming `{ note, freq, confidence, time }`
 - [ ] Device selection UI in screen.html
@@ -138,7 +138,7 @@ shows the correct diagnostic labels.
   ```
   Displayed for 1.5s, then fades.
 - [ ] Track `bestIteration` across all iterations for "Best" display
-- [ ] Emit `loop:complete` event via `window.slopsmith.emit()` so other plugins
+- [ ] Emit `loop:complete` event via `window.feedBack.emit()` so other plugins
       (practice journal) can record the data
 - [ ] Reset loop history when loop boundaries change or loop is cleared
 

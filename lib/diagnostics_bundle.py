@@ -130,7 +130,7 @@ ENV_ALLOWLIST = (
     "LOG_LEVEL",
     "LOG_FORMAT",
     "LOG_FILE",
-    "SLOPSMITH_RUNTIME",
+    "FEEDBACK_RUNTIME",
     "PORT",
     "HOST",
     "TZ",
@@ -154,13 +154,13 @@ def _safe_json_dumps(obj) -> str:
         return json.dumps({"error": "unserializable payload"}, indent=2)
 
 
-def _system_version(slopsmith_version: str, redactor=None) -> dict:
+def _system_version(feedBack_version: str, redactor=None) -> dict:
     executable = sys.executable
     if redactor is not None:
         executable = redactor.redact_text(executable)
     return {
         "schema": "system.version.v1",
-        "slopsmith_version": slopsmith_version,
+        "feedBack_version": feedBack_version,
         "python": {
             "version": platform.python_version(),
             "implementation": platform.python_implementation(),
@@ -233,7 +233,7 @@ def _summarize_payload(path: str, parsed) -> dict | None:
         py = parsed.get("python") or {}
         os_ = parsed.get("os") or {}
         return {
-            "slopsmith": parsed.get("slopsmith_version"),
+            "feedBack": parsed.get("feedBack_version"),
             "python": py.get("version"),
             "os": os_.get("system"),
         }
@@ -338,7 +338,7 @@ def _git_info(plugin_dir: Path) -> dict | None:
     """Return git short SHA + remote URL for a plugin checkout.
 
     Pure-Python — reads `.git/HEAD` and `.git/config` directly so this
-    works in containers without the `git` binary installed (slopsmith's
+    works in containers without the `git` binary installed (feedBack's
     runtime image is minimal). Plugins are gitlinks (see CLAUDE.md);
     the SHA is the most reliable "what build is this" identifier.
 
@@ -393,7 +393,7 @@ def _system_plugins(loaded_plugins: list[dict], plugins_root: "Path | list[Path]
     show up in the bundle.
 
     *plugins_root* accepts a single Path, a list of Paths (to cover both
-    the built-in ``plugins/`` directory and ``SLOPSMITH_PLUGINS_DIR``), or
+    the built-in ``plugins/`` directory and ``FEEDBACK_PLUGINS_DIR``), or
     None to skip orphan detection entirely.
 
     Plugin directories not in ``LOADED_PLUGINS`` appear in ``orphans``.
@@ -484,7 +484,7 @@ def _system_plugins(loaded_plugins: list[dict], plugins_root: "Path | list[Path]
     # plugin failed to load — common when requirements.txt installs
     # fail in a read-only container). Accepts a single Path, a list of
     # Paths (to cover both the built-in plugins/ dir and
-    # SLOPSMITH_PLUGINS_DIR), or None.
+    # FEEDBACK_PLUGINS_DIR), or None.
     orphans: list[dict] = []
     if plugins_root is not None:
         roots: list[Path] = plugins_root if isinstance(plugins_root, list) else [plugins_root]
@@ -840,11 +840,11 @@ def _redact_value(value: object, redactor: "Redactor") -> object:
 
 
 README_TEMPLATE = """\
-Slopsmith Diagnostics Bundle
+FeedBack Diagnostics Bundle
 ============================
 
 Generated: {exported_at}
-Slopsmith: {slopsmith_version}
+FeedBack: {feedBack_version}
 Runtime:   {runtime_kind}
 Redacted:  {redacted}
 
@@ -1005,7 +1005,7 @@ def _build_files_meta(files: dict[str, bytes]) -> list[dict]:
 
 def _assemble_files_and_notes(
     *,
-    slopsmith_version: str,
+    feedBack_version: str,
     config_dir: Path,
     dlc_dir: Path | None,
     log_file: Path | None,
@@ -1038,7 +1038,7 @@ def _assemble_files_and_notes(
     if include.get("system", True):
         # Pass the redactor so python.executable is redacted when paths
         # should be hidden (it often lives under $HOME or a per-user venv).
-        ver_payload = _safe_json_dumps(_system_version(slopsmith_version, redactor=redactor)).encode("utf-8")
+        ver_payload = _safe_json_dumps(_system_version(feedBack_version, redactor=redactor)).encode("utf-8")
         files["system/version.json"] = ver_payload
         env_payload = _safe_json_dumps(_system_env(redactor=redactor)).encode("utf-8")
         files["system/env.json"] = env_payload
@@ -1125,7 +1125,7 @@ def _assemble_files_and_notes(
             files.update(plugin_files)
 
     # Per-plugin client-side contributions from
-    # window.slopsmith.diagnostics.contribute(plugin_id, payload).
+    # window.feedBack.diagnostics.contribute(plugin_id, payload).
     # Gated on the same "plugins" toggle as backend plugin diagnostics.
     if include.get("plugins", True) and client_contributions and isinstance(client_contributions, dict):
         # Build the set of actually-loaded plugin IDs so we only accept
@@ -1160,7 +1160,7 @@ def _assemble_files_and_notes(
 
 def _make_manifest(
     *,
-    slopsmith_version: str,
+    feedBack_version: str,
     runtime_kind: str,
     redact: bool,
     files: dict[str, bytes],
@@ -1170,7 +1170,7 @@ def _make_manifest(
     return {
         "schema": BUNDLE_SCHEMA,
         "exported_at": _now_iso(),
-        "slopsmith_version": slopsmith_version,
+        "feedBack_version": feedBack_version,
         "runtime": runtime_kind,
         "redacted": redact,
         "files": _build_files_meta(files),
@@ -1181,7 +1181,7 @@ def _make_manifest(
 
 def build_bundle(
     *,
-    slopsmith_version: str,
+    feedBack_version: str,
     config_dir: Path,
     dlc_dir: Path | None,
     log_file: Path | None,
@@ -1198,7 +1198,7 @@ def build_bundle(
 ) -> tuple[bytes, str, dict]:
     """Returns (zip_bytes, filename, manifest_dict)."""
     files, notes, runtime_kind, redactor = _assemble_files_and_notes(
-        slopsmith_version=slopsmith_version,
+        feedBack_version=feedBack_version,
         config_dir=config_dir,
         dlc_dir=dlc_dir,
         log_file=log_file,
@@ -1215,7 +1215,7 @@ def build_bundle(
     )
 
     manifest = _make_manifest(
-        slopsmith_version=slopsmith_version,
+        feedBack_version=feedBack_version,
         runtime_kind=runtime_kind,
         redact=redact,
         files=files,
@@ -1225,7 +1225,7 @@ def build_bundle(
 
     readme = README_TEMPLATE.format(
         exported_at=manifest["exported_at"],
-        slopsmith_version=slopsmith_version,
+        feedBack_version=feedBack_version,
         runtime_kind=runtime_kind,
         redacted=redact,
     )
@@ -1259,13 +1259,13 @@ def build_bundle(
         for path, payload in sorted(files.items()):
             zf.writestr(path, payload)
 
-    filename = f"slopsmith-diag-{slopsmith_version}-{_now_filename_slug()}.zip"
+    filename = f"feedBack-diag-{feedBack_version}-{_now_filename_slug()}.zip"
     return buf.getvalue(), filename, manifest
 
 
 def preview_bundle(
     *,
-    slopsmith_version: str,
+    feedBack_version: str,
     config_dir: Path,
     dlc_dir: Path | None,
     log_file: Path | None,
@@ -1303,7 +1303,7 @@ def preview_bundle(
         for p in loaded_plugins
     ]
     files, notes, runtime_kind, redactor = _assemble_files_and_notes(
-        slopsmith_version=slopsmith_version,
+        feedBack_version=feedBack_version,
         config_dir=config_dir,
         dlc_dir=dlc_dir,
         log_file=log_file,
@@ -1336,7 +1336,7 @@ def preview_bundle(
                 if key not in files:
                     files[key] = _CALLABLE_PREVIEW_PLACEHOLDER
             # Frontend plugins (those with a screen or script) may call
-            # window.slopsmith.diagnostics.contribute() and produce a
+            # window.feedBack.diagnostics.contribute() and produce a
             # plugins/<id>/client.json in the real export. Advertise a
             # placeholder so the preview file tree is accurate.
             if p.get("has_screen") or p.get("has_script"):
@@ -1377,14 +1377,14 @@ def preview_bundle(
             }).encode("utf-8")
 
     manifest = _make_manifest(
-        slopsmith_version=slopsmith_version,
+        feedBack_version=feedBack_version,
         runtime_kind=runtime_kind,
         redact=redact,
         files=files,
         notes=notes,
         redactor=redactor,
     )
-    filename = f"slopsmith-diag-{slopsmith_version}-{_now_filename_slug()}.zip"
+    filename = f"feedBack-diag-{feedBack_version}-{_now_filename_slug()}.zip"
     return {
         "filename": filename,
         "manifest": manifest,

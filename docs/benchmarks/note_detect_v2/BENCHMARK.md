@@ -1,4 +1,4 @@
-# Slopsmith Note Detect Benchmark — v2
+# FeedBack Note Detect Benchmark — v2
 
 A slower-paced companion to v1, focused on what players can actually
 land cleanly. Half-note spacing throughout (~1.33 s between events at

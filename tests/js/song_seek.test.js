@@ -55,7 +55,7 @@ function buildSandbox({ juceMode = false, currentTime = 10, duration = Infinity 
         jucePlayer,
         window: {
             _juceMode: juceMode,
-            slopsmith: {
+            feedBack: {
                 emit(event, detail) { emitCalls.push({ event, detail }); },
             },
         },

@@ -27,7 +27,7 @@ function buildSandbox({ loopA = null, loopB = null, isPlaying = false } = {}) {
         __togglePlayCalls: 0,
         __clearLoopCalls: 0,
         window: {
-            slopsmith: {
+            feedBack: {
                 getLoop() {
                     return { loopA: sandbox.loopA, loopB: sandbox.loopB };
                 },
@@ -68,10 +68,10 @@ function loadRestart(sandbox, src, { audioSeekImpl } = {}) {
     vm.runInContext(code, sandbox);
 }
 
-test('restartCurrentSong is exported on window and window.slopsmith', () => {
+test('restartCurrentSong is exported on window and window.feedBack', () => {
     const src = fs.readFileSync(APP_JS, 'utf8');
     assert.match(src, /window\.restartCurrentSong\s*=\s*restartCurrentSong/);
-    assert.match(src, /window\.slopsmith\.restartCurrentSong\s*=\s*restartCurrentSong/);
+    assert.match(src, /window\.feedBack\.restartCurrentSong\s*=\s*restartCurrentSong/);
 });
 
 test('no loop: seeks to 0 with song-restart and starts playback when stopped', async () => {

@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-log = logging.getLogger("slopsmith.lib.audio")
+log = logging.getLogger("feedBack.lib.audio")
 
 # Maximum length of any single decoder-error fragment that we surface to
 # the client. ffmpeg can emit multi-kB build-configuration / version
@@ -123,7 +123,7 @@ def _scrub_quoted_match(match: re.Match) -> str:
 
 def _bundled_bin_dir() -> Path | None:
     """Resolve the desktop bundle's resources/bin/ directory if we're
-    running inside one. Layout: resources/slopsmith/lib/audio.py →
+    running inside one. Layout: resources/feedBack/lib/audio.py →
     resources/bin/. Gate on vgmstream-cli's presence so we don't
     misidentify random parent dirs (e.g. Docker's `/bin`, dev
     layouts where parents[2] resolves to the repo root) — vgmstream-cli
@@ -284,7 +284,7 @@ def _scrub_paths(text: str, *paths: str) -> str:
     """Replace absolute filesystem paths in `text` with their basenames.
 
     Decoder error strings get joined into the RuntimeError that
-    `convert_wem` raises, and slopsmith surfaces that text in the
+    `convert_wem` raises, and feedBack surfaces that text in the
     browser as `audio_error`. Leaking install / user / DLC paths to the
     client is a needless info disclosure, so before any decoder error
     leaves this module we strip absolute paths down to their final

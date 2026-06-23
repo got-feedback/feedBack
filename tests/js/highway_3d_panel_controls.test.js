@@ -1,4 +1,4 @@
-// Contract test for 3D Highway per-panel control metadata (slopsmith#247).
+// Contract test for 3D Highway per-panel control metadata (feedBack#247).
 // The plugin script is evaluated in a vm sandbox so factory statics are
 // tested without constructing a renderer instance or calling init().
 
@@ -22,7 +22,7 @@ function loadHighway3dStatics() {
     // semantic anchor inside the IIFE — so harmless footer edits (a trailing
     // sourceMappingURL comment, extra whitespace, a different IIFE close
     // style) do not break this contract test.
-    const ANCHOR = 'window.slopsmithViz_highway_3d = createFactory;';
+    const ANCHOR = 'window.feedBackViz_highway_3d = createFactory;';
     assert.equal(
         src.split(ANCHOR).length - 1,
         1,
@@ -46,7 +46,7 @@ function loadHighway3dStatics() {
         },
         performance: { now: () => 0 },
         window: {
-            slopsmithTour: {
+            feedBackTour: {
                 register() {},
             },
         },
@@ -79,7 +79,7 @@ function assertOptionObject(option, controlKey) {
 
 test('3D Highway exposes static panelControls descriptors for per-panel hosts', () => {
     const window = loadHighway3dStatics();
-    const factory = window.slopsmithViz_highway_3d;
+    const factory = window.feedBackViz_highway_3d;
     assert.equal(typeof factory, 'function', 'screen.js must register the 3D Highway factory');
 
     assert.ok(

@@ -80,7 +80,7 @@
                 ? root.highway.getSongInfo()
                 : null;
             if (si && si.arrangement) return si.arrangement;
-            const cs = root.slopsmith && root.slopsmith.currentSong;
+            const cs = root.feedBack && root.feedBack.currentSong;
             if (cs && cs.arrangement) return cs.arrangement;
             if (cs && cs.arrangementSmartName) return cs.arrangementSmartName;
         } catch (_) { /* visual-only */ }
@@ -166,7 +166,7 @@
     function bindRuntime() {
         if (_bound) return;
         _bound = true;
-        const sm = root && root.slopsmith;
+        const sm = root && root.feedBack;
         if (sm && typeof sm.on === 'function') {
             sm.on('v3:live-performance-state', onPerformanceState);
             sm.on('song:loaded', () => {

@@ -145,7 +145,7 @@ test('app.js adds Venue visualization option and adapter', () => {
     assert.match(src, /opt\.value = 'venue'/);
     assert.match(src, /opt\.textContent = 'Venue'/);
     assert.match(src, /if \(id === 'venue'\)/);
-    assert.match(src, /slopsmithViz_highway_3d/);
+    assert.match(src, /feedBackViz_highway_3d/);
     assert.match(src, /localStorage\.setItem\('vizSelection', 'venue'\)/);
     assert.match(src, /_installVizRenderer\(venueRenderer, 'highway_3d'\)/);
     assert.match(src, /onVenueVisualizationSelected/);
@@ -170,15 +170,15 @@ test('onVenueVisualizationSelected defaults mood to full only on first selection
     };
     try {
         // No stored preference yet → default the mood to FULL.
-        storage.delete('slopsmith-venue-mood-fx');
+        storage.delete('feedBack-venue-mood-fx');
         venue.onVenueVisualizationSelected();
         assert.equal(venue.get(), 'full');
         // An explicit 'subtle' choice must be preserved, not clobbered to full.
-        storage.set('slopsmith-venue-mood-fx', 'subtle');
+        storage.set('feedBack-venue-mood-fx', 'subtle');
         venue.onVenueVisualizationSelected();
         assert.equal(venue.get(), 'subtle');
         // 'off' likewise preserved.
-        storage.set('slopsmith-venue-mood-fx', 'off');
+        storage.set('feedBack-venue-mood-fx', 'off');
         venue.onVenueVisualizationSelected();
         assert.equal(venue.get(), 'off');
     } finally {
@@ -213,7 +213,7 @@ test('venue mood source documents strip overlay disabled', () => {
 test('app.js preserves plugin viz population for drum/tab/piano highways', () => {
     const src = fs.readFileSync(APP_JS, 'utf8');
     assert.match(src, /p\.type === 'visualization'/);
-    assert.match(src, /slopsmithViz_/);
+    assert.match(src, /feedBackViz_/);
     assert.match(src, /BUILTIN_OPT_VALUES/);
 });
 

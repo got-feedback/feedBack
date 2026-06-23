@@ -6,13 +6,13 @@ test('audio session runtime is available on page load', async ({ page }) => {
 
   const snapshot = await page.evaluate(() => {
     const appWindow = window as any;
-    if (!appWindow.slopsmith?.audioSession?.snapshot) {
+    if (!appWindow.feedBack?.audioSession?.snapshot) {
       throw new Error('audioSession host not available');
     }
-    return appWindow.slopsmith.audioSession.snapshot();
+    return appWindow.feedBack.audioSession.snapshot();
   });
 
-  expect(snapshot.schema).toBe('slopsmith.audio_session.diagnostics.v1');
+  expect(snapshot.schema).toBe('feedBack.audio_session.diagnostics.v1');
   expect(snapshot.domains['audio-mix']).toBeTruthy();
   expect(snapshot.domains['audio-input']).toBeTruthy();
   expect(snapshot.domains['audio-monitoring']).toBeTruthy();

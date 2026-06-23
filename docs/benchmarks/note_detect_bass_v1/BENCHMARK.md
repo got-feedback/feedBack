@@ -1,4 +1,4 @@
-# Slopsmith Note Detect Bass Benchmark — v1
+# FeedBack Note Detect Bass Benchmark — v1
 
 A bass-focused companion to the guitar benchmarks
 (note_detect_v1 + note_detect_v2). Tests `note_detect` against bass-

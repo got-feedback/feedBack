@@ -4,8 +4,8 @@ const { loadAudioSession } = require('./audio_session_test_harness');
 
 test('stem owner claim restore orphan and manual override lifecycle is recorded', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
 
     const noOwner = await api.dispatch({ capability: 'stems', command: 'mute', source: 'nam_tone', payload: { stemIds: ['guitar'] } });
     assert.equal(noOwner.outcome, 'no-owner');
@@ -26,8 +26,8 @@ test('stem owner claim restore orphan and manual override lifecycle is recorded'
 
 test('audio session coordinates stems without replacing the active stems owner', () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
 
     let stemsPipeline = api.inspect('stems');
     let coordinator = stemsPipeline.participants.find(entry => entry.pluginId === 'core.audio.session');
@@ -46,8 +46,8 @@ test('audio session coordinates stems without replacing the active stems owner',
 
 test('stem automation claims become orphaned when owner disappears', () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
     const unavailableEvents = [];
     api.subscribe('stems:owner-unavailable', detail => unavailableEvents.push(detail));
 

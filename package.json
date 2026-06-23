@@ -1,7 +1,7 @@
 {
-  "name": "slopsmith-browser-tests",
+  "name": "feedBack-browser-tests",
   "version": "1.0.0",
-  "description": "Browser tests for Slopsmith keyboard shortcuts and JS plugin-API contract tests under tests/js/.",
+  "description": "Browser tests for FeedBack keyboard shortcuts and JS plugin-API contract tests under tests/js/.",
   "license": "AGPL-3.0-only",
   "scripts": {
     "test": "playwright test",

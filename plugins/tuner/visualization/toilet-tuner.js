@@ -1,5 +1,5 @@
 /**
- * Toilet Tuner visualization for the Slopsmith tuner plugin.
+ * Toilet Tuner visualization for the FeedBack tuner plugin.
  *
  * Bathroom scene background; plunger slides left/right over the bowl based on
  * cents deviation; dips into bowl when in tune (±2 cents); wall calendar shows

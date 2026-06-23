@@ -24,7 +24,7 @@ function registerStemsOwner(api, calls) {
 
 test('claim dispatch release records lifecycle and removes active claim', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = [];
     registerStemsOwner(api, calls);
 
@@ -48,7 +48,7 @@ test('claim dispatch release records lifecycle and removes active claim', async 
 
 test('manual override is terminal for matching active claim target', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = [];
     registerStemsOwner(api, calls);
     api.claim({ capability: 'stems', claimId: 'nam.amp-active', requester: 'nam_tone', target: { kind: 'guitar' } });

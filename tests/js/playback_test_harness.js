@@ -27,16 +27,16 @@ function loadInspector(window) {
 
 function captureEvents(window, eventName) {
     const events = [];
-    window.slopsmith.on(eventName, event => events.push(event.detail));
+    window.feedBack.on(eventName, event => events.push(event.detail));
     return events;
 }
 
 function diagnosticsSnapshot(window, options = {}) {
-    return window.slopsmith.playback.snapshot(options);
+    return window.feedBack.playback.snapshot(options);
 }
 
 function dispatch(window, command, payload = {}, requester = 'test') {
-    return window.slopsmith.capabilities.dispatch({ capability: 'playback', command, args: payload, requester });
+    return window.feedBack.capabilities.dispatch({ capability: 'playback', command, args: payload, requester });
 }
 
 function makeTarget(overrides = {}) {

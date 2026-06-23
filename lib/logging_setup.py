@@ -1,10 +1,10 @@
-"""Logging configuration for Slopsmith.
+"""Logging configuration for FeedBack.
 
-Call ``configure_logging()`` once at server startup, before any slopsmith
+Call ``configure_logging()`` once at server startup, before any feedBack
 module imports that might emit log records.
 
 Environment variables:
-    LOG_LEVEL   — severity threshold for the ``slopsmith.*`` logger tree
+    LOG_LEVEL   — severity threshold for the ``feedBack.*`` logger tree
                   (default: INFO). Also accepted: DEBUG, WARNING, ERROR.
     LOG_FORMAT  — "json" for structured output (Loki, ELK, Promtail);
                   "text" (default) for human-readable coloured console output.
@@ -43,7 +43,7 @@ def _add_correlation_id(
 
 
 def configure_logging() -> None:
-    """Wire up the slopsmith logger hierarchy.
+    """Wire up the feedBack logger hierarchy.
 
     Safe to call multiple times; always reflects the current LOG_LEVEL,
     LOG_FORMAT, and LOG_FILE environment variables.
@@ -52,7 +52,7 @@ def configure_logging() -> None:
     level = getattr(logging, raw_level, None)
     if not isinstance(level, int):
         sys.stderr.write(
-            f"[slopsmith] WARNING: unrecognised LOG_LEVEL={raw_level!r};"
+            f"[feedBack] WARNING: unrecognised LOG_LEVEL={raw_level!r};"
             " falling back to INFO.\n"
         )
         level = logging.INFO
@@ -60,7 +60,7 @@ def configure_logging() -> None:
     raw_fmt = os.environ.get("LOG_FORMAT", "text").lower()
     if raw_fmt not in ("json", "text"):
         sys.stderr.write(
-            f"[slopsmith] WARNING: unrecognised LOG_FORMAT={raw_fmt!r};"
+            f"[feedBack] WARNING: unrecognised LOG_FORMAT={raw_fmt!r};"
             " falling back to 'text'.\n"
         )
         raw_fmt = "text"
@@ -137,17 +137,17 @@ def configure_logging() -> None:
             handlers.append(fh)
         except OSError as exc:
             sys.stderr.write(
-                f"[slopsmith] WARNING: could not open LOG_FILE={log_file!r}: {exc}"
+                f"[feedBack] WARNING: could not open LOG_FILE={log_file!r}: {exc}"
                 " — continuing with console-only logging.\n"
             )
 
     _uvicorn_names = ("uvicorn", "uvicorn.error", "uvicorn.access")
-    all_loggers = [logging.getLogger("slopsmith")] + [
+    all_loggers = [logging.getLogger("feedBack")] + [
         logging.getLogger(n) for n in _uvicorn_names
     ]
 
     # Collect all unique old handlers across every logger *before* any close so
-    # that a shared handler (slopsmith and uvicorn* were intentionally given the
+    # that a shared handler (feedBack and uvicorn* were intentionally given the
     # same objects) isn't closed while still attached to another logger tree.
     old_handlers: set[logging.Handler] = set()
     for lg in all_loggers:
@@ -160,8 +160,8 @@ def configure_logging() -> None:
     for h in old_handlers:
         h.close()
 
-    # Install fresh handlers on the slopsmith root.
-    root = logging.getLogger("slopsmith")
+    # Install fresh handlers on the feedBack root.
+    root = logging.getLogger("feedBack")
     for h in handlers:
         root.addHandler(h)
     root.setLevel(level)

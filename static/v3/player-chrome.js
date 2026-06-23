@@ -26,13 +26,13 @@
     let openPop = null;       // { btn, pop }
 
     // ── v3 UI signal + plugin-control slot API ───────────────────────────────
-    // Lets plugins detect v3 (window.slopsmith.uiVersion === 'v3') and mount
+    // Lets plugins detect v3 (window.feedBack.uiVersion === 'v3') and mount
     // controls into a stable slot instead of the auto-hiding transport.
-    window.slopsmith = window.slopsmith || {};
-    window.slopsmith.uiVersion = 'v3';
-    window.slopsmith.ui = window.slopsmith.ui || {};
-    window.slopsmith.ui.version = 'v3';
-    window.slopsmith.ui.playerControlSlot = function () { return $('v3-plugin-controls-slot'); };
+    window.feedBack = window.feedBack || {};
+    window.feedBack.uiVersion = 'v3';
+    window.feedBack.ui = window.feedBack.ui || {};
+    window.feedBack.ui.version = 'v3';
+    window.feedBack.ui.playerControlSlot = function () { return $('v3-plugin-controls-slot'); };
 
     // ── Plugin-control re-homing shim ────────────────────────────────────────
     // Legacy plugins inject controls into #player-controls (now an auto-hiding

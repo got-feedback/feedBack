@@ -39,17 +39,17 @@ test('progression capability domain is owned by core', async ({ page }) => {
 
   const result = await page.evaluate(async () => {
     const appWindow = window as any;
-    const inspectCmd = await appWindow.slopsmith.capabilities.command('progression', 'inspect', {
+    const inspectCmd = await appWindow.feedBack.capabilities.command('progression', 'inspect', {
       requester: 'browser-smoke',
     });
-    const pipeline = appWindow.slopsmith.capabilities.inspect('progression');
+    const pipeline = appWindow.feedBack.capabilities.inspect('progression');
     const owner = (pipeline.participants || []).find((p: any) => p.pluginId === 'core.progression');
     return {
       outcome: inspectCmd.outcome,
       masteryRank: inspectCmd.payload ? inspectCmd.payload.mastery_rank : null,
       ownerRoles: owner ? owner.roles : [],
       // buy-item without user-action authorization must be denied.
-      deniedBuy: (await appWindow.slopsmith.capabilities.command('progression', 'buy-item', {
+      deniedBuy: (await appWindow.feedBack.capabilities.command('progression', 'buy-item', {
         requester: 'browser-smoke',
         payload: { item_id: 'theme.sunset-strat' },
       })).outcome,

@@ -6,7 +6,7 @@ test('app loads', async ({ page }) => {
   
   // Check if the page loaded
   const title = await page.title();
-  expect(title).toBe('Slopsmith');
+  expect(title).toBe('FeedBack');
 });
 
 test('check if window has any shortcuts', async ({ page }) => {

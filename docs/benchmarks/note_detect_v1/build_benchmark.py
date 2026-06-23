@@ -5,12 +5,12 @@ short exercises designed to isolate specific failure modes (open-string
 mono, fretted positions, octaves, sustained held notes, hammer-on /
 pull-off, sparse power chords, dense open chords, bends).
 
-How to run inside the slopsmith container (recommended — has ffmpeg +
+How to run inside the feedBack container (recommended — has ffmpeg +
 pyyaml already):
 
     docker cp docs/benchmarks/note_detect_v1/build_benchmark.py \
-              slopsmith-web-1:/tmp/build_benchmark.py
-    docker exec slopsmith-web-1 python /tmp/build_benchmark.py \
+              feedBack-web-1:/tmp/build_benchmark.py
+    docker exec feedBack-web-1 python /tmp/build_benchmark.py \
               /app/static/sloppak_cache/note_detect_benchmark_v1.sloppak
 
 The output sloppak lands under `static/sloppak_cache/` on the host
@@ -26,7 +26,7 @@ import sys
 import wave
 from pathlib import Path
 
-import yaml  # bundled with the slopsmith image
+import yaml  # bundled with the feedBack image
 
 # ── Benchmark parameters ────────────────────────────────────────────────
 BPM = 90.0
@@ -411,7 +411,7 @@ def build(out_dir: Path):
 
     manifest = {
         'title': 'Note Detect Benchmark v1',
-        'artist': 'Slopsmith',
+        'artist': 'FeedBack',
         'album': 'Note Detection Benchmark',
         'year': 2026,
         'duration': round(end_t, 3),
@@ -430,7 +430,7 @@ def build(out_dir: Path):
         # Non-standard key — picked up by future tooling that wants to
         # detect "this is the benchmark, schema v1". The loader ignores it.
         'benchmark': {
-            'id': 'slopsmith-note-detect-benchmark',
+            'id': 'feedBack-note-detect-benchmark',
             'version': 1,
         },
     }
@@ -545,9 +545,9 @@ def _build_zip(src_dir: Path):
 
 
 def _benchmark_readme(duration_s):
-    return f"""# Slopsmith Note Detect Benchmark — v1
+    return f"""# FeedBack Note Detect Benchmark — v1
 
-A short test piece for tuning Slopsmith's `note_detect` plugin. Eight
+A short test piece for tuning FeedBack's `note_detect` plugin. Eight
 exercises, each isolating a specific detection failure mode. Run with
 **Detect** enabled, play through, then export the diagnostic JSON
 (Settings → Plugins → Note Detection → Download Diagnostic JSON, or
@@ -590,7 +590,7 @@ Share the JSON (schema `note_detect.diagnostic.v1`). It includes:
 ## Source
 
 Built by `docs/benchmarks/note_detect_v1/build_benchmark.py` in the
-slopsmith repo. Tweak the exercise list there and regenerate.
+feedBack repo. Tweak the exercise list there and regenerate.
 """
 
 

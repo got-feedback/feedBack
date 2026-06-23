@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import math
 
-log = logging.getLogger("slopsmith.lib.drums")
+log = logging.getLogger("feedBack.lib.drums")
 
 
 # ── Piece vocabulary ──────────────────────────────────────────────────────────

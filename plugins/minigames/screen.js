@@ -1,20 +1,20 @@
-// slopsmith-plugin-minigames — SDK + hub controller.
+// feedBack-plugin-minigames — SDK + hub controller.
 //
 // This file does two things:
-//   1) Publishes window.slopsmithMinigames — the SDK that individual
+//   1) Publishes window.feedBackMinigames — the SDK that individual
 //      minigame plugins call (register, start/end, scoring, ui, persistence).
 //   2) Mounts a hub UI in screen.html that lists every registered minigame
 //      and the shared profile/leaderboards.
 //
 // Plugin load order is alphabetical, so minigame plugins (e.g. flappy_bend)
 // load BEFORE this script. They should register via a tiny shim that queues
-// to `window.__slopsmithMinigamesPending` if the SDK isn't up yet — we drain
-// the queue on init and also fire `slopsmith-minigames-ready` once ready.
+// to `window.__feedBackMinigamesPending` if the SDK isn't up yet — we drain
+// the queue on init and also fire `feedBack-minigames-ready` once ready.
 
 (function () {
   'use strict';
 
-  if (window.slopsmithMinigames && window.slopsmithMinigames.__alive) {
+  if (window.feedBackMinigames && window.feedBackMinigames.__alive) {
     return; // hot-reload guard
   }
 
@@ -128,7 +128,7 @@
     const yinD      = new Float32Array(yinHalfN);
     const yinCmnd   = new Float32Array(yinHalfN);
     let ringWrite   = 0;
-    // Desktop-engine bridge path. On slopsmith-desktop the native JUCE engine
+    // Desktop-engine bridge path. On feedBack-desktop the native JUCE engine
     // owns the input device (often an exclusive ASIO device the browser's
     // getUserMedia can't see), so a renderer getUserMedia stream lands on the
     // wrong/silent Windows-default device. When the bridge is present we pull
@@ -347,7 +347,7 @@
     // Prefer the desktop engine bridge (correct, user-configured input device);
     // fall back to getUserMedia on the web build or a downlevel addon.
     function start() {
-      const audio = window.slopsmithDesktop && window.slopsmithDesktop.audio;
+      const audio = window.feedBackDesktop && window.feedBackDesktop.audio;
       if (audio && typeof audio.getRawAudioFrame === 'function') {
         startBridge(audio);
       } else {
@@ -360,7 +360,7 @@
   }
 
   // ── scoring.createDiscrete / createChord ──────────────────────────────
-  // Both wrap window.createNoteDetector from slopsmith-plugin-notedetect.
+  // Both wrap window.createNoteDetector from feedBack-plugin-notedetect.
   // For v1 they are thin event re-emitters — minigames using them must
   // run alongside a chart (createNoteDetector needs a highway). Chart-free
   // discrete scoring is out of scope until the scoring-core extraction
@@ -369,7 +369,7 @@
     const handlers = { hit: [], miss: [], end: [] };
     const fn = window.createNoteDetector;
     if (typeof fn !== 'function') {
-      console.warn('[minigames] window.createNoteDetector unavailable — install slopsmith-plugin-notedetect for discrete/chord scoring.');
+      console.warn('[minigames] window.createNoteDetector unavailable — install feedBack-plugin-notedetect for discrete/chord scoring.');
       let _unavailStopped = false;
       return {
         on(event, cb) { (handlers[event] || (handlers[event] = [])).push(cb); return this; },
@@ -736,8 +736,8 @@
         container,
         modifiers,
         // Convenience pass-through for the SDK so games don't have to
-        // touch window.slopsmithMinigames inside their start handler.
-        sdk: window.slopsmithMinigames,
+        // touch window.feedBackMinigames inside their start handler.
+        sdk: window.feedBackMinigames,
       });
     } catch (e) {
       console.error('[minigames] minigame start() threw:', e);
@@ -895,7 +895,7 @@
       tile.setAttribute('aria-label', title);
       const stats = perGame[spec.id] || { runs: 0, best_score: 0 };
       // Thumbnails are served via the minigame plugin's own asset route
-      // (the Slopsmith plugin loader only serves manifest-declared files,
+      // (the FeedBack plugin loader only serves manifest-declared files,
       // so each minigame that ships extra assets must expose /assets/).
       // Thumbnails are served by the minigame plugin's own /assets/ route;
       // not every plugin ships one, so fall back to the placeholder on 404.
@@ -957,15 +957,15 @@
     listRegistered: () => Array.from(registered.values()),
   };
 
-  window.slopsmithMinigames = sdk;
+  window.feedBackMinigames = sdk;
   // Drain queue of plugins that loaded before us.
-  (window.__slopsmithMinigamesPending || []).forEach(register);
-  window.__slopsmithMinigamesPending = null;
-  window.dispatchEvent(new CustomEvent('slopsmith-minigames-ready'));
+  (window.__feedBackMinigamesPending || []).forEach(register);
+  window.__feedBackMinigamesPending = null;
+  window.dispatchEvent(new CustomEvent('feedBack-minigames-ready'));
 
   // ── Wire hub render to screen lifecycle ───────────────────────────────
-  // Slopsmith mounts plugin screens with id "plugin-<plugin_id>" and
-  // routes there via showScreen() / window.slopsmith.navigate().
+  // FeedBack mounts plugin screens with id "plugin-<plugin_id>" and
+  // routes there via showScreen() / window.feedBack.navigate().
   const SCREEN_ID = `plugin-${PLUGIN_ID}`;
   // Non-scoring teardown: called when navigation happens mid-run so that
   // microphone streams, timers, and stage DOM are cleaned up without submitting
@@ -993,8 +993,8 @@
     console.info('[minigames] active session torn down (reason=' + reason + ')');
   }
 
-  if (window.slopsmith && typeof window.slopsmith.on === 'function') {
-    window.slopsmith.on('screen:changed', (e) => {
+  if (window.feedBack && typeof window.feedBack.on === 'function') {
+    window.feedBack.on('screen:changed', (e) => {
       const id = e && e.detail && e.detail.id;
       if (id === SCREEN_ID) {
         renderHub();
@@ -1035,8 +1035,8 @@
   function installNavLink() {
     const navigateToHub = (e) => {
       if (e) e.preventDefault();
-      if (window.slopsmith && typeof window.slopsmith.navigate === 'function') {
-        window.slopsmith.navigate(SCREEN_ID);
+      if (window.feedBack && typeof window.feedBack.navigate === 'function') {
+        window.feedBack.navigate(SCREEN_ID);
       } else if (typeof window.showScreen === 'function') {
         window.showScreen(SCREEN_ID);
       }
@@ -1078,7 +1078,7 @@
     }
   }
   installNavLink();
-  // The slopsmith plugin loader rebuilds the dropdown when plugins
+  // The feedBack plugin loader rebuilds the dropdown when plugins
   // hot-reload — re-install on a short delay then settle.
   setTimeout(installNavLink, 250);
   setTimeout(installNavLink, 1500);

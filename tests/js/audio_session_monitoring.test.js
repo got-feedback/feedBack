@@ -23,7 +23,7 @@ async function installMonitoring(api, overrides = {}) {
 
 test('audio-monitoring starts and stops through selected provider and source', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const startedEvents = captureEvents(window, 'audio-monitoring:monitoring-started');
     const stoppedEvents = captureEvents(window, 'audio-monitoring:monitoring-stopped');
     const input = await installInput(api);
@@ -31,7 +31,7 @@ test('audio-monitoring starts and stops through selected provider and source', a
 
     const active = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { requesterId: 'user', authorization: 'user-action', requiredChannelShape: 'mono' } });
     const stopped = await api.dispatch({ capability: 'audio-monitoring', command: 'stop', source: 'user', payload: { requesterId: 'user', monitoringId: active.payload.monitoringId } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     assert.equal(active.outcome, 'handled');
     assert.equal(active.payload.state, 'active');
@@ -46,7 +46,7 @@ test('audio-monitoring starts and stops through selected provider and source', a
 
 test('audio-monitoring redacts circular provider payloads without overflowing', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const circular = { directMonitor: { state: 'muted' }, latencySummary: { bucket: 'low' } };
     circular.self = circular;
     await installInput(api);
@@ -57,7 +57,7 @@ test('audio-monitoring redacts circular provider payloads without overflowing', 
     });
 
     const active = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { requesterId: 'user', authorization: 'user-action', requiredChannelShape: 'mono' } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     assert.equal(active.outcome, 'handled');
     assert.equal(snapshot.sessions[0].state, 'active');
@@ -65,12 +65,12 @@ test('audio-monitoring redacts circular provider payloads without overflowing', 
 
 test('audio-monitoring snapshots redact session identifiers and source refs', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api);
 
     const active = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { requesterId: 'user', authorization: 'user-action', requiredChannelShape: 'mono' } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
     const session = snapshot.sessions[0];
     const encoded = JSON.stringify(snapshot);
 
@@ -83,7 +83,7 @@ test('audio-monitoring snapshots redact session identifiers and source refs', as
 
 test('audio-monitoring reports no provider unavailable degraded denied failed user action and reload boundaries', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const degradedEvents = captureEvents(window, 'audio-monitoring:monitoring-degraded');
     const deniedEvents = captureEvents(window, 'audio-monitoring:monitoring-denied');
     const unavailableEvents = captureEvents(window, 'audio-monitoring:monitoring-unavailable');
@@ -125,25 +125,25 @@ test('audio-monitoring reports no provider unavailable degraded denied failed us
     assert.equal(failedEvents.length >= 1, true);
     assert.equal(activeBeforeSwitch.outcome, 'handled');
 
-    window.slopsmith.audioSession.startSession({ sessionId: 'main:next-song' });
-    const afterSongSwitch = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    window.feedBack.audioSession.startSession({ sessionId: 'main:next-song' });
+    const afterSongSwitch = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
     assert.equal(afterSongSwitch.sessions.some(session => session.state === 'active'), true);
 
     const restoredWindow = loadAudioSession({ storage: storageEntries(window) });
-    const restored = restoredWindow.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const restored = restoredWindow.feedBack.audioSession.snapshot().domains['audio-monitoring'];
     assert.equal(restored.sessions.length, 0);
 });
 
 test('audio-monitoring provider registration is idempotent and selected provider is deterministic', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     const legacy = await installMonitoring(api, { providerId: 'legacy_monitor', logicalMonitoringKey: 'shared:monitor', sourceMode: 'compatibility', compatibilitySource: 'legacy.monitor' });
     const native = await installMonitoring(api, { providerId: 'native_monitor', logicalMonitoringKey: 'shared:monitor', sourceMode: 'native', safeLabel: 'Native Monitor' });
     await api.dispatch({ capability: 'audio-monitoring', command: 'register-provider', source: 'native_monitor', payload: { ...native.provider, availability: 'pending' } });
 
     const listed = await api.dispatch({ capability: 'audio-monitoring', command: 'list-providers', source: 'test' });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
     assert.equal(listed.payload.providers.length, 1);
     assert.equal(listed.payload.providers[0].providerId, 'native_monitor');
     assert.equal(snapshot.providers.some(provider => provider.providerId === 'legacy_monitor' && provider.supersededBy), true);
@@ -160,7 +160,7 @@ test('audio-monitoring provider registration is idempotent and selected provider
 
 test('audio-monitoring shares compatible sessions and stops provider after final requester', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     const monitoring = await installMonitoring(api);
 
@@ -179,14 +179,14 @@ test('audio-monitoring shares compatible sessions and stops provider after final
 
     const activeAgain = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { requesterId: 'user', authorization: 'user-action', requiredChannelShape: 'mono' } });
     await api.dispatch({ capability: 'audio-monitoring', command: 'unregister-provider', source: 'system', payload: { providerId: monitoring.provider.providerId } });
-    const afterDisappear = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const afterDisappear = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
     assert.equal(activeAgain.outcome, 'handled');
     assert.equal(afterDisappear.sessions.some(session => session.state === 'orphaned'), true);
 });
 
 test('audio-monitoring owner can retry a stop after a transient provider stop failure', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     let stopCalls = 0;
     await installMonitoring(api, {
@@ -213,7 +213,7 @@ test('audio-monitoring owner can retry a stop after a transient provider stop fa
 
 test('audio-monitoring surfaces a provider denial reason even when a direct-monitor conflict is present', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, { startResult: { outcome: 'handled', status: 'denied', reason: 'microphone permission blocked' } });
 
@@ -229,11 +229,11 @@ test('audio-monitoring surfaces a provider denial reason even when a direct-moni
 
 test('audio-monitoring normalizes an unsafe provider id before storing it', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
 
     await api.dispatch({ capability: 'audio-monitoring', command: 'register-provider', source: 'evil', payload: { providerId: '/Users/secret token=abcdef0123456789 monitor', logicalMonitoringKey: 'evil:main', operations: ['monitoring.start'], operationHandlers: { 'monitoring.start': () => ({ outcome: 'handled', status: 'active' }) } } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
     const provider = snapshot.providers[0];
 
     // The surfaced providerId must be redacted + charset-restricted, never the raw path/token.
@@ -244,7 +244,7 @@ test('audio-monitoring normalizes an unsafe provider id before storing it', asyn
 
 test('audio-monitoring bounds caller-supplied identifiers reflected back in error reasons', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     const evil = '/Users/secret/private token=supersecretvalue123 ' + 'x'.repeat(400);
 
@@ -266,7 +266,7 @@ test('audio-monitoring bounds caller-supplied identifiers reflected back in erro
 
 test('audio-monitoring attaching to a shared session honors a conflicting direct-monitor requirement', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api);
 
@@ -284,7 +284,7 @@ test('audio-monitoring attaching to a shared session honors a conflicting direct
 
 test('audio-monitoring start never lets a caller inject raw sourceRef fields', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api);
 
@@ -302,7 +302,7 @@ test('audio-monitoring start never lets a caller inject raw sourceRef fields', a
 
 test('audio-monitoring start treats a void provider result as failed', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, { providerId: 'void_monitor', logicalMonitoringKey: 'void:main', operationHandlers: { 'monitoring.start': () => undefined } });
 
@@ -314,14 +314,14 @@ test('audio-monitoring start treats a void provider result as failed', async () 
 
 test('audio-monitoring stopAll requires explicit user action', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api);
 
     const active = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { authorization: 'user-action', requiredChannelShape: 'mono' } });
     // A background requester must not be able to tear down everyone's monitoring.
     const background = await api.dispatch({ capability: 'audio-monitoring', command: 'stop', source: 'note_detect', payload: { stopAll: true } });
-    const mid = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const mid = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
     // An explicit user action can.
     const user = await api.dispatch({ capability: 'audio-monitoring', command: 'stop', source: 'user', payload: { stopAll: true, authorization: 'user-action' } });
 
@@ -333,7 +333,7 @@ test('audio-monitoring stopAll requires explicit user action', async () => {
 
 test('audio-monitoring stop does not report stopped when the provider reports a terminal status', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, { stopResult: { outcome: 'handled', status: 'failed', reason: 'device fell off the bus' } });
 
@@ -348,7 +348,7 @@ test('audio-monitoring stop does not report stopped when the provider reports a 
 
 test('audio-monitoring stop reports no-owner when the provider has disappeared', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     const monitoring = await installMonitoring(api);
 
@@ -364,7 +364,7 @@ test('audio-monitoring stop reports no-owner when the provider has disappeared',
 
 test('audio-monitoring stop reports unsupported-command when the provider has no stop operation', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, { providerId: 'nostop_monitor', logicalMonitoringKey: 'nostop:main', operations: ['monitoring.start'] });
 
@@ -378,7 +378,7 @@ test('audio-monitoring stop reports unsupported-command when the provider has no
 
 test('audio-monitoring events emit redaction-safe sessions', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const startedEvents = captureEvents(window, 'audio-monitoring:monitoring-started');
     await installInput(api);
     await installMonitoring(api);
@@ -397,7 +397,7 @@ test('audio-monitoring events emit redaction-safe sessions', async () => {
 
 test('audio-monitoring rejects a providerId collision from a different owner', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     const first = makeMonitoringProvider({ providerId: 'shared_id', ownerPluginId: 'plugin_a', logicalMonitoringKey: 'a:main' });
     const second = makeMonitoringProvider({ providerId: 'shared_id', ownerPluginId: 'plugin_b', logicalMonitoringKey: 'b:main' });
@@ -408,7 +408,7 @@ test('audio-monitoring rejects a providerId collision from a different owner', a
     const sneaky = makeMonitoringProvider({ providerId: 'shared_id', logicalMonitoringKey: 'c:main' });
     delete sneaky.provider.ownerPluginId;
     const reg3 = await api.dispatch({ capability: 'audio-monitoring', command: 'register-provider', source: 'plugin_c', payload: sneaky.provider });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     assert.equal(reg1.outcome, 'handled');
     assert.equal(reg2.outcome, 'failed');
@@ -420,12 +420,12 @@ test('audio-monitoring rejects a providerId collision from a different owner', a
 
 test('audio-monitoring session keeps openInputSessionId verbatim for cross-domain correlation', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api);
 
     const active = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { authorization: 'user-action', requiredChannelShape: 'mono' } });
-    const session = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'].sessions.at(-1);
+    const session = window.feedBack.audioSession.snapshot().domains['audio-monitoring'].sessions.at(-1);
 
     assert.equal(active.outcome, 'handled');
     assert.match(active.payload.openInputSessionId, /^input-open-\d+$/);
@@ -437,12 +437,12 @@ test('audio-monitoring session keeps openInputSessionId verbatim for cross-domai
 
 test('audio-monitoring status refresh tolerates a void provider result without faking active', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, { availability: 'available', operationHandlers: { 'monitoring.status': () => undefined } });
 
     await api.dispatch({ capability: 'audio-monitoring', command: 'inspect', source: 'user', payload: { includeStatus: true } });
-    const outcomes = window.slopsmith.audioSession.snapshot().recentOutcomes.filter(entry => entry.domain === 'audio-monitoring' && entry.operation === 'status');
+    const outcomes = window.feedBack.audioSession.snapshot().recentOutcomes.filter(entry => entry.domain === 'audio-monitoring' && entry.operation === 'status');
 
     // A void status reply is tolerated but must not be recorded as an 'active' session.
     assert.equal(outcomes.length >= 1, true);
@@ -451,7 +451,7 @@ test('audio-monitoring status refresh tolerates a void provider result without f
 
 test('audio-monitoring status refresh does not leak the raw device sourceId to providers', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     let statusSourceRef = null;
     await installMonitoring(api, { operationHandlers: { 'monitoring.status': (request) => { statusSourceRef = request.sourceRef; return { outcome: 'handled', status: 'active' }; } } });
@@ -466,7 +466,7 @@ test('audio-monitoring status refresh does not leak the raw device sourceId to p
 
 test('audio-monitoring status refresh does not downgrade availability on a non-state provider reply', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, { availability: 'available', statusResult: { outcome: 'no-handler' } });
 
@@ -480,7 +480,7 @@ test('audio-monitoring status refresh does not downgrade availability on a non-s
 
 test('audio-monitoring re-keys active sessions on a preference change so requesters still attach', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api);
 
@@ -499,13 +499,13 @@ test('audio-monitoring re-keys active sessions on a preference change so request
 
 test('audio-monitoring does not assume direct-monitor applied without provider confirmation', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, { directMonitorResult: { outcome: 'handled' } });
 
     await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { authorization: 'user-action', requiredChannelShape: 'mono' } });
     const changed = await api.dispatch({ capability: 'audio-monitoring', command: 'set-direct-monitor', source: 'user', payload: { state: 'unmuted' } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     assert.equal(changed.outcome, 'handled');
     // The provider handled the request but did not confirm application, so applied must stay false.
@@ -515,7 +515,7 @@ test('audio-monitoring does not assume direct-monitor applied without provider c
 
 test('audio-monitoring direct-monitor summary preserves an unavailable control state', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, {
         directMonitorResult: { outcome: 'handled', summary: { directMonitor: { state: 'unmuted', control: 'unavailable', applied: false, reason: 'temporarily unavailable' } } },
@@ -523,7 +523,7 @@ test('audio-monitoring direct-monitor summary preserves an unavailable control s
 
     await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { authorization: 'user-action', requiredChannelShape: 'mono' } });
     const changed = await api.dispatch({ capability: 'audio-monitoring', command: 'set-direct-monitor', source: 'user', payload: { state: 'unmuted' } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     // A session that reports control 'unavailable' must not be collapsed to 'unknown' in the rollup.
     assert.equal(changed.payload.directMonitor.control, 'unavailable');
@@ -533,7 +533,7 @@ test('audio-monitoring direct-monitor summary preserves an unavailable control s
 
 test('audio-monitoring direct-monitor summary reflects a provider that handles but does not apply', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     await installMonitoring(api, {
         directMonitorResult: { outcome: 'handled', summary: { directMonitor: { state: 'unmuted', control: 'supported', applied: false, reason: 'hardware busy' } } },
@@ -541,7 +541,7 @@ test('audio-monitoring direct-monitor summary reflects a provider that handles b
 
     await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { authorization: 'user-action', requiredChannelShape: 'mono' } });
     const changed = await api.dispatch({ capability: 'audio-monitoring', command: 'set-direct-monitor', source: 'user', payload: { state: 'unmuted' } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     assert.equal(changed.outcome, 'handled');
     // Provider handled the request but reported it was not applied; the domain summary must not
@@ -556,13 +556,13 @@ test('audio-monitoring direct-monitor summary reflects a provider that handles b
 
 test('audio-monitoring direct monitor preference is user authoritative', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await installInput(api);
     const monitoring = await installMonitoring(api, { directMonitor: { state: 'muted', control: 'supported', preference: 'muted', applied: true } });
 
     const changed = await api.dispatch({ capability: 'audio-monitoring', command: 'set-direct-monitor', source: 'user', payload: { state: 'unmuted' } });
     const startConflict = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'note_detect', payload: { requesterId: 'note_detect', authorization: 'user-action', directMonitorRequirement: 'muted', requiredChannelShape: 'mono' } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     assert.equal(changed.outcome, 'handled');
     assert.equal(startConflict.outcome, 'degraded');
@@ -574,14 +574,14 @@ test('audio-monitoring direct monitor preference is user authoritative', async (
 
 test('audio-monitoring direct monitor unsupported control remains diagnosable', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const changedEvents = captureEvents(window, 'audio-monitoring:direct-monitor-changed');
     await installInput(api);
     await installMonitoring(api, { providerId: 'noctl_monitor', logicalMonitoringKey: 'noctl:monitor', operations: ['monitoring.start', 'monitoring.stop'] });
 
     const active = await api.dispatch({ capability: 'audio-monitoring', command: 'start', source: 'user', payload: { providerId: 'noctl_monitor', requesterId: 'user', authorization: 'user-action', requiredChannelShape: 'mono' } });
     const changed = await api.dispatch({ capability: 'audio-monitoring', command: 'set-direct-monitor', source: 'user', payload: { state: 'unmuted' } });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     assert.equal(active.outcome, 'handled');
     assert.equal(changed.outcome, 'unsupported-command');
@@ -592,7 +592,7 @@ test('audio-monitoring direct monitor unsupported control remains diagnosable', 
 
 test('audio-monitoring distinguishes failure outcomes and prompt-free status inspection', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const input = await installInput(api, { channelSummary: { channelCount: 1, channelShape: 'mono', supports: ['mono'] } });
     const monitoring = await installMonitoring(api);
 
@@ -621,7 +621,7 @@ test('audio-monitoring distinguishes failure outcomes and prompt-free status ins
     assert.equal(monitoring.calls.some(call => call[0] === 'monitoring.status'), true);
     assert.equal(monitoring.calls.some(call => call[0] === 'monitoring.start'), false);
 
-    const outcomes = window.slopsmith.audioSession.snapshot().recentOutcomes.filter(entry => entry.domain === 'audio-monitoring');
+    const outcomes = window.feedBack.audioSession.snapshot().recentOutcomes.filter(entry => entry.domain === 'audio-monitoring');
     for (const outcome of ['handled', 'unsupported-command', 'incompatible', 'incompatible-version', 'no-handler']) {
         assert.equal(outcomes.some(entry => entry.outcome === outcome), true, `missing outcome ${outcome}`);
     }
@@ -629,12 +629,12 @@ test('audio-monitoring distinguishes failure outcomes and prompt-free status ins
 
 test('audio-session diagnostics remain bounded during frequent input monitoring updates', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     for (let index = 0; index < 80; index += 1) {
         await api.dispatch({ capability: 'audio-input', command: 'register-source', source: 'bench', payload: { sourceId: `source-${index}`, logicalSourceKey: `bench:source:${index}`, providerId: 'bench', safeLabel: `/Users/example/private-${index}`, channelSummary: { channelCount: 1, channelShape: 'mono', supports: ['mono'] }, operations: ['source.open'], operationHandlers: { 'source.open': () => ({ outcome: 'handled' }) } } });
         await api.dispatch({ capability: 'audio-monitoring', command: 'register-provider', source: 'bench', payload: { providerId: `monitor-${index}`, logicalMonitoringKey: `bench:monitor:${index}`, operations: ['monitoring.start'], operationHandlers: { 'monitoring.start': () => ({ outcome: 'handled', status: 'active' }) } } });
     }
-    const snapshot = window.slopsmith.audioSession.snapshot();
+    const snapshot = window.feedBack.audioSession.snapshot();
     const encoded = JSON.stringify(snapshot);
     assert.equal(snapshot.recentOutcomes.length <= 100, true);
     assert.equal(encoded.length < 96 * 1024, true);

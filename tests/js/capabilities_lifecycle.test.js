@@ -2,26 +2,26 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadCapabilities } = require('./capabilities_test_harness');
 
-test('capability runtime installs early slopsmith event bus', () => {
+test('capability runtime installs early feedBack event bus', () => {
     const window = loadCapabilities();
     const events = [];
     const onceEvents = [];
 
-    window.slopsmith.on('screen:changed', event => events.push(event.detail));
-    window.slopsmith.on('song:ready', event => onceEvents.push(event.detail), { once: true });
+    window.feedBack.on('screen:changed', event => events.push(event.detail));
+    window.feedBack.on('song:ready', event => onceEvents.push(event.detail), { once: true });
 
-    window.slopsmith.emit('screen:changed', { id: 'home' });
-    window.slopsmith.emit('song:ready', { title: 'First' });
-    window.slopsmith.emit('song:ready', { title: 'Second' });
+    window.feedBack.emit('screen:changed', { id: 'home' });
+    window.feedBack.emit('song:ready', { title: 'First' });
+    window.feedBack.emit('song:ready', { title: 'Second' });
 
     assert.deepEqual(events, [{ id: 'home' }]);
     assert.deepEqual(onceEvents, [{ title: 'First' }]);
-    assert.equal(typeof window.slopsmith.off, 'function');
+    assert.equal(typeof window.feedBack.off, 'function');
 });
 
 test('unregistering requester releases its claims', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipant('stems', { stems: { roles: ['owner'], commands: ['mute'], handlers: { mute: () => ({ outcome: 'handled' }) }, runtime: true } });
     api.registerParticipant('nam_tone', { stems: { roles: ['requester'], commands: ['mute'], runtime: true } });
     api.claim({ capability: 'stems', claimId: 'nam.amp-active', requester: 'nam_tone' });
@@ -34,7 +34,7 @@ test('unregistering requester releases its claims', () => {
 
 test('unregistering owner or handler orphans claim and prevents dispatch', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipant('stems', { stems: { roles: ['owner'], commands: ['mute'], handlers: { mute: () => ({ outcome: 'handled' }) }, runtime: true } });
     api.claim({ capability: 'stems', claimId: 'nam.amp-active', requester: 'nam_tone' });
     api.unregisterParticipant('stems');
@@ -51,7 +51,7 @@ test('unregistering owner or handler orphans claim and prevents dispatch', async
 
 test('runtime enable disable is lifecycle state rather than user override', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipant('plugin_a', { stems: { roles: ['provider'], commands: ['inspect'], runtime: true } });
     const disabled = api.setParticipantEnabled('plugin_a', 'stems', false, { requester: 'test' });
     const enabled = api.setParticipantEnabled('plugin_a', 'stems', true, { requester: 'test' });
@@ -65,7 +65,7 @@ test('runtime enable disable is lifecycle state rather than user override', () =
 
 test('failed no-op registrations do not block reload and rehydrate replacement', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipant('', { stems: { roles: ['owner'] } });
     api.registerParticipant('stems', { stems: { roles: ['owner'], commands: ['mute'], handlers: { mute: () => ({ outcome: 'handled', payload: { generation: 1 } }) }, runtime: true } });
     api.unregisterParticipant('stems');

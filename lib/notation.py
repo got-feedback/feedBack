@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import math
 
-log = logging.getLogger("slopsmith.lib.notation")
+log = logging.getLogger("feedBack.lib.notation")
 
 
 # ── Vocabulary ────────────────────────────────────────────────────────────────

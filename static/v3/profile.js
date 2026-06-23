@@ -206,7 +206,7 @@
     // public global is set at the end of the plugin's screen.js, after the
     // owner is registered, so it is a reliable readiness signal.
     function waitForInputSetup(timeoutMs) {
-        const ready = () => !!(window.slopsmithInputSetup && typeof window.slopsmithInputSetup.launch === 'function');
+        const ready = () => !!(window.feedBackInputSetup && typeof window.feedBackInputSetup.launch === 'function');
         return new Promise((resolve) => {
             if (ready()) { resolve(true); return; }
             const t0 = Date.now();
@@ -222,9 +222,9 @@
         if (!instruments.length) return;
         // Don't let a plugin-load race skip the mandatory input-setup step.
         if (!(await waitForInputSetup(8000))) return;
-        const caps = window.slopsmith && window.slopsmith.capabilities;
+        const caps = window.feedBack && window.feedBack.capabilities;
         if (!caps || typeof caps.command !== 'function') {
-            try { await window.slopsmithInputSetup.launch(instruments); } catch (e) { /* proceed */ }
+            try { await window.feedBackInputSetup.launch(instruments); } catch (e) { /* proceed */ }
             return;
         }
         await new Promise((resolve) => {
@@ -459,7 +459,7 @@
             songDirEl.addEventListener('input', () => { songDir = songDirEl.value.trim(); refreshSubmit(); });
         }
         // Native folder picker on desktop; web users type/paste the path.
-        const _desktop = window.slopsmithDesktop;
+        const _desktop = window.feedBackDesktop;
         if (songDirBrowse && _desktop && typeof _desktop.pickDirectory === 'function') {
             songDirBrowse.classList.remove('hidden');
             songDirBrowse.addEventListener('click', async () => {
@@ -510,7 +510,7 @@
             }
             renderBadge();
             renderProfileScreen();
-            if (window.slopsmith && window.slopsmith.emit) window.slopsmith.emit('v3:profile-updated', _profile);
+            if (window.feedBack && window.feedBack.emit) window.feedBack.emit('v3:profile-updated', _profile);
             // First-run only: after a genuine onboarding completion (not a
             // profile edit), kick off the one-time home tour — but NOT when we're
             // about to launch the diagnostic ("Play it now"), which navigates to
@@ -627,9 +627,9 @@
         renderProfileScreen();
         // Rank / dB / frames re-render whenever progression state or equipped
         // cosmetics move (progression-core.js / theme-core.js own the fetches).
-        if (window.slopsmith && typeof window.slopsmith.on === 'function') {
-            window.slopsmith.on('progression:updated', () => { renderBadge(); renderProfileScreen(); });
-            window.slopsmith.on('v3:cosmetics-applied', () => { renderBadge(); renderProfileScreen(); });
+        if (window.feedBack && typeof window.feedBack.on === 'function') {
+            window.feedBack.on('progression:updated', () => { renderBadge(); renderProfileScreen(); });
+            window.feedBack.on('v3:cosmetics-applied', () => { renderBadge(); renderProfileScreen(); });
         }
     }
     if (document.readyState === 'loading') {

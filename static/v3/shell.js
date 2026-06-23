@@ -287,7 +287,7 @@
 
     // ── showScreen wrapper (idempotent rehydration — design/05 §Rehydration) ─
     function installShowScreenHook() {
-        const hooks = window.__slopsmithV3ShellHooks || (window.__slopsmithV3ShellHooks = {});
+        const hooks = window.__feedBackV3ShellHooks || (window.__feedBackV3ShellHooks = {});
         hooks.syncActive = syncActive; // always point at the latest impl
         if (hooks.installed) return;
         hooks.installed = true;
@@ -359,8 +359,8 @@
         // The "Welcome back, {name}!" title needs the profile, which loads
         // async — refresh once it's in (and whenever it changes).
         function refreshHomeTitle() { if (currentScreenId() === 'v3-home') setTopbarTitle(titleFor('v3-home')); }
-        if (window.slopsmith && typeof window.slopsmith.on === 'function') {
-            window.slopsmith.on('v3:profile-updated', refreshHomeTitle);
+        if (window.feedBack && typeof window.feedBack.on === 'function') {
+            window.feedBack.on('v3:profile-updated', refreshHomeTitle);
         }
         setTimeout(refreshHomeTitle, 700);
     }

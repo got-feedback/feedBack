@@ -6,7 +6,7 @@ const { loadCapabilities, ROOT } = require('./capabilities_test_harness');
 
 test('unsupported capability-pipelines versions are incompatible and do not execute handlers', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const fixture = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'plugin_capabilities', 'unsupported_capability_version.json'), 'utf8'));
     let invoked = false;
     fixture.capabilities.stems.handlers = { mute: () => { invoked = true; return { outcome: 'handled' }; } };

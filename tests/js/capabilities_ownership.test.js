@@ -4,7 +4,7 @@ const { loadCapabilities } = require('./capabilities_test_harness');
 
 test('exclusive duplicate owners report conflict and degrade dispatch', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipant('owner_a', { stems: { roles: ['owner'], commands: ['mute'], handlers: { mute: () => ({ outcome: 'handled' }) }, runtime: true } });
     api.registerParticipant('owner_b', { stems: { roles: ['owner'], commands: ['mute'], handlers: { mute: () => ({ outcome: 'handled' }) }, runtime: true } });
 
@@ -18,7 +18,7 @@ test('exclusive duplicate owners report conflict and degrade dispatch', async ()
 
 test('no-owner no-handler and unsupported-command outcomes are explicit', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     let result = await api.dispatch({ capability: 'missing-domain', command: 'mute', source: 'test' });
     assert.equal(result.status, 'no-owner');
     assert.equal(result.outcome, 'no-owner');

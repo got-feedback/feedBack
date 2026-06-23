@@ -9,8 +9,8 @@
 #   sudo bash build-proxmox-ct.sh [TARGETARCH] [OUTPUT_NAME]
 #
 # Examples:
-#   sudo bash build-proxmox-ct.sh amd64 slopsmith-ct
-#   sudo bash build-proxmox-ct.sh arm64 slopsmith-ct
+#   sudo bash build-proxmox-ct.sh amd64 feedBack-ct
+#   sudo bash build-proxmox-ct.sh arm64 feedBack-ct
 #
 # The resulting container ships empty; mount or copy your .sloppak /
 # loose-folder library into /dlc inside the CT after import.
@@ -26,13 +26,13 @@
 #   sudo apt install debootstrap systemd-container tar zstd curl unzip git
 #
 # On Proxmox, after transfer:
-#   pct restore <VMID> slopsmith-ct.tar.zst --storage local-lvm --rootfs 8 --unprivileged 1
+#   pct restore <VMID> feedBack-ct.tar.zst --storage local-lvm --rootfs 8 --unprivileged 1
 # =============================================================================
 
 set -euo pipefail
 
 TARGETARCH="${1:-amd64}"
-OUTPUT_NAME="${2:-slopsmith-ct}"
+OUTPUT_NAME="${2:-feedBack-ct}"
 
 # OUTPUT_NAME is a positional arg that flows into BUILD_BASE (interpolated into
 # `mkdir -p` / `rm -rf` paths) and into the final tarball name. Reject anything
@@ -104,7 +104,7 @@ VENV_DIR="/opt/app-venv"
 PIP_VERSION="26.1.1"
 DLC_DIR="/dlc"
 CONFIG_DIR="/config"
-SVC_USER="slopsmith"
+SVC_USER="feedBack"
 
 # Coloured logging
 info() { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
@@ -420,7 +420,7 @@ ok "Build dependencies removed."
 # =============================================================================
 # 5d. Tailwind CLI for runtime stylesheet regeneration
 # =============================================================================
-# When a plugin is installed into SLOPSMITH_PLUGINS_DIR at runtime (or
+# When a plugin is installed into FEEDBACK_PLUGINS_DIR at runtime (or
 # discovered there on startup), the server rebuilds static/tailwind.min.css
 # so the plugin's classes are styled — the image-baked sheet only covers
 # in-tree plugins (see lib/tailwind_rebuild.py). tailwindcss is installed
@@ -523,11 +523,11 @@ info "Creating service user '${SVC_USER}' …"
 r "useradd --system --home-dir ${APP_DIR} --shell /usr/sbin/nologin ${SVC_USER}"
 ok "User '${SVC_USER}' created."
 
-info "Installing slopsmith-server.service …"
+info "Installing feedBack-server.service …"
 mkdir -p "${ROOTFS}/etc/systemd/system"
-cat > "${ROOTFS}/etc/systemd/system/slopsmith-server.service" <<EOF
+cat > "${ROOTFS}/etc/systemd/system/feedBack-server.service" <<EOF
 [Unit]
-Description=Slopsmith uvicorn server
+Description=FeedBack uvicorn server
 After=network.target
 
 [Service]
@@ -547,8 +547,8 @@ EOF
 
 # Enable by symlinking (avoids running systemctl inside nspawn)
 mkdir -p "${ROOTFS}/etc/systemd/system/multi-user.target.wants"
-ln -sf /etc/systemd/system/slopsmith-server.service \
-       "${ROOTFS}/etc/systemd/system/multi-user.target.wants/slopsmith-server.service"
+ln -sf /etc/systemd/system/feedBack-server.service \
+       "${ROOTFS}/etc/systemd/system/multi-user.target.wants/feedBack-server.service"
 ok "Service enabled."
 
 # =============================================================================
@@ -662,6 +662,6 @@ cat <<DONE
         --start 1
 
   Then check the server:
-    pct exec 200 -- systemctl status slopsmith-server
+    pct exec 200 -- systemctl status feedBack-server
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DONE

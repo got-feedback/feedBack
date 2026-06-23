@@ -6,7 +6,7 @@ const { loadAudioSession } = require('./audio_session_test_harness');
 
 test('active audio domains expose expected legacy shim metadata', () => {
     const window = loadAudioSession();
-    const shims = window.slopsmith.capabilities.snapshotDiagnostics().compatibilityShims;
+    const shims = window.feedBack.capabilities.snapshotDiagnostics().compatibilityShims;
     for (const shimId of ['audio-mix.fader-registry', 'audio-mix.song-volume', 'audio-mix.analyser', 'audio-input.legacy-source', 'audio-monitoring.audio-barrier', 'stems.master-volume', 'stems.private-state']) {
         assert.equal(shims.some(shim => shim.shimId === shimId && shim.status === 'active'), true, shimId);
     }
@@ -14,12 +14,12 @@ test('active audio domains expose expected legacy shim metadata', () => {
 
 test('legacy bridge hit counts are attributed to canonical audio domains', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
     audioSession.recordBridgeHit({ domain: 'audio-mix', bridgeId: 'audio-mix.analyser', legacySurface: 'HTMLAudioElement analyser tap', participantId: 'highway_3d' });
     audioSession.recordBridgeHit({ domain: 'audio-input', bridgeId: 'audio-input.legacy-source', legacySurface: 'navigator.mediaDevices.getUserMedia', participantId: 'note_detect' });
-    audioSession.recordBridgeHit({ domain: 'audio-monitoring', bridgeId: 'audio-monitoring.audio-barrier', legacySurface: 'window.slopsmithAudioBarrier', participantId: 'note_detect' });
+    audioSession.recordBridgeHit({ domain: 'audio-monitoring', bridgeId: 'audio-monitoring.audio-barrier', legacySurface: 'window.feedBackAudioBarrier', participantId: 'note_detect' });
 
-    const shims = window.slopsmith.capabilities.snapshotDiagnostics().compatibilityShims;
+    const shims = window.feedBack.capabilities.snapshotDiagnostics().compatibilityShims;
     assert.equal(shims.find(shim => shim.shimId === 'audio-mix.analyser').hitCount, 1);
     assert.equal(shims.find(shim => shim.shimId === 'audio-input.legacy-source').capability, 'audio-input');
     assert.equal(shims.find(shim => shim.shimId === 'audio-monitoring.audio-barrier').hitCount, 1);
@@ -30,9 +30,9 @@ test('native audio-mix participant suppresses matching legacy fader and records 
     const window = loadAudioSession();
     installMixerDom(window);
     runBrowserScript(window, 'static/audio-mixer.js');
-    window.slopsmith.audioSession.startSession({ sessionId: 'main:test-song' });
+    window.feedBack.audioSession.startSession({ sessionId: 'main:test-song' });
 
-    window.slopsmith.audio.registerFader({
+    window.feedBack.audio.registerFader({
         id: 'delay.wet',
         label: 'Delay Wet Legacy',
         min: 0,
@@ -43,7 +43,7 @@ test('native audio-mix participant suppresses matching legacy fader and records 
         getValue: () => 0.2,
         setValue: () => {},
     });
-    window.slopsmith.audioSession.registerMixParticipant({
+    window.feedBack.audioSession.registerMixParticipant({
         participantId: 'plugin.delay.native',
         ownerPluginId: 'delay',
         label: 'Delay Wet',
@@ -54,8 +54,8 @@ test('native audio-mix participant suppresses matching legacy fader and records 
         operations: ['fader.get-value', 'fader.set-value'],
     });
 
-    const listed = await window.slopsmith.capabilities.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
-    const snapshot = window.slopsmith.audioSession.snapshot();
+    const listed = await window.feedBack.capabilities.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
+    const snapshot = window.feedBack.audioSession.snapshot();
     const legacy = snapshot.domains['audio-mix'].participants.find(participant => participant.participantId === 'fader.delay.wet');
 
     assert.equal(listed.payload.faders.some(fader => fader.participantId === 'plugin.delay.native'), true);
@@ -86,8 +86,8 @@ function region(src, needle, length = 1200) {
 test('plugin script hydration exposes the current plugin id for legacy registrations', () => {
     const src = source(APP_JS);
     const block = region(src, 'script.src = `/api/plugins/${plugin.id}/screen.js');
-    assert.match(block, /window\.slopsmith\._loadingPluginId\s*=\s*plugin\.id/);
-    assert.match(block, /delete\s+window\.slopsmith\._loadingPluginId/);
+    assert.match(block, /window\.feedBack\._loadingPluginId\s*=\s*plugin\.id/);
+    assert.match(block, /delete\s+window\.feedBack\._loadingPluginId/);
 });
 
 test('library providers route through native library capability', () => {
@@ -100,7 +100,7 @@ test('library providers route through native library capability', () => {
     assert.match(librarySrc, /capabilities\.registerOwner\(['"]library['"]/);
     assert.match(librarySrc, /kind:\s*['"]provider-coordinator['"]/);
     assert.match(librarySrc, /'library\.read': \['query-page', 'query-artists', 'query-stats', 'tuning-names'\]/);
-    assert.match(librarySrc, /window\.slopsmith\.libraryProviders\s*=\s*providerApi/);
+    assert.match(librarySrc, /window\.feedBack\.libraryProviders\s*=\s*providerApi/);
     assert.match(loader, /api\.refresh\(\{ restoreSaved \}\)/);
     assert.match(selector, /capabilityApi\.command\(['"]library['"],\s*['"]select-provider['"]/);
     assert.match(sync, /capabilityApi\.command\(['"]library['"],\s*['"]sync-song['"]/);

@@ -1,4 +1,4 @@
-"""Tests for /api/settings/export and /api/settings/import (slopsmith#113).
+"""Tests for /api/settings/export and /api/settings/import (feedBack#113).
 
 The bundle round-trip covers four persistence stores; this file exercises
 the two server-managed ones (server config + plugin server-side files).
@@ -172,7 +172,7 @@ def test_non_dict_body_refused(client):
 def test_version_warning_nonblocking(client, tmp_path, server_mod):
     bundle = {
         "schema": 1,
-        "slopsmith_version": "999.999.999",
+        "feedBack_version": "999.999.999",
         "server_config": {"master_difficulty": 42},
         "plugin_server_configs": {},
     }
@@ -408,7 +408,7 @@ def test_export_directory_walk(client, server_mod, tmp_path):
 def test_export_includes_schema_and_version(client):
     bundle = client.get("/api/settings/export").json()
     assert bundle["schema"] == 1
-    assert "slopsmith_version" in bundle
+    assert "feedBack_version" in bundle
     assert "exported_at" in bundle
 
 
@@ -521,7 +521,7 @@ def test_atomic_write_cleans_up_tmp_on_failure(server_mod, tmp_path, monkeypatch
 def test_partial_field_uses_relpaths_not_absolute(client, server_mod, tmp_path, monkeypatch):
     """When `_atomic_write_file` fails mid-apply, the 500 response
     surfaces a `partial` list. Returning absolute resolved paths there
-    leaks deployment layout (e.g. `/srv/slopsmith/config/...`); the
+    leaks deployment layout (e.g. `/srv/feedBack/config/...`); the
     importer instead returns the bundle's own relpaths, which are
     portable and meaningful to the user."""
     _stub_plugin(server_mod, "fake_plugin", ["a.db", "b.db"])

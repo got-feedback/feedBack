@@ -74,11 +74,11 @@ function buildSandbox({ juceMode = false } = {}) {
             _juceAudioUrl: juceMode ? '/audio/old-song.ogg' : null,
             _currentSongAudio: { url: '/audio/old-song.ogg' },
             _clearJuceRerouteMemo() {},
-            slopsmith: {
+            feedBack: {
                 isPlaying: true,
                 emit() {},
             },
-            slopsmithDesktop: {
+            feedBackDesktop: {
                 audio: {
                     setBackingSpeed(rate) {
                         backingCalls.push(['setBackingSpeed', rate]);

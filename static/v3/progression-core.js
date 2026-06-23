@@ -13,7 +13,7 @@
  *                                   (buy/equip require authorization:'user-action')
  *
  * Lifecycle events are emitted on the capability surface and mirrored on
- * window.slopsmith as `progression:*` for non-capability consumers:
+ * window.feedBack as `progression:*` for non-capability consumers:
  * challenge-completed, quest-completed, quest-progressed, path-level-up,
  * path-progressed, rank-changed, db-changed, calibration-completed,
  * cosmetic-equipped (+ progression:updated whenever fresh state lands).
@@ -24,7 +24,7 @@
  */
 (function () {
     'use strict';
-    const sm = window.slopsmith = window.slopsmith || {};
+    const sm = window.feedBack = window.feedBack || {};
 
     let _state = null;       // last /api/progression payload
     let _fetching = null;    // in-flight refresh (coalesced)
@@ -151,7 +151,7 @@
         if (!diagnostics || typeof diagnostics.contribute !== 'function' || !_state) return;
         try {
             diagnostics.contribute('progression', {
-                schema: 'slopsmith.progression.diag.v1',
+                schema: 'feedBack.progression.diag.v1',
                 mastery_rank: _state.mastery_rank,
                 calibration_status: (_state.onboarding || {}).calibration_status,
                 paths: (_state.paths || []).map((p) => ({ id: p.id, level: p.level, max_level: p.max_level })),

@@ -1,6 +1,6 @@
-# Slopsmith — AI Agent Guide
+# FeedBack — AI Agent Guide
 
-Slopsmith is a self-hosted web app for browsing, playing, and practicing interactive music notation, built around its own open `.sloppak` chart format. Charts come from importing Guitar Pro (GP5/GP8) or MusicXML, or from authoring in the built-in editor. It runs as a Docker container with a FastAPI backend (`server.py`), vanilla JavaScript frontend (`static/`), shared Python libraries (`lib/`), and an extensive plugin system (`plugins/`). There are no frontend frameworks — everything is plain JS, HTML, and Tailwind CSS.
+FeedBack is a self-hosted web app for browsing, playing, and practicing interactive music notation, built around its own open `.sloppak` chart format. Charts come from importing Guitar Pro (GP5/GP8) or MusicXML, or from authoring in the built-in editor. It runs as a Docker container with a FastAPI backend (`server.py`), vanilla JavaScript frontend (`static/`), shared Python libraries (`lib/`), and an extensive plugin system (`plugins/`). There are no frontend frameworks — everything is plain JS, HTML, and Tailwind CSS.
 
 ## Architecture Quick Reference
 
@@ -62,26 +62,26 @@ All fields except `id` and `name` are optional. Plugins can have any combination
 
 `styles` is the **opt-in** for self-hosted CSS (Principle II — prebuilt Tailwind, no Play CDN). Core's `static/tailwind.min.css` only contains classes scanned from core source at build time, so a plugin installed at runtime (community / NAS) that uses classes core didn't scan — especially arbitrary values like `text-[11px]` — renders unstyled. Declaring `styles` makes the frontend inject one versioned `<link rel="stylesheet">` into `<head>` (covering the plugin's screen *and* its settings panel) pointing at the plugin's own compiled stylesheet. The value is a **plugin-root-relative path that must live under `assets/`** (e.g. `"assets/plugin.css"`) so it serves through the sandboxed `/api/plugins/<id>/assets/...` route. Build it with `corePlugins: { preflight: false }` (utilities only — core ships the single base reset; don't duplicate it) and **never** the Tailwind Play CDN. Plugins that use only core-guaranteed utilities, or ship no Tailwind, omit `styles` and are byte-for-byte unaffected. Full authoring guide + scaffold: [docs/plugin-styles.md](docs/plugin-styles.md).
 
-`settings.server_files` is the **opt-in** for the unified Settings export/import flow (slopsmith#113). It's a list of relpaths under `context["config_dir"]` that the plugin wants included in user-triggered backups. A trailing `/` denotes a directory (recurse). Plugins that omit this field have no server-side files exported; their state lives entirely in browser `localStorage`, which is bundled wholesale on every export. Rules:
+`settings.server_files` is the **opt-in** for the unified Settings export/import flow (feedBack#113). It's a list of relpaths under `context["config_dir"]` that the plugin wants included in user-triggered backups. A trailing `/` denotes a directory (recurse). Plugins that omit this field have no server-side files exported; their state lives entirely in browser `localStorage`, which is bundled wholesale on every export. Rules:
 - Relpaths only. Absolute paths, drive letters, `..` segments, and backslashes are rejected at load time with a `[Plugin]` warning.
 - The same allowlist is consulted at both export and import: a bundle that references a file the *importing host*'s manifest no longer declares is skipped with a warning (handles plugin updates between export and import). A bundle that references a file your host's manifest never declared is also skipped — no surprise writes.
 - Files are encoded as `{"encoding": "json", "data": <parsed>}` for `.json` files that parse cleanly (diff-friendly), `{"encoding": "base64", "data": "..."}` otherwise (sqlite, model blobs, IRs).
 - Plugins own their internal data migration. Importing a bundle whose data schema predates your current code restores bytes verbatim — your plugin must cope at next load.
 - Symlinks are skipped on export and never followed on import.
 
-`diagnostics` is the **opt-in** for the troubleshooting bundle (slopsmith#166 — Settings → Export Diagnostics). Two independent fields:
+`diagnostics` is the **opt-in** for the troubleshooting bundle (feedBack#166 — Settings → Export Diagnostics). Two independent fields:
 - `diagnostics.server_files` — same allowlist semantics as `settings.server_files`: relpaths under `context["config_dir"]`, no `..`, no abs paths, no backslashes, no leading dots. Files listed here are copied verbatim into `plugins/<plugin_id>/<relpath>` inside the bundle. Use this for snapshot-style state (small DB excerpts, model lists, last-error files).
 - `diagnostics.callable` — `"<module>:<function>"` (e.g. `"diagnostics:collect"`). Resolved lazily via `load_sibling` when the user clicks Export, then called as `func({"plugin_id": "...", "config_dir": Path(...)})`. Return `dict`/`list` → written to `plugins/<id>/callable.json`; `bytes` → `callable.bin`; `str` → `callable.txt`. Exceptions are caught and appended to the bundle's `manifest.notes` — a buggy plugin never crashes the export.
 
-Plugins that omit the field contribute nothing to the bundle from the backend side. Frontend plugins can independently push state via `window.slopsmith.diagnostics.contribute(plugin_id, payload)` from their `screen.js` before the user hits Export. Bundle layout + per-file schemas: [docs/diagnostics-bundle-spec.md](docs/diagnostics-bundle-spec.md).
+Plugins that omit the field contribute nothing to the bundle from the backend side. Frontend plugins can independently push state via `window.feedBack.diagnostics.contribute(plugin_id, payload)` from their `screen.js` before the user hits Export. Bundle layout + per-file schemas: [docs/diagnostics-bundle-spec.md](docs/diagnostics-bundle-spec.md).
 
 Best practices:
 - Embed your own `schema` field (e.g. `"my_plugin.diag.v1"`) in JSON returned by `callable` so future tooling can dispatch by version.
 - Keep payloads small (< 100 KB). Diagnostics are not a backup channel — that's `settings.server_files`.
 - Don't include user secrets, API keys, or session tokens. The bundle is shared with maintainers / posted to GitHub issues.
 
-`type` is an optional role hint (slopsmith#36). Supported values:
-- `"visualization"` — plugin provides a highway renderer. Declaring this makes the plugin eligible for the main-player viz picker AND splitscreen's per-panel picker. Must pair with a `window.slopsmithViz_<id>` factory exporting the setRenderer contract below.
+`type` is an optional role hint (feedBack#36). Supported values:
+- `"visualization"` — plugin provides a highway renderer. Declaring this makes the plugin eligible for the main-player viz picker AND splitscreen's per-panel picker. Must pair with a `window.feedBackViz_<id>` factory exporting the setRenderer contract below.
 - Absent → no declared role; plugin is loaded and its script runs, but it doesn't appear in role-specific UIs.
 
 **Backend routes** — `routes.py` must export a `setup(app, context)` function. The `context` dict provides:
@@ -94,9 +94,9 @@ Best practices:
 - `unregister_library_provider(provider_id)` — remove a plugin-provided library source by id. The built-in `local` provider cannot be removed.
 - `get_sloppak_cache_dir()` — sloppak cache path
 - `load_sibling(name)` — loads a sibling module from this plugin's directory under a unique, namespaced module name. See "Sibling imports" below.
-- `log` — stdlib `logging.Logger` namespaced to `slopsmith.plugin.<id>`. Pre-configured with the app-wide level, format (including JSON mode), and correlation IDs. Use this for all backend plugin output instead of `print()`. See "Backend plugin logging" below.
+- `log` — stdlib `logging.Logger` namespaced to `feedBack.plugin.<id>`. Pre-configured with the app-wide level, format (including JSON mode), and correlation IDs. Use this for all backend plugin output instead of `print()`. See "Backend plugin logging" below.
 
-**Sibling imports — use `load_sibling`, not bare imports** (slopsmith#33). The plugin loader inserts each plugin's directory onto `sys.path` so `from extractor import X` works, but Python caches imports by **module name** in `sys.modules`. Two plugins that each ship a top-level `extractor.py` (or any other generic name — `util.py`, `client.py`, `parser.py`, `config.py`, …) collide: whichever loads first wins, and the other plugin's `from extractor import X` either gets the wrong module or fails with `cannot import name 'X' from 'extractor'`.
+**Sibling imports — use `load_sibling`, not bare imports** (feedBack#33). The plugin loader inserts each plugin's directory onto `sys.path` so `from extractor import X` works, but Python caches imports by **module name** in `sys.modules`. Two plugins that each ship a top-level `extractor.py` (or any other generic name — `util.py`, `client.py`, `parser.py`, `config.py`, …) collide: whichever loads first wins, and the other plugin's `from extractor import X` either gets the wrong module or fails with `cannot import name 'X' from 'extractor'`.
 
 The fix is `context["load_sibling"](name)`, which loads the sibling under a namespaced module name (`plugin_<id>.<name>`, where plugin_id is bijectively encoded so reverse-DNS-style ids like `com.example.foo` work without colliding: `_` -> `_5f_`, `.` -> `_2e_`) so each plugin gets its own copy:
 
@@ -115,7 +115,7 @@ Notes:
 - Repeat calls return the cached module. Concurrent first-time calls are serialized via per-module locks so no caller observes a half-initialized module.
 - Bare `import sibling` from `routes.py` still works during the transition period, but the loader prints a startup warning when it detects two plugins shipping a same-named top-level module — covering both `.py` files and package directories. Migrate to `load_sibling` to silence the warning and immunize your plugin from future ecosystem collisions. (Don't mix bare imports and `load_sibling` for the same module — they'd execute the file twice and split module-level state.)
 
-**Frontend scripts** — `screen.js` runs in the global scope via a `<script>` tag. It can access `window.playSong`, `window.showScreen`, `window.createHighway`, the `<audio>` element, and the `window.slopsmith` event emitter.
+**Frontend scripts** — `screen.js` runs in the global scope via a `<script>` tag. It can access `window.playSong`, `window.showScreen`, `window.createHighway`, the `<audio>` element, and the `window.feedBack` event emitter.
 
 **The playSong wrapper chain** — Plugins commonly wrap `window.playSong` to hook into song playback. Plugins load alphabetically, so the last-loaded (alphabetically later) wrapper runs first, while the alphabetically first plugin runs closest to the original. Be aware that `await` calls in inner wrappers yield to the event loop — WebSocket messages can arrive before outer wrappers finish setup.
 
@@ -123,10 +123,10 @@ Notes:
 
 ### v3 UI (fee[dB]ack v0.3.0) — player-chrome contract
 
-v0.3.0 ships a redesigned UI behind a flag (`SLOPSMITH_UI=v3` or the `/v3` route);
+v0.3.0 ships a redesigned UI behind a flag (`FEEDBACK_UI=v3` or the `/v3` route);
 the classic UI (v2) stays the default until 0.3.0 ships, so **plugins must work in
 both**. v3 reuses the same engine (`server.py`, `app.js`, `highway.js`, `playSong`,
-`showScreen`, capabilities, library providers, the `window.slopsmithViz_<id>` /
+`showScreen`, capabilities, library providers, the `window.feedBackViz_<id>` /
 `setRenderer` contract), so a plugin's **backend, capabilities, `nav`/`screen`,
 visualization renderers, diagnostics, and settings export work unchanged** — v3
 surfaces `nav` in its sidebar and mounts screens exactly as v2 does.
@@ -140,8 +140,8 @@ control into it, you must adapt:
   legacy way means your control **auto-hides**, and the legacy insertion anchors
   (`insertBefore` the `span.text-gray-700` separator, or `button:last-child` / ✕
   Close) **don't exist in v3** → it lands wrong / unreachable.
-- **Detect v3** with `window.slopsmith.uiVersion === 'v3'` and **mount into
-  `window.slopsmith.ui.playerControlSlot()`** (a stable, always-reachable container
+- **Detect v3** with `window.feedBack.uiVersion === 'v3'` and **mount into
+  `window.feedBack.ui.playerControlSlot()`** (a stable, always-reachable container
   — the "Plugins" rail popover) instead of `#player-controls`. Drop the dead
   anchors (append), and guard re-injection against the *actual* container
   (`controls.contains(myBtn)`), not a hard-coded `#player-controls`.
@@ -197,18 +197,18 @@ usually an unrelated plugin's per-frame DOM work.
 
 ### Visualization plugins — two complementary contracts
 
-Slopsmith supports two ways for a plugin to participate in the main player's visuals. They coexist; the setRenderer contract is the default for any viz that draws a highway-shaped surface, and overlays handle layered decorations on top.
+FeedBack supports two ways for a plugin to participate in the main player's visuals. They coexist; the setRenderer contract is the default for any viz that draws a highway-shaped surface, and overlays handle layered decorations on top.
 
 **Pick the right shape:**
 - Replacing the whole highway drawing on the existing highway canvas (your renderer owns its rendering context / resources; `createHighway()` still owns the canvas element and the rAF loop)? → **setRenderer** (section 1). Enters the viz picker. Works in both the main player and per-panel under splitscreen.
 - Adding a layer on top of whichever viz is active? → **Overlay** (section 2). Navbar toggle, not in the picker.
 
-#### 1. setRenderer contract (slopsmith#36) — preferred
+#### 1. setRenderer contract (feedBack#36) — preferred
 
-Plugins that want to replace the main highway's draw function (per panel, per session) export a renderer factory on `window.slopsmithViz_<id>` where `<id>` matches the `id` in `plugin.json` (`type: "visualization"` required). The factory returns an object matching this shape:
+Plugins that want to replace the main highway's draw function (per panel, per session) export a renderer factory on `window.feedBackViz_<id>` where `<id>` matches the `id` in `plugin.json` (`type: "visualization"` required). The factory returns an object matching this shape:
 
 ```js
-window.slopsmithViz_my_viz = function () {
+window.feedBackViz_my_viz = function () {
     return {
         // Required canvas context type. Default '2d' if omitted.
         // highway.js reads this BEFORE calling init() so it can
@@ -239,7 +239,7 @@ window.slopsmithViz_my_viz = function () {
             // a bundle-level helper isn't provided because it would
             // need your renderer's own context, not the factory's.
             //
-            // bundle.getNoteState(note, chartTime) (slopsmith#254) — call
+            // bundle.getNoteState(note, chartTime) (feedBack#254) — call
             // this per visible chart note / chord-note to find out whether
             // a scorer (note_detect) has flagged it 'hit' / 'active' (a
             // sustain currently being held correctly) / 'miss', so the gem
@@ -283,25 +283,25 @@ Selecting this plugin in the main-player viz picker — or in splitscreen's per-
 - **Canvas context-type swapping.** Browsers lock a `<canvas>` to the first context type successfully acquired for its lifetime: once `getContext('2d')` succeeds, `getContext('webgl2')` on that same canvas returns `null`, and vice versa. To let arbitrary 2D ⇄ WebGL renderer swaps work mid-session, `highway.setRenderer()` reads the next renderer's `contextType` before calling its `init()` and, if it differs from the type currently bound, replaces the underlying `<canvas>` element with a fresh one via `oldCanvas.cloneNode(false)` followed by `oldCanvas.replaceWith(newCanvas)`. The factory then calls the renderer's `init(newCanvas, bundle)` with the fresh element so its `getContext()` succeeds. Practical implications:
   - **What survives the swap.** `cloneNode(false)` preserves *every HTML attribute* on the element — `id`, `class`, inline `style`, all `data-*` and `aria-*` attributes, `role`, `tabindex`, the attribute form of `width`/`height`, and anything else a plugin attached. DOM position is preserved by `replaceWith()`, so siblings, parents, and surrounding layout are unaffected.
   - **What does NOT survive.** Event listeners attached via `addEventListener` are NOT cloned, and expando properties set imperatively on the JavaScript object (such as the bound rendering context, or any `canvas._myPlugin = …`-style data a plugin attached) are not carried over either. The bound rendering context being left behind on the detached element is exactly what allows the new canvas to start fresh and accept a different `getContext()` call. Note: `canvas.width`/`canvas.height` *are* reflected HTML attributes, so those values do survive the clone; `api.resize()` re-applies the backing-store dimensions on the new element after the swap regardless.
-  - Renderers must **declare `contextType`** on the returned instance (`'2d'` or `'webgl2'`; absent → `'2d'`). Factories may also expose it as a static (`window.slopsmithViz_<id>.contextType = 'webgl2'`) so core can read it before constructing the renderer — used today by Auto-mode evaluation.
-  - Plugins that hold a stale reference to the highway canvas across renderer swaps — including any code that registered listeners directly on the canvas element rather than on `window`/`document` — should listen for the `highway:canvas-replaced` event on `window.slopsmith` and re-acquire / re-register. `window.slopsmith.emit` dispatches a `CustomEvent`, so the payload `{ oldCanvas, newCanvas, contextType }` lives on `event.detail`, not on the event object itself:
+  - Renderers must **declare `contextType`** on the returned instance (`'2d'` or `'webgl2'`; absent → `'2d'`). Factories may also expose it as a static (`window.feedBackViz_<id>.contextType = 'webgl2'`) so core can read it before constructing the renderer — used today by Auto-mode evaluation.
+  - Plugins that hold a stale reference to the highway canvas across renderer swaps — including any code that registered listeners directly on the canvas element rather than on `window`/`document` — should listen for the `highway:canvas-replaced` event on `window.feedBack` and re-acquire / re-register. `window.feedBack.emit` dispatches a `CustomEvent`, so the payload `{ oldCanvas, newCanvas, contextType }` lives on `event.detail`, not on the event object itself:
     ```js
-    window.slopsmith.on('highway:canvas-replaced', (event) => {
+    window.feedBack.on('highway:canvas-replaced', (event) => {
         const { oldCanvas, newCanvas, contextType } = event.detail;
         // re-acquire / re-register against newCanvas
     });
     ```
     Plugins that re-query `document.getElementById('highway')` lazily inside their own event handlers don't need this listener — they pick up the new element automatically (it keeps `id="highway"`).
-  - **`highway:visibility`** — fired on `window.slopsmith` whenever the highway canvas transitions between displayed and hidden. Detection is DOM-based via `canvas.offsetParent === null` (catches `display:none` on the canvas or any ancestor — e.g. splitscreen's `#highway` hide) or whatever a host explicitly sets via `highway.setVisible(bool)`. While `visible === false`, core skips the rAF `renderer.draw(bundle)` call AND the default 2D draw, so renderers don't have to no-op themselves. The event is emitted only on transitions (including the first one after `init()`), not every frame. Payload `{ visible, canvas }` lives on `event.detail`:
+  - **`highway:visibility`** — fired on `window.feedBack` whenever the highway canvas transitions between displayed and hidden. Detection is DOM-based via `canvas.offsetParent === null` (catches `display:none` on the canvas or any ancestor — e.g. splitscreen's `#highway` hide) or whatever a host explicitly sets via `highway.setVisible(bool)`. While `visible === false`, core skips the rAF `renderer.draw(bundle)` call AND the default 2D draw, so renderers don't have to no-op themselves. The event is emitted only on transitions (including the first one after `init()`), not every frame. Payload `{ visible, canvas }` lives on `event.detail`:
     ```js
-    window.slopsmith.on('highway:visibility', (event) => {
+    window.feedBack.on('highway:visibility', (event) => {
         const { visible, canvas } = event.detail;
         // Toggle any sibling DOM your renderer mounts. The 3D Highway
         // renderer hides its `.h3d-wrap` overlay here so `display:none`
         // on `#highway` actually hides the visible output.
     });
     ```
-    Renderers that only paint to the slopsmith canvas don't need this listener — the rAF skip is enough. Renderers that mount sibling DOM (separate WebGL contexts, overlays, etc.) do.
+    Renderers that only paint to the feedBack canvas don't need this listener — the rAF skip is enough. Renderers that mount sibling DOM (separate WebGL contexts, overlays, etc.) do.
   - **`highway.setVisible(bool | null)`** — forces the visibility state regardless of `offsetParent`. Pass `null` to clear the override and resume DOM-based detection. Useful when the host hides the highway via `visibility:hidden`, `opacity:0`, transforms, or clipping rather than `display:none`. The override re-emits any resulting transition immediately rather than waiting for the next rAF tick.
   - Default-renderer ctx is closure-cached. The replace path nulls the closure ctx so stale draw paths short-circuit; the next default-renderer `init()` re-acquires the 2D context from the new canvas cleanly.
 - `draw(bundle)` receives difficulty-filtered arrays — never read from `_filteredNotes` or other internals.
@@ -314,8 +314,8 @@ The viz picker prepends an "Auto (match arrangement)" entry that is the default 
 Declare the predicate as a static on the factory (not the instance) so core can evaluate it without constructing a throwaway renderer:
 
 ```js
-window.slopsmithViz_piano = function () { /* ... */ };
-window.slopsmithViz_piano.matchesArrangement = function (songInfo) {
+window.feedBackViz_piano = function () { /* ... */ };
+window.feedBackViz_piano.matchesArrangement = function (songInfo) {
     return /keys|piano|synth/i.test((songInfo && songInfo.arrangement) || '');
 };
 ```
@@ -328,7 +328,7 @@ window.slopsmithViz_piano.matchesArrangement = function (songInfo) {
 
 **WebGL viz in Auto mode.** Auto evaluation runs on every `song:ready` regardless of which renderer is active. Auto-installing a WebGL renderer when the canvas is currently 2D — or reverting from a WebGL Auto pick to the default 2D — works without a reload because `setRenderer` swaps the canvas element when `contextType` differs (see "Canvas context-type swapping" above). WebGL viz can therefore safely declare `matchesArrangement` and rely on Auto. For 3D Highway specifically, `_canRun3D()` in app.js still gates Auto from picking it on machines without WebGL2 — that fallback is independent of canvas swapping.
 
-**Per-instance settings for host plugins (slopsmith#849).** A viz provider may declare per-instance controls a consuming host (e.g. splitscreen's per-panel popover) renders generically, by adding a `settings` array to its `capabilities.visualization` manifest block: `[{ key, label, type: "toggle" | "range" | "select", default, min?, max?, step?, options? }]`. This is the capability-native, declarative replacement for the ad-hoc `factory.panelControls` static. The validated list is surfaced through the visualization host's `list-providers` snapshot, so a host reads it without knowing the plugin. **A provider that declares `settings` MUST implement `applySetting(key, value)` on its renderer instance** — the host calls it on the specific per-panel instance, which is inherently per-panel (no canvas→panel resolution, no shared global localStorage keys). `getSetting(key)` is optional (the host falls back to the declared `default`); the host owns persistence. `factory.panelControls` remains read as a legacy fallback for hosts that still consume it, but new viz should declare `settings` + `applySetting`.
+**Per-instance settings for host plugins (feedBack#849).** A viz provider may declare per-instance controls a consuming host (e.g. splitscreen's per-panel popover) renders generically, by adding a `settings` array to its `capabilities.visualization` manifest block: `[{ key, label, type: "toggle" | "range" | "select", default, min?, max?, step?, options? }]`. This is the capability-native, declarative replacement for the ad-hoc `factory.panelControls` static. The validated list is surfaced through the visualization host's `list-providers` snapshot, so a host reads it without knowing the plugin. **A provider that declares `settings` MUST implement `applySetting(key, value)` on its renderer instance** — the host calls it on the specific per-panel instance, which is inherently per-panel (no canvas→panel resolution, no shared global localStorage keys). `getSetting(key)` is optional (the host falls back to the declared `default`); the host owns persistence. `factory.panelControls` remains read as a legacy fallback for hosts that still consume it, but new viz should declare `settings` + `applySetting`.
 
 #### 2. Overlay contract — for add-on layers
 
@@ -354,13 +354,13 @@ Overlays do NOT appear in the viz picker and do NOT declare `"type": "visualizat
 - **If you position with `highway.project` / `highway.fretX` (the 2D-highway geometry), gate on `highway.isDefaultRenderer()`** — those helpers describe the *built-in 2D* highway's depth curve and fret zoom. When a custom renderer (3D highway, piano, …) is active your draw hook still fires (on that renderer's 2D overlay layer), but those coordinates won't match its scene — markers land in arbitrary places. Skip rendering when `isDefaultRenderer()` is false; the custom renderer owns that feedback. Renderer-agnostic overlays (fretboard diagram, chord-label HUD — they use `getNotes()`/`getChordTemplates()` + their own layout) don't need this guard.
 - **Clean up on toggle-off** — cancel rAF and remove/hide the overlay canvas so inactive overlays aren't wasting frames.
 
-Reference: [fretboard plugin](https://github.com/got-feedback/feedback-plugin-fretboard) — canonical overlay implementation (navbar toggle, own canvas, 80ms active-note window).
+Reference: [fretboard plugin](https://github.com/got-feedback/feedBack-plugin-fretboard) — canonical overlay implementation (navbar toggle, own canvas, 80ms active-note window).
 
 **Why two?** setRenderer plugs into an existing highway — main-player or splitscreen-panel — reusing its WebSocket and data parsing, so the common "I want a different look for the same data" case is zero boilerplate AND multi-instance for free. Overlays compose with whatever renderer is active — they decorate rather than replace, so multiple can stack (fretboard + chord labels + practice feedback) without fighting over the canvas.
 
 A previous standalone-pane contract (`window.createMyVisualization({ container })` with its own WebSocket per pane) was used by splitscreen pre-Wave-C. It's been retired now that splitscreen calls `setRenderer` on per-panel `createHighway()` instances; if you find references in older plugin docs or external integration guides, those describe the legacy path.
 
-#### 3. Note-state provider — for scorers that want renderers to "light up" notes (slopsmith#254)
+#### 3. Note-state provider — for scorers that want renderers to "light up" notes (feedBack#254)
 
 A scoring plugin (note_detect) can publish a per-note judgment so whichever renderer is active draws the **gem itself** lit on a correct hit, and keeps a sustain trail glowing while it's still being played correctly — instead of a separate overlay ring floating near the note.
 
@@ -386,13 +386,13 @@ highway.setNoteStateProvider((note, chartTime) => {
 - The built-in 2D highway consults it in `drawNote` / `drawSustains` / the chord-frame path: 'hit'/'active' → bright string colour + additive halo + a contained "sizzle" (crackling sparks, throbbing core, a shockwave ring on a fresh strike) on the gem and a bright (vs dim) sustain trail; 'miss' → faint red wash. The bundled **3D highway** reads the same data via `bundle.getNoteState` (bright string-tinted outline + bright body + glowing sustain + a contained sparkle hugging the note rect on hit/active; red outline + suppressed body on miss). Custom renderers that want it call `bundle.getNoteState(note, chartTime)` — it null-guards and returns the normalized `{ state, alpha, color }` (or null).
 - This is orthogonal to the overlay contract: note_detect remains an overlay (HUD, diagnostic miss markers, the "currently detected" indicator) *and* a scorer that feeds this provider. A renderer that ignores `getNoteState` simply doesn't light gems — nothing breaks.
 
-### Audio mixer fader registration (slopsmith#87)
+### Audio mixer fader registration (feedBack#87)
 
 Plugins that produce audio outside the song's `<audio>` element (NAM amp output, synth voices, etc.) can register a labeled fader so users can balance them against the song from one mixer popover in the player controls.
 
 ```js
 function _registerFader() {
-    const api = window.slopsmith && window.slopsmith.audio;
+    const api = window.feedBack && window.feedBack.audio;
     if (!api) return;
     api.registerFader({
         id: 'my_plugin',           // unique key
@@ -405,10 +405,10 @@ function _registerFader() {
     });
 }
 
-if (window.slopsmith && window.slopsmith.audio) {
+if (window.feedBack && window.feedBack.audio) {
     _registerFader();
 } else {
-    window.addEventListener('slopsmith:audio:ready', _registerFader, { once: true });
+    window.addEventListener('feedBack:audio:ready', _registerFader, { once: true });
 }
 ```
 
@@ -416,7 +416,7 @@ The plugin owns persistence — the registry calls `getValue()` when the popover
 
 ### Backend plugin logging
 
-Use `context["log"]` for all backend plugin output. It is a stdlib `logging.Logger` namespaced to `slopsmith.plugin.<id>`, pre-configured with the app-wide level, format (including JSON mode), and correlation IDs. Never use `print()` — it bypasses correlation context and log rotation.
+Use `context["log"]` for all backend plugin output. It is a stdlib `logging.Logger` namespaced to `feedBack.plugin.<id>`, pre-configured with the app-wide level, format (including JSON mode), and correlation IDs. Never use `print()` — it bypasses correlation context and log rotation.
 
 ```python
 def setup(app, context):
@@ -437,19 +437,19 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 ```
 
-### Diagnostics contribution from frontend (slopsmith#166)
+### Diagnostics contribution from frontend (feedBack#166)
 
-Plugins that hold useful debug state in the browser (active model name, last user input, internal counters) can push it into the diagnostics bundle by calling `window.slopsmith.diagnostics.contribute(plugin_id, payload)` at any time. The contribution API is idempotent — repeated calls overwrite the previous value. Whatever was last contributed before the user hits Export Diagnostics is what lands in `plugins/<plugin_id>/client.json`.
+Plugins that hold useful debug state in the browser (active model name, last user input, internal counters) can push it into the diagnostics bundle by calling `window.feedBack.diagnostics.contribute(plugin_id, payload)` at any time. The contribution API is idempotent — repeated calls overwrite the previous value. Whatever was last contributed before the user hits Export Diagnostics is what lands in `plugins/<plugin_id>/client.json`.
 
 ```js
-window.slopsmith.diagnostics.contribute('my_plugin', {
+window.feedBack.diagnostics.contribute('my_plugin', {
     schema: 'my_plugin.client_diag.v1',
     active_preset: getActivePreset(),
     last_error: _lastError,
 });
 ```
 
-Loaded from `static/diagnostics.js` ASAP in `<head>` so the console-wrap is in place before any other script runs. Available on the `window.slopsmith.diagnostics` namespace alongside `snapshotConsole()`, `snapshotHardware()`, `snapshotUa()`, `snapshotLocalStorage()`, `snapshotContributions()`. Keep your payload small (< 100 KB) and don't include secrets — bundles are shared with maintainers.
+Loaded from `static/diagnostics.js` ASAP in `<head>` so the console-wrap is in place before any other script runs. Available on the `window.feedBack.diagnostics` namespace alongside `snapshotConsole()`, `snapshotHardware()`, `snapshotUa()`, `snapshotLocalStorage()`, `snapshotContributions()`. Keep your payload small (< 100 KB) and don't include secrets — bundles are shared with maintainers.
 
 ### Keyboard Shortcuts
 
@@ -496,18 +496,18 @@ window.registerShortcut({
 - Use `localStorage` for user-facing settings, prefixed with your plugin id
 - If hooking `window.playSong`, always call the original and `await` it
 - If hooking `window.showScreen`, clean up your state when leaving the player screen
-- Use `window.slopsmith.emit()` / `window.slopsmith.on()` for inter-plugin communication
+- Use `window.feedBack.emit()` / `window.feedBack.on()` for inter-plugin communication
 - Use `window.registerShortcut()` to add keyboard shortcuts. Clean up with `window.unregisterShortcut(key, scope)` — pass the same scope you registered with, since the default is `'global'` and won't match `player`/`library`/`settings`/`plugin-*` bindings. For panel-scoped shortcuts, prefer `panel.clearShortcuts()`.
 
 ## Song Formats
 
-Slopsmith supports two song formats:
+FeedBack supports two song formats:
 
 ### Loose folder (XML charts)
 A directory containing arrangement XML plus an audio file (and optional `manifest.json` + album art). Discovered, indexed, and played directly — see `lib/loosefolder.py`. Metadata follows a `manifest.json` → XML tags → folder-name priority chain. Songs are tagged `format: "loose"` in the library.
 
 ### Sloppak (open format)
-An open, hand-editable song package designed for Slopsmith. Exists in two interchangeable forms:
+An open, hand-editable song package designed for FeedBack. Exists in two interchangeable forms:
 - **Zip archive** (`.sloppak` file) — distribution form
 - **Directory** (`.sloppak/` folder) — authoring form
 
@@ -530,11 +530,11 @@ cover.jpg              Album art (optional)
 lyrics.json            Syllable-level lyrics (optional)
 ```
 
-Sloppak is the preferred format for new features. The [Stems plugin](https://github.com/topkoa/slopsmith-plugin-stems) provides live stem mixing for sloppak songs.
+Sloppak is the preferred format for new features. The [Stems plugin](https://github.com/topkoa/feedBack-plugin-stems) provides live stem mixing for sloppak songs.
 
 **Full developer reference:** the authoritative format spec now lives in its own repo —
-[got-feedback/feedback-feedpak-spec](https://github.com/got-feedback/feedback-feedpak-spec)
-([`spec/feedpak-v1.md`](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md)):
+[got-feedback/feedpak-spec](https://github.com/got-feedback/feedpak-spec)
+([`spec/feedpak-v1.md`](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md)):
 manifest schema, arrangement wire format, and how to extend the format with new data types (drum
 tab, key/scale annotations, etc.). Published as **feedpak**; this codebase still uses the legacy
 **sloppak** name internally — same on-disk format. [docs/sloppak-spec.md](docs/sloppak-spec.md) is
@@ -548,9 +548,9 @@ a local pointer + code map.
 ## Frontend Conventions
 
 - **No frameworks** — vanilla JS, fetch API, DOM manipulation
-- **Globals** — `highway`, `audio`, `playSong()`, `showScreen()`, `createHighway()`, `window.slopsmith`
+- **Globals** — `highway`, `audio`, `playSong()`, `showScreen()`, `createHighway()`, `window.feedBack`
 - **Storage** — `localStorage` for all user preferences
-- **Styling** — Tailwind CSS utility classes, dark theme (`bg-dark-600`, `text-gray-300`, accent `#4080e0`, gold `#e8c040`). Tailwind is served as a **prebuilt** stylesheet (`static/tailwind.min.css`, regenerated by `bash scripts/build-tailwind.sh`), **never** the runtime Play CDN — the CDN's on-the-fly JIT rescanned the DOM on the main thread and dropped ~26% of frames with the 3D highway (slopsmith-desktop#110). The committed CSS only contains classes the build scanner saw, so CI (`tailwind-fresh`) rebuilds and diffs it; run the build script and commit when you add new classes. A plugin that uses classes not guaranteed in core (notably arbitrary values like `w-[37px]`) MUST ship its own compiled stylesheet via the `styles` manifest key, built with `corePlugins.preflight = false` (utilities only — core ships the one base reset). Plugins MUST NOT load the Tailwind Play CDN or any runtime CSS JIT. See constitution Principle II.
+- **Styling** — Tailwind CSS utility classes, dark theme (`bg-dark-600`, `text-gray-300`, accent `#4080e0`, gold `#e8c040`). Tailwind is served as a **prebuilt** stylesheet (`static/tailwind.min.css`, regenerated by `bash scripts/build-tailwind.sh`), **never** the runtime Play CDN — the CDN's on-the-fly JIT rescanned the DOM on the main thread and dropped ~26% of frames with the 3D highway (feedBack-desktop#110). The committed CSS only contains classes the build scanner saw, so CI (`tailwind-fresh`) rebuilds and diffs it; run the build script and commit when you add new classes. A plugin that uses classes not guaranteed in core (notably arbitrary values like `w-[37px]`) MUST ship its own compiled stylesheet via the `styles` manifest key, built with `corePlugins.preflight = false` (utilities only — core ships the one base reset). Plugins MUST NOT load the Tailwind Play CDN or any runtime CSS JIT. See constitution Principle II.
 - **Naming** — camelCase for JS functions, kebab-case for CSS classes, snake_case for plugin IDs
 - **Player layout** — `#player` is `display:flex; flex-direction:column; position:fixed; inset:0`. `#highway` is `flex:1`. `#player-controls` sits at the bottom. Hiding the highway collapses the layout — use `margin-top: auto` on controls if you need to hide it.
 
@@ -583,8 +583,8 @@ Detection quality is hard to judge by eye — a player UI that "feels worse" aft
 
 Quick orientation:
 - **Reference recording** lives in the gear popover on the player (gated behind Settings → Note Detection → "Detection tuning (advanced)"). Arm before pressing Play; auto-saves a WAV to `static/note_detect_recordings/` on song-end. The directory is bind-mounted, so the host-side harness can read it without a copy step.
-- **Benchmark sloppak** ships in-tree at [docs/benchmarks/note_detect_v1/note_detect_benchmark_v1.sloppak](docs/benchmarks/note_detect_v1/note_detect_benchmark_v1.sloppak) — 8 sections each isolating a different failure mode (low-freq mono, sustained holds, hammer/pull, power chords, dense open chords, bends). Drop it directly into your sloppak DLC folder to install (don't rename — slopsmith keys off the `.sloppak` suffix even though the file is a zip under the hood). The unzipped form lands at `static/sloppak_cache/note_detect_benchmark_v1.sloppak/` after first play. Builder: [docs/benchmarks/note_detect_v1/build_benchmark.py](docs/benchmarks/note_detect_v1/build_benchmark.py).
-- **Headless harness** at [`tools/harness.js`](https://github.com/got-feedback/feedback-plugin-notedetect/blob/main/tools/harness.js) in the note_detect plugin's own repo (cloned into `plugins/note_detect/` locally) runs the same `processFrame` / `matchNotes` / `checkMisses` code path off Node, in seconds per run. Same `note_detect.diagnostic.v1` schema as the in-app Download Diagnostic button.
+- **Benchmark sloppak** ships in-tree at [docs/benchmarks/note_detect_v1/note_detect_benchmark_v1.sloppak](docs/benchmarks/note_detect_v1/note_detect_benchmark_v1.sloppak) — 8 sections each isolating a different failure mode (low-freq mono, sustained holds, hammer/pull, power chords, dense open chords, bends). Drop it directly into your sloppak DLC folder to install (don't rename — feedBack keys off the `.sloppak` suffix even though the file is a zip under the hood). The unzipped form lands at `static/sloppak_cache/note_detect_benchmark_v1.sloppak/` after first play. Builder: [docs/benchmarks/note_detect_v1/build_benchmark.py](docs/benchmarks/note_detect_v1/build_benchmark.py).
+- **Headless harness** at [`tools/harness.js`](https://github.com/got-feedback/feedBack-plugin-notedetect/blob/main/tools/harness.js) in the note_detect plugin's own repo (cloned into `plugins/note_detect/` locally) runs the same `processFrame` / `matchNotes` / `checkMisses` code path off Node, in seconds per run. Same `note_detect.diagnostic.v1` schema as the in-app Download Diagnostic button.
 - **A/V auto-calibrate** (Settings → Note Detection) reads `timing_error_ms_hits.median` and proposes the av-offset that drives it to zero. Iterative: usually converges in 2–3 Apply rounds.
 
 **Always record at 1.0× playback speed** — half-speed takes produce all-miss garbage because chart times are absolute. **Always use `timing_error_ms_hits` (not all-matched) as a calibration signal** — the all-matched median pins near a constant when the offset is wrong, because the matcher silently snaps to neighbouring chart notes.
@@ -594,14 +594,14 @@ Full developer reference (workflow recipes, harness flag table, diagnostic schem
 ## Versioning
 
 - **`VERSION`** (repo root) — single source of truth; plain semver string (e.g. `0.2.4`). Bind-mounted into the container and copied by the Dockerfile so it's always available at `/app/VERSION`.
-- **`GET /api/version`** — returns `{"version": "<contents of VERSION>", "source_url": "...", "license_url": "..."}`. The version drives the navbar badge; `source_url` / `license_url` populate the Settings → About links. `source_url` is configurable via the `APP_SOURCE_URL` env var (default `https://github.com/got-feedback/feedback`); `license_url` falls back to `source_url + "/blob/main/LICENSE"` (GitHub-style, default branch `main`) and is overridable via the `APP_LICENSE_URL` env var — set it explicitly when the source is hosted on a non-GitHub forge (GitLab/Gitea/self-hosted) or under a non-`main` default branch. Both env values must be `http(s)`; non-http(s) values are rejected and fall back to the safe default to prevent `javascript:`/`data:` hrefs.
-- **Auto-sync** — `.github/workflows/sync-version.yml` rewrites `VERSION` via a `repository_dispatch` (`desktop-released`) fired from `slopsmith-desktop`'s release job. As an explicit automation-only exception to the "Never push directly to main" rule in Git Workflow below, the sync job commits straight to `main` as `github-actions[bot]` (version bumps are mechanical; the PR round-trip adds no signal). Human contributors must still go through feature branches + PRs. No manual VERSION edits needed. Use the workflow's `workflow_dispatch` trigger with `version: X.Y.Z` for manual runs (recovery / out-of-band bumps).
-- **`CHANGELOG.md`** — follows [Keep a Changelog](https://keepachangelog.com/) format. Update the `[Unreleased]` section with each PR; when `slopsmith-desktop` cuts a release, rename `[Unreleased]` to the new version + date (the VERSION bump itself is automated).
+- **`GET /api/version`** — returns `{"version": "<contents of VERSION>", "source_url": "...", "license_url": "..."}`. The version drives the navbar badge; `source_url` / `license_url` populate the Settings → About links. `source_url` is configurable via the `APP_SOURCE_URL` env var (default `https://github.com/got-feedback/feedBack`); `license_url` falls back to `source_url + "/blob/main/LICENSE"` (GitHub-style, default branch `main`) and is overridable via the `APP_LICENSE_URL` env var — set it explicitly when the source is hosted on a non-GitHub forge (GitLab/Gitea/self-hosted) or under a non-`main` default branch. Both env values must be `http(s)`; non-http(s) values are rejected and fall back to the safe default to prevent `javascript:`/`data:` hrefs.
+- **Auto-sync** — `.github/workflows/sync-version.yml` rewrites `VERSION` via a `repository_dispatch` (`desktop-released`) fired from `feedBack-desktop`'s release job. As an explicit automation-only exception to the "Never push directly to main" rule in Git Workflow below, the sync job commits straight to `main` as `github-actions[bot]` (version bumps are mechanical; the PR round-trip adds no signal). Human contributors must still go through feature branches + PRs. No manual VERSION edits needed. Use the workflow's `workflow_dispatch` trigger with `version: X.Y.Z` for manual runs (recovery / out-of-band bumps).
+- **`CHANGELOG.md`** — follows [Keep a Changelog](https://keepachangelog.com/) format. Update the `[Unreleased]` section with each PR; when `feedBack-desktop` cuts a release, rename `[Unreleased]` to the new version + date (the VERSION bump itself is automated).
 
 ## Git Workflow
 
 - **Never push directly to main** — always create a feature branch and open a PR
-- **Upstream remote** — set `upstream` to the canonical Slopsmith repository; `origin` is your fork
+- **Upstream remote** — set `upstream` to the canonical FeedBack repository; `origin` is your fork
 - **Plugins are gitlinks** — each plugin in `plugins/` is typically its own git repo (submodule or clone). Branch switches on the main repo can clobber plugin directories. Use `git update-index --assume-unchanged` for plugin dirs if needed.
 - **Commit style** — short imperative subject line, blank line, then body explaining *why*
 
@@ -621,7 +621,7 @@ The highway WebSocket at `/ws/highway/{filename}?arrangement={index}` streams th
 | `tone_changes` | `{ type: 'tone_changes', base, data: [{ time, name }] }` | Optional — tone change events relative to the arrangement base tone; only sent if tones were found |
 | `notes` | `{ type, data: [{ t, s, f, sus, ho, po, sl, bn, ... }] }` | Single notes |
 | `chords` | `{ type, data: [{ t, notes: [{ s, f, sus, ... }] }] }` | Chord events |
-| `phrases` | `{ type, data: [{ start_time, end_time, max_difficulty, levels: [{ difficulty, notes, chords, anchors, handshapes }] }], total }` | Optional — per-phrase difficulty ladder for master-difficulty slider (slopsmith#48). Only sent when the source chart carries multi-level phrase data (phrase-aware sloppak). Sent in chunks (`data` is a batch, `total` is the full count across messages) to avoid multi-MB single frames. Absent for GP imports and legacy sloppak; consumers must treat missing message as "single fixed difficulty — slider disabled". |
+| `phrases` | `{ type, data: [{ start_time, end_time, max_difficulty, levels: [{ difficulty, notes, chords, anchors, handshapes }] }], total }` | Optional — per-phrase difficulty ladder for master-difficulty slider (feedBack#48). Only sent when the source chart carries multi-level phrase data (phrase-aware sloppak). Sent in chunks (`data` is a batch, `total` is the full count across messages) to avoid multi-MB single frames. Absent for GP imports and legacy sloppak; consumers must treat missing message as "single fixed difficulty — slider disabled". |
 | `ready` | `{ type: 'ready' }` | All data sent — safe to finalize and start rendering |
 
 Message delivery is incremental. You may receive `loading` updates and `lyrics` before note/chord payloads; `tone_changes` comes after `lyrics` when present and may be omitted entirely. Do not finalize rendering until you receive `ready`.

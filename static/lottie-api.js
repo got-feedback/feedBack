@@ -26,7 +26,7 @@
         return !!(window.lottie && typeof window.lottie.loadAnimation === 'function');
     }
 
-    window.slopsmithLottie = {
+    window.feedBackLottie = {
         isAvailable: _isAvailable,
         defaults: {
             basePath: DEFAULT_BASE_PATH,

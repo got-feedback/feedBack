@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://slopsmith.local/contracts/plugin-manifest-capabilities.schema.json",
-  "title": "Slopsmith Plugin Manifest Capability Contract",
+  "$id": "https://feedBack.local/contracts/plugin-manifest-capabilities.schema.json",
+  "title": "FeedBack Plugin Manifest Capability Contract",
   "type": "object",
   "required": ["id", "name"],
   "properties": {

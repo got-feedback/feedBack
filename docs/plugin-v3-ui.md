@@ -1,12 +1,12 @@
 # Building plugins for the v3 UI (fee[dB]ack v0.3.0)
 
-v0.3.0 ("fee[dB]ack") ships a redesigned UI **behind a flag** — `SLOPSMITH_UI=v3`
+v0.3.0 ("fee[dB]ack") ships a redesigned UI **behind a flag** — `FEEDBACK_UI=v3`
 or the `/v3` route. The classic UI (v2) remains the default until 0.3.0 ships, so
 plugins must work in **both**.
 
 The good news: v3 **reuses the same engine** as v2 — same `server.py`, `app.js`,
 `highway.js`, `playSong`, `showScreen`, capability registry, library providers,
-and the `window.slopsmithViz_<id>` / `setRenderer` visualization contract. So your
+and the `window.feedBackViz_<id>` / `setRenderer` visualization contract. So your
 plugin's **backend, capabilities, library providers, `nav`/`screen`, visualization
 renderers, diagnostics, and settings export all work unchanged in v3.** v3 surfaces
 your `nav` entry in the new sidebar (via `shell.js` `renderPluginNav`) and your
@@ -34,8 +34,8 @@ So the legacy way of injecting a control breaks in v3 two ways:
 
 The host exposes:
 
-- `window.slopsmith.uiVersion === 'v3'` — detect v3 (absent / not `'v3'` in v2).
-- `window.slopsmith.ui.playerControlSlot()` — returns a **stable, always-reachable
+- `window.feedBack.uiVersion === 'v3'` — detect v3 (absent / not `'v3'` in v2).
+- `window.feedBack.ui.playerControlSlot()` — returns a **stable, always-reachable
   container** (the "Plugins" rail popover). In v3, append your control(s) here
   instead of `#player-controls`.
 
@@ -43,9 +43,9 @@ Canonical pattern for any control you inject into the player:
 
 ```js
 function playerSlot() {
-  return (window.slopsmith && window.slopsmith.uiVersion === 'v3'
-    && window.slopsmith.ui && typeof window.slopsmith.ui.playerControlSlot === 'function')
-    ? window.slopsmith.ui.playerControlSlot() : null;
+  return (window.feedBack && window.feedBack.uiVersion === 'v3'
+    && window.feedBack.ui && typeof window.feedBack.ui.playerControlSlot === 'function')
+    ? window.feedBack.ui.playerControlSlot() : null;
 }
 
 function injectMyButton() {
@@ -183,7 +183,7 @@ out of the capability graph.
 - [ ] Backend / capabilities / library provider / `nav` + `screen` /
       visualization renderer — **no change needed** (they work in v3 as-is).
 - [ ] If you inject a control into the player: detect v3 and mount into
-      `window.slopsmith.ui.playerControlSlot()`; drop the dead separator /
+      `window.feedBack.ui.playerControlSlot()`; drop the dead separator /
       `button:last-child` anchor; guard `contains()` against the actual container.
 - [ ] Dropdowns positioned via `getBoundingClientRect()`, not `#player-controls`.
 - [ ] `#player` overlays keep `z-index` ≤ the chrome layers (transport/HUD 20,

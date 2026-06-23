@@ -2,21 +2,21 @@
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    const capabilities = window.slopsmith.capabilities;
+    window.feedBack = window.feedBack || {};
+    const capabilities = window.feedBack.capabilities;
     if (!capabilities || capabilities.version !== 1) return;
-    if (window.slopsmith.audioSession && window.slopsmith.audioSession.version === 1) return;
+    if (window.feedBack.audioSession && window.feedBack.audioSession.version === 1) return;
 
-    const SCHEMA = 'slopsmith.audio_session.diagnostics.v1';
+    const SCHEMA = 'feedBack.audio_session.diagnostics.v1';
     const DOMAINS = Object.freeze(['audio-mix', 'audio-input', 'audio-monitoring', 'stems']);
     const MAX_OUTCOMES = 100;
     const MAX_DOMAIN_ITEMS = 50;
     const FADER_OPERATION_TIMEOUT_MS = 2000;
     const INPUT_OPERATION_TIMEOUT_MS = 2000;
     const MONITORING_OPERATION_TIMEOUT_MS = 2000;
-    const SELECTED_INPUT_STORAGE_KEY = 'slopsmith.audioInput.selectedLogicalSourceKey';
-    const SELECTED_MONITORING_PROVIDER_STORAGE_KEY = 'slopsmith.audioMonitoring.selectedLogicalMonitoringKey';
-    const DIRECT_MONITOR_STORAGE_KEY = 'slopsmith.audioMonitoring.directMonitorPreference';
+    const SELECTED_INPUT_STORAGE_KEY = 'feedBack.audioInput.selectedLogicalSourceKey';
+    const SELECTED_MONITORING_PROVIDER_STORAGE_KEY = 'feedBack.audioMonitoring.selectedLogicalMonitoringKey';
+    const DIRECT_MONITOR_STORAGE_KEY = 'feedBack.audioMonitoring.directMonitorPreference';
     const OWNER_ID = 'core.audio.session';
     const REQUIRED_MIX_KINDS = Object.freeze(['song', 'plugin', 'stem', 'monitoring', 'preview']);
     const MIX_KINDS = new Set([...REQUIRED_MIX_KINDS, 'analyser', 'other']);
@@ -2912,19 +2912,19 @@
     function _registerBridgeMetadata() {
         if (typeof capabilities.registerCompatibilityShim !== 'function') return;
         const shims = [
-            { shimId: 'audio-mix.fader-registry', capability: 'audio-mix', source: OWNER_ID, legacySurface: 'window.slopsmith.audio.registerFader', reason: 'Legacy mixer faders are attributed as audio-mix participants.' },
+            { shimId: 'audio-mix.fader-registry', capability: 'audio-mix', source: OWNER_ID, legacySurface: 'window.feedBack.audio.registerFader', reason: 'Legacy mixer faders are attributed as audio-mix participants.' },
             { shimId: 'audio-mix.song-volume', capability: 'audio-mix', source: OWNER_ID, legacySurface: 'applySongVolume', reason: 'Legacy song volume writes are attributed as audio-mix route/fader bridge hits.' },
             { shimId: 'audio-mix.analyser', capability: 'audio-mix', source: OWNER_ID, legacySurface: '3D Highway analyser fallback', reason: 'Legacy analyser taps are attributed until renderers request analyser providers through audio-mix.' },
             { shimId: 'audio-input.legacy-source', capability: 'audio-input', source: OWNER_ID, legacySurface: 'plugin/browser input source handoff', reason: 'Legacy input source handoffs are attributed while note-detection input providers migrate to audio-input.' },
-            { shimId: 'audio-monitoring.audio-barrier', capability: 'audio-monitoring', source: OWNER_ID, legacySurface: 'window.slopsmithAudioBarrier', reason: 'Legacy audio startup barriers are attributed as monitoring readiness bridges.' },
-            { shimId: 'stems.master-volume', capability: 'stems', source: OWNER_ID, legacySurface: 'window.slopsmith.stems.setMasterVolume', reason: 'Legacy Stems master volume calls are attributed while native owner operations are staged.' },
+            { shimId: 'audio-monitoring.audio-barrier', capability: 'audio-monitoring', source: OWNER_ID, legacySurface: 'window.feedBackAudioBarrier', reason: 'Legacy audio startup barriers are attributed as monitoring readiness bridges.' },
+            { shimId: 'stems.master-volume', capability: 'stems', source: OWNER_ID, legacySurface: 'window.feedBack.stems.setMasterVolume', reason: 'Legacy Stems master volume calls are attributed while native owner operations are staged.' },
             { shimId: 'stems.private-state', capability: 'stems', source: OWNER_ID, legacySurface: 'plugin-specific Stems/NAM ducking handshake', reason: 'Existing stem automation requesters are tracked until they migrate to native claims.' },
         ];
         for (const shim of shims) capabilities.registerCompatibilityShim({ ...shim, status: 'active' });
     }
 
     function _contributeDiagnostics() {
-        const diagnostics = window.slopsmith && window.slopsmith.diagnostics;
+        const diagnostics = window.feedBack && window.feedBack.diagnostics;
         if (diagnostics && typeof diagnostics.contribute === 'function') {
             try { diagnostics.contribute('audio-session', snapshot()); }
             catch (_) { /* diagnostics must not break playback */ }
@@ -2968,7 +2968,7 @@
         getDiagnostics: snapshot,
     };
 
-    window.slopsmith.audioSession = api;
+    window.feedBack.audioSession = api;
     _registerDomains();
     _registerBridgeMetadata();
     _contributeDiagnostics();

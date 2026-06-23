@@ -12,7 +12,7 @@ LOG = logging.getLogger("test")
 
 def _basic_kwargs(tmp_path):
     return dict(
-        slopsmith_version="0.0.0-test",
+        feedBack_version="0.0.0-test",
         config_dir=tmp_path,
         dlc_dir=None,
         log_file=None,
@@ -33,7 +33,7 @@ def _open_zip(payload: bytes) -> zipfile.ZipFile:
 
 def test_minimal_bundle_has_manifest_and_readme(tmp_path):
     zip_bytes, filename, manifest = db.build_bundle(**_basic_kwargs(tmp_path))
-    assert filename.startswith("slopsmith-diag-0.0.0-test-")
+    assert filename.startswith("feedBack-diag-0.0.0-test-")
     assert filename.endswith(".zip")
     with _open_zip(zip_bytes) as zf:
         names = zf.namelist()
@@ -42,7 +42,7 @@ def test_minimal_bundle_has_manifest_and_readme(tmp_path):
         assert "system/version.json" in names
         m = json.loads(zf.read("manifest.json"))
         assert m["schema"] == 1
-        assert m["slopsmith_version"] == "0.0.0-test"
+        assert m["feedBack_version"] == "0.0.0-test"
         assert any(f["path"] == "system/version.json" for f in m["files"])
 
 
@@ -203,7 +203,7 @@ def test_client_audio_session_contribution_redacts_paths(tmp_path):
     kw["include"]["plugins"] = True
     kw["client_contributions"] = {
         "note_detect": {
-            "schema": "slopsmith.audio_session.diagnostics.v1",
+            "schema": "feedBack.audio_session.diagnostics.v1",
             "session": {"sessionId": str(home_path / "DLC" / "private-song.archive")},
             "domains": {"audio-input": {"sources": [{"label": str(home_path / "devices" / "raw-id")}]}},
         }
@@ -213,7 +213,7 @@ def test_client_audio_session_contribution_redacts_paths(tmp_path):
         data = json.loads(zf.read("plugins/note_detect/client.json"))
     encoded = json.dumps(data)
     assert str(home_path) not in encoded
-    assert "slopsmith.audio_session.diagnostics.v1" in encoded
+    assert "feedBack.audio_session.diagnostics.v1" in encoded
 
 
 def test_system_plugins_exports_capability_metadata_and_shims(tmp_path):
@@ -246,7 +246,7 @@ def test_system_plugins_exports_capability_metadata_and_shims(tmp_path):
 
 def test_preview_returns_manifest_shape(tmp_path):
     out = db.preview_bundle(
-        slopsmith_version="0.0.0-test",
+        feedBack_version="0.0.0-test",
         config_dir=tmp_path,
         dlc_dir=None,
         log_file=None,
@@ -344,7 +344,7 @@ def test_callable_failure_recorded_in_manifest_notes(tmp_path):
 
 
 def test_client_contributions_written_to_bundle(tmp_path):
-    """window.slopsmith.diagnostics.contribute() payloads land in plugins/<id>/client.json."""
+    """window.feedBack.diagnostics.contribute() payloads land in plugins/<id>/client.json."""
     kw = _basic_kwargs(tmp_path)
     kw["include"]["plugins"] = True  # contributions are gated on the plugins toggle
     # Must also include the plugin in loaded_plugins so the ID is recognised.
@@ -419,7 +419,7 @@ def test_ua_url_not_redacted_when_redact_false(tmp_path):
 
 def test_runtime_kind_set_without_hardware_section(tmp_path, monkeypatch):
     """manifest.runtime must reflect actual runtime even when include.hardware=False."""
-    monkeypatch.setenv("SLOPSMITH_RUNTIME", "electron")
+    monkeypatch.setenv("FEEDBACK_RUNTIME", "electron")
     kw = _basic_kwargs(tmp_path)
     kw["include"]["hardware"] = False
     _zip, _name, manifest = db.build_bundle(**kw)
@@ -443,7 +443,7 @@ def test_preview_does_not_execute_callables(tmp_path):
         "_diagnostics_callable": side_effect,
     }
     db.preview_bundle(
-        slopsmith_version="0.0.0-test",
+        feedBack_version="0.0.0-test",
         config_dir=tmp_path,
         dlc_dir=None,
         log_file=None,
@@ -560,7 +560,7 @@ def test_preview_suppresses_callable_spec(tmp_path):
         "_load_sibling": fake_load_sibling,
     }
     db.preview_bundle(
-        slopsmith_version="0.0.0-test",
+        feedBack_version="0.0.0-test",
         config_dir=tmp_path,
         dlc_dir=None,
         log_file=None,
@@ -665,7 +665,7 @@ def test_system_plugins_orphan_path_redacted_when_redactor_provided(tmp_path):
     """Orphan `path` must pass through the redactor when one is provided.
 
     The full resolved path of an evicted copy (e.g.
-    ``/home/user/.config/slopsmith/plugins/highway_3d``) contains the user's
+    ``/home/user/.config/feedBack/plugins/highway_3d``) contains the user's
     home directory.  Without redaction that leaks in a supposedly-sanitised
     bundle.  When a Redactor is passed to _system_plugins, home-dir prefixes
     in `path` must be replaced with the ``<HOME>`` placeholder.
@@ -794,7 +794,7 @@ def test_manifest_notes_missing_log_file_path_redacted(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    log_file = home / "slopsmith" / "server.log"  # under HOME — sensitive
+    log_file = home / "feedBack" / "server.log"  # under HOME — sensitive
     kw = _basic_kwargs(tmp_path)
     kw["include"]["logs"] = True
     kw["log_file"] = log_file  # file does not exist
@@ -964,7 +964,7 @@ def test_callable_bounded_execution_model(tmp_path):
 
 def _preview_kwargs(tmp_path):
     return dict(
-        slopsmith_version="0.0.0-test",
+        feedBack_version="0.0.0-test",
         config_dir=tmp_path,
         dlc_dir=None,
         log_file=None,

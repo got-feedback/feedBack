@@ -19,7 +19,7 @@ function loadMidiInput(options = {}) {
 // A fake provider whose enumerate/open/close are observable by the test.
 function fakeProvider(window, overrides = {}) {
     const calls = { enumerate: 0, open: [], close: [] };
-    window.slopsmith.midiInput.registerProvider({
+    window.feedBack.midiInput.registerProvider({
         providerId: 'web-midi',
         label: 'Web MIDI',
         participantId: 'input_setup',
@@ -33,7 +33,7 @@ function fakeProvider(window, overrides = {}) {
 
 test('midi-input registers an active sensitive provider-coordinator', () => {
     const window = loadMidiInput();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const pipeline = api.inspect('midi-input');
     assert.ok(pipeline, 'midi-input pipeline exists');
     const owner = (pipeline.participants || []).find(p => p.pluginId === 'core.midi-input');
@@ -43,12 +43,12 @@ test('midi-input registers an active sensitive provider-coordinator', () => {
     for (const cmd of ['inspect', 'list-sources', 'discover', 'select-source', 'open-source', 'close-source']) {
         assert.ok(owner.commands.includes(cmd), `owner exposes ${cmd}`);
     }
-    assert.equal(window.slopsmith.midiInput.version, 1);
+    assert.equal(window.feedBack.midiInput.version, 1);
 });
 
 test('list-sources and select-source are prompt-free (never enumerate)', async () => {
     const window = loadMidiInput();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = fakeProvider(window);
     const listed = await api.dispatch({ capability: 'midi-input', command: 'list-sources', source: 'tester' });
     assert.equal(listed.outcome, 'handled');
@@ -57,12 +57,12 @@ test('list-sources and select-source are prompt-free (never enumerate)', async (
 
 test('discover is the permission boundary and surfaces sources', async () => {
     const window = loadMidiInput();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = fakeProvider(window);
     const r = await api.dispatch({ capability: 'midi-input', command: 'discover', source: 'tester' });
     assert.equal(r.outcome, 'handled');
     assert.equal(calls.enumerate, 1, 'discover requests MIDI access exactly once');
-    const sources = window.slopsmith.midiInput.listSources();
+    const sources = window.feedBack.midiInput.listSources();
     assert.equal(sources.length, 1);
     assert.equal(sources[0].logicalSourceKey, 'web-midi::dev1');
     assert.equal(sources[0].kind, 'midi');
@@ -71,31 +71,31 @@ test('discover is the permission boundary and surfaces sources', async () => {
 test('re-discovery drops sources for devices that vanished', async () => {
     const window = loadMidiInput();
     let devices = [{ sourceId: 'dev1', label: 'A' }, { sourceId: 'dev2', label: 'B' }];
-    window.slopsmith.midiInput.registerProvider({
+    window.feedBack.midiInput.registerProvider({
         providerId: 'web-midi', label: 'Web MIDI',
         enumerate: async () => devices,
         open: async () => ({ addListener() {}, removeListener() {} }),
         close: () => {},
     });
-    await window.slopsmith.midiInput.discover();
-    assert.equal(window.slopsmith.midiInput.listSources().length, 2);
+    await window.feedBack.midiInput.discover();
+    assert.equal(window.feedBack.midiInput.listSources().length, 2);
     devices = [{ sourceId: 'dev1', label: 'A' }];   // dev2 unplugged
-    await window.slopsmith.midiInput.discover();
-    const keys = window.slopsmith.midiInput.listSources().map((s) => s.logicalSourceKey);
+    await window.feedBack.midiInput.discover();
+    const keys = window.feedBack.midiInput.listSources().map((s) => s.logicalSourceKey);
     assert.equal(keys.length, 1, 'vanished device is dropped from the source list');
     assert.equal(keys[0], 'web-midi::dev1');
 });
 
 test('discover with no provider reports unavailable', async () => {
     const window = loadMidiInput();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const r = await api.dispatch({ capability: 'midi-input', command: 'discover', source: 'tester' });
     assert.equal(r.outcome, 'unavailable');
 });
 
 test('discover surfaces denied when MIDI access is rejected', async () => {
     const window = loadMidiInput();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     fakeProvider(window, { handlers: { enumerate: async () => { throw new Error('SecurityError: permission denied'); } } });
     const r = await api.dispatch({ capability: 'midi-input', command: 'discover', source: 'tester' });
     assert.equal(r.outcome, 'denied');
@@ -104,21 +104,21 @@ test('discover surfaces denied when MIDI access is rejected', async () => {
 
 test('select-source persists by logicalSourceKey', async () => {
     const window = loadMidiInput();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     fakeProvider(window);
     await api.dispatch({ capability: 'midi-input', command: 'discover', source: 'tester' });
     const sel = await api.dispatch({ capability: 'midi-input', command: 'select-source', source: 'tester', payload: { logicalSourceKey: 'web-midi::dev1' } });
     assert.equal(sel.outcome, 'handled');
-    assert.equal(window.__storage.get('slopsmith.midiInput.selectedLogicalSourceKey'), 'web-midi::dev1');
-    assert.ok(window.slopsmith.midiInput.listSources()[0].selected);
+    assert.equal(window.__storage.get('feedBack.midiInput.selectedLogicalSourceKey'), 'web-midi::dev1');
+    assert.ok(window.feedBack.midiInput.listSources()[0].selected);
 });
 
 test('open/close share one session and release on the last requester', async () => {
     const window = loadMidiInput();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = fakeProvider(window);
-    await window.slopsmith.midiInput.discover();
-    await window.slopsmith.midiInput.select('web-midi::dev1');
+    await window.feedBack.midiInput.discover();
+    await window.feedBack.midiInput.select('web-midi::dev1');
     const a = await api.dispatch({ capability: 'midi-input', command: 'open-source', source: 'reqA', payload: { logicalSourceKey: 'web-midi::dev1' } });
     const b = await api.dispatch({ capability: 'midi-input', command: 'open-source', source: 'reqB', payload: { logicalSourceKey: 'web-midi::dev1' } });
     assert.equal(a.outcome, 'handled');
@@ -133,20 +133,20 @@ test('open/close share one session and release on the last requester', async () 
 
 test('concurrent opens for one source coalesce onto a single provider.open', async () => {
     const window = loadMidiInput();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     // A provider whose open() stays pending until we release it, so both
     // dispatches are genuinely in flight at the same time.
     let release;
     const gate = new Promise((r) => { release = r; });
     const calls = { open: 0, close: 0 };
-    window.slopsmith.midiInput.registerProvider({
+    window.feedBack.midiInput.registerProvider({
         providerId: 'web-midi', label: 'Web MIDI',
         enumerate: async () => [{ sourceId: 'dev1', label: 'My Keyboard' }],
         open: async () => { calls.open += 1; await gate; return { addListener() {}, removeListener() {} }; },
         close: () => { calls.close += 1; },
     });
-    await window.slopsmith.midiInput.discover();
-    await window.slopsmith.midiInput.select('web-midi::dev1');
+    await window.feedBack.midiInput.discover();
+    await window.feedBack.midiInput.select('web-midi::dev1');
     const p1 = api.dispatch({ capability: 'midi-input', command: 'open-source', source: 'reqA', payload: { logicalSourceKey: 'web-midi::dev1' } });
     const p2 = api.dispatch({ capability: 'midi-input', command: 'open-source', source: 'reqB', payload: { logicalSourceKey: 'web-midi::dev1' } });
     release();
@@ -165,9 +165,9 @@ test('concurrent opens for one source coalesce onto a single provider.open', asy
 test('public open() surfaces the live handle (in-page only)', async () => {
     const window = loadMidiInput();
     fakeProvider(window);
-    await window.slopsmith.midiInput.discover();
-    await window.slopsmith.midiInput.select('web-midi::dev1');
-    const res = await window.slopsmith.midiInput.open({ requester: 'input_setup', logicalSourceKey: 'web-midi::dev1' });
+    await window.feedBack.midiInput.discover();
+    await window.feedBack.midiInput.select('web-midi::dev1');
+    const res = await window.feedBack.midiInput.open({ requester: 'input_setup', logicalSourceKey: 'web-midi::dev1' });
     assert.equal(res.outcome, 'handled');
     assert.ok(res.handle && typeof res.handle.addListener === 'function', 'live handle exposed via public global');
 });
@@ -193,12 +193,12 @@ test('built-in Web-MIDI provider self-registers + discovers, filtering loopback 
         { id: 'kb1', name: 'My Keyboard' },
         { id: 'thru', name: 'Midi Through Port-0' }, // loopback → filtered out
     ]);
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     assert.ok(api.inspect('midi-input').participants.some(p => p.pluginId === 'core.midi-input'),
         'built-in provider registered without any plugin');
     const r = await api.dispatch({ capability: 'midi-input', command: 'discover', source: 'tester' });
     assert.equal(r.outcome, 'handled');
-    const sources = window.slopsmith.midiInput.listSources();
+    const sources = window.feedBack.midiInput.listSources();
     assert.equal(sources.length, 1, 'loopback/passthrough ports are filtered');
     assert.equal(sources[0].logicalSourceKey, 'web-midi::kb1');
 });
@@ -206,10 +206,10 @@ test('built-in Web-MIDI provider self-registers + discovers, filtering loopback 
 test('diagnostics are redaction-safe (no device labels, no raw messages)', async () => {
     const window = loadMidiInput();
     fakeProvider(window);
-    await window.slopsmith.midiInput.discover();
-    const contrib = window.slopsmith.diagnostics.snapshotContributions()['midi-input-capability'];
+    await window.feedBack.midiInput.discover();
+    const contrib = window.feedBack.diagnostics.snapshotContributions()['midi-input-capability'];
     assert.ok(contrib, 'midi-input contributes diagnostics');
-    assert.equal(contrib.schema, 'slopsmith.midi_input.diagnostics.v1');
+    assert.equal(contrib.schema, 'feedBack.midi_input.diagnostics.v1');
     const serialized = JSON.stringify(contrib);
     assert.ok(!serialized.includes('My Keyboard'), 'device labels are redacted from diagnostics');
     for (const s of contrib.sources) assert.ok(!('label' in s), 'source entries carry no label');

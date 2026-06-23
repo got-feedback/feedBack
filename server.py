@@ -1,4 +1,4 @@
-"""Slopsmith — FastAPI backend serving highway viewer + library."""
+"""FeedBack — FastAPI backend serving highway viewer + library."""
 
 import asyncio
 import bisect
@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from logging_setup import configure_logging
+from env_compat import getenv_compat
 configure_logging()
 
-log = logging.getLogger("slopsmith.server")
+log = logging.getLogger("feedBack.server")
 
 from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
@@ -67,7 +68,7 @@ import xml.etree.ElementTree as ET
 import structlog
 from fastapi import Request
 
-app = FastAPI(title="Slopsmith")
+app = FastAPI(title="FeedBack")
 
 # Plugins that maintain session stores can register a cleanup callback here.
 # The demo-mode janitor calls every registered hook once per hour so stale
@@ -230,17 +231,17 @@ _DEMO_BLOCKED: list[tuple[str, re.Pattern]] = [
 
 @app.middleware("http")
 async def _demo_mode_guard(request: Request, call_next):
-    if os.environ.get("SLOPSMITH_DEMO_MODE") == "1":
+    if getenv_compat("FEEDBACK_DEMO_MODE") or getenv_compat("FEEDBACK_DEMO_MODE") == "1":
         path = request.url.path
         for method, pattern in _DEMO_BLOCKED:
             if request.method == method and pattern.match(path):
                 return JSONResponse({"error": "demo mode: read-only"}, status_code=403)
         response = await call_next(request)
-        if request.method == "GET" and path == "/" and "slopsmith_demo_session" not in request.cookies:
+        if request.method == "GET" and path == "/" and "feedBack_demo_session" not in request.cookies:
             forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
             is_secure = request.url.scheme == "https" or forwarded_proto.lower() == "https"
             response.set_cookie(
-                "slopsmith_demo_session", str(uuid.uuid4()),
+                "feedBack_demo_session", str(uuid.uuid4()),
                 max_age=86400, httponly=True, samesite="lax",
                 secure=is_secure,
             )
@@ -275,11 +276,11 @@ SLOPPAK_CACHE_DIR = CONFIG_DIR / "sloppak_cache"
 
 
 def _env_flag(name: str) -> bool:
-    """Parse a conventional boolean env flag."""
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+    """Parse a conventional boolean env flag (honours legacy SLOPSMITH_* alias)."""
+    return (getenv_compat(name, "") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-# Canonical Tuning-filter grouping key (slopsmith#867). tuning_name collapses
+# Canonical Tuning-filter grouping key (feedBack#867). tuning_name collapses
 # every non-standard tuning to "Custom Tuning"; for those rows we key on the
 # raw offsets so distinct customs stay distinct, while named tunings keep
 # grouping by name (stable across the offsets-column migration). Used by both
@@ -391,14 +392,14 @@ class MetadataDB:
         for ddl in (
             "ALTER TABLE songs ADD COLUMN format TEXT DEFAULT 'archive'",
             "ALTER TABLE songs ADD COLUMN stem_count INTEGER DEFAULT 0",
-            # slopsmith#129: per-stem filter needs the id list, not just count.
+            # feedBack#129: per-stem filter needs the id list, not just count.
             "ALTER TABLE songs ADD COLUMN stem_ids TEXT DEFAULT '[]'",
-            # slopsmith#69 + #22: denormalized canonical tuning name + numeric
+            # feedBack#69 + #22: denormalized canonical tuning name + numeric
             # sort key (sum of offsets). The existing `tuning` text column
             # stays — these are caches, repopulated on rescan.
             "ALTER TABLE songs ADD COLUMN tuning_name TEXT DEFAULT ''",
             "ALTER TABLE songs ADD COLUMN tuning_sort_key INTEGER DEFAULT 0",
-            # slopsmith#867: raw per-string offsets (space-joined ints) so the
+            # feedBack#867: raw per-string offsets (space-joined ints) so the
             # v3 client can render target notes and the Tuning filter can keep
             # distinct custom tunings distinct (tuning_name collapses them all
             # to "Custom Tuning"). Cache; repopulated on rescan.
@@ -1582,7 +1583,7 @@ class MetadataDB:
     # Manifest-allowed filter values. Whitelisted before binding so a
     # malformed query string can't push arbitrary text through to SQL —
     # parameters are bound, but capping the input space is still cheap
-    # defense-in-depth (see slopsmith#129).
+    # defense-in-depth (see feedBack#129).
     _ALLOWED_ARRANGEMENT_NAMES = {"Lead", "Rhythm", "Bass", "Combo"}
     # Per-smart-type list of (sql_op, sql_param) pairs appended to the SQL
     # name-fallback branch (key-absent smart_name). Covers legacy raw names
@@ -1622,7 +1623,7 @@ class MetadataDB:
                      naming_mode: str = "legacy") -> tuple[str, list]:
         """Shared WHERE-clause builder for query_page / query_artists /
         query_stats. Returns (where_sql, params). Leading 'WHERE' is
-        included so callers paste it directly. See slopsmith#129/#69.
+        included so callers paste it directly. See feedBack#129/#69.
         """
         where = "WHERE title != ''"
         params: list = []
@@ -1804,7 +1805,7 @@ class MetadataDB:
             "title": "title COLLATE NOCASE", "title-desc": "title COLLATE NOCASE DESC",
             "recent": "mtime DESC",
             # Tuning sort uses musical distance from E Standard
-            # (slopsmith#22 — was alphabetical). `tuning_sort_key` is
+            # (feedBack#22 — was alphabetical). `tuning_sort_key` is
             # the sum of per-string offsets, so |sort_key| is the
             # magnitude of the down/up-tune. ABS ascending puts E
             # Standard (0) first, then ±2 (Drop D, F Standard), then
@@ -1832,7 +1833,7 @@ class MetadataDB:
                 "COALESCE(tuning_sort_key, 0) ASC, "
                 "COALESCE(tuning_name, '') COLLATE NOCASE"
             ),
-            # Year sort (slopsmith#128). Empty-year rows pushed to the
+            # Year sort (feedBack#128). Empty-year rows pushed to the
             # bottom for both directions; otherwise CAST so '2010' >
             # '2005' rather than alphabetic.
             "year": "(year = '') ASC, CAST(year AS INTEGER) ASC",
@@ -2950,7 +2951,7 @@ _scan_status = dict(_SCAN_STATUS_INIT)
 _STARTUP_STATUS_INIT = {
     "running": True,
     "phase": "booting",
-    "message": "Starting Slopsmith server...",
+    "message": "Starting FeedBack server...",
     "current_plugin": "",
     "loaded": 0,
     "total": 0,
@@ -3034,13 +3035,13 @@ def _make_scan_executor():
     mp_ctx = multiprocessing.get_context("spawn")
     # Default to one worker per core so CPU-bound metadata parsing uses the
     # whole machine (the point of moving to processes).
-    # SLOPSMITH_MAX_SCAN_WORKERS (set by the Desktop launcher to cap memory
+    # FEEDBACK_MAX_SCAN_WORKERS (set by the Desktop launcher to cap memory
     # usage on low-RAM machines — e.g. 8 GB M2 MacBook Air) takes priority;
     # SCAN_MAX_WORKERS is a legacy override for Docker/bare installs.
     # A malformed override falls back to the core count rather than crashing.
     try:
         max_workers = int(
-            os.environ.get("SLOPSMITH_MAX_SCAN_WORKERS")
+            getenv_compat("FEEDBACK_MAX_SCAN_WORKERS")
             or os.environ.get("SCAN_MAX_WORKERS")
             or (os.cpu_count() or 1)
         )
@@ -3060,14 +3061,14 @@ def _make_scan_executor():
 _BUILTIN_DIAGNOSTIC_SUBDIR = "diagnostics-builtin"
 _BUILTIN_DIAGNOSTIC_SOURCES: list[tuple[str, str]] = [
     (
-        "slopsmith-diagnostic-basic-guitar.sloppak",
-        "docs/diagnostics/slopsmith-diagnostic-basic-guitar.sloppak",
+        "feedBack-diagnostic-basic-guitar.sloppak",
+        "docs/diagnostics/feedBack-diagnostic-basic-guitar.sloppak",
     ),
 ]
 
 
-def _slopsmith_server_root() -> Path:
-    """Directory containing server.py (repo root in dev; resources/slopsmith when bundled)."""
+def _feedBack_server_root() -> Path:
+    """Directory containing server.py (repo root in dev; resources/feedBack when bundled)."""
     return Path(__file__).resolve().parent
 
 
@@ -3079,7 +3080,7 @@ def _builtin_diagnostic_filename() -> str:
 
 # Progression content (spec 010): bundled JSON under data/progression/ (paths,
 # quest pools, shop catalog). Loaded lazily-once; invalid entries are logged
-# warnings, never fatal. SLOPSMITH_PROGRESSION_DATA overrides the root (tests).
+# warnings, never fatal. FEEDBACK_PROGRESSION_DATA overrides the root (tests).
 _progression_content: dict | None = None
 _progression_content_lock = threading.Lock()
 
@@ -3090,8 +3091,8 @@ def _get_progression_content() -> dict:
         with _progression_content_lock:
             if _progression_content is None:
                 import progression as progression_mod
-                root = os.environ.get("SLOPSMITH_PROGRESSION_DATA") or (
-                    _slopsmith_server_root() / "data" / "progression"
+                root = getenv_compat("FEEDBACK_PROGRESSION_DATA") or (
+                    _feedBack_server_root() / "data" / "progression"
                 )
                 content, warnings = progression_mod.load_content(root)
                 for warning in warnings:
@@ -3115,7 +3116,7 @@ def _seed_builtin_diagnostic_sloppaks(dlc: Path | None = None) -> None:
             log.debug("Builtin diagnostic seed: no DLC folder configured, skipping")
             return
 
-        root = _slopsmith_server_root()
+        root = _feedBack_server_root()
         dest_dir = dlc / _BUILTIN_DIAGNOSTIC_SUBDIR
         # Refuse a symlinked seed directory: mkdir(exist_ok=True) would accept
         # it and copies would land at the link target, outside the DLC tree.
@@ -3417,7 +3418,7 @@ async def startup_events():
     # phase so any frontend startup waiter that observes the lifespan also
     # unblocks cleanly (the SSE/poll client treats only `complete` and
     # `error` as terminal when `running` becomes false).
-    if _env_flag("SLOPSMITH_SKIP_STARTUP_TASKS"):
+    if _env_flag("FEEDBACK_SKIP_STARTUP_TASKS"):
         log.info("[startup] Skipping plugin load and background scan")
         # Tests pop `server` from sys.modules across runs, but the `plugins`
         # module is not reloaded — so LOADED_PLUGINS can carry stale entries
@@ -3432,7 +3433,7 @@ async def startup_events():
         _set_startup_status(
             running=False,
             phase="complete",
-            message="Startup tasks skipped (SLOPSMITH_SKIP_STARTUP_TASKS).",
+            message="Startup tasks skipped (FEEDBACK_SKIP_STARTUP_TASKS).",
             error=None,
             current_plugin="",
             loaded=0,
@@ -3488,7 +3489,7 @@ async def startup_events():
 
     # Load plugins asynchronously so HTTP routes and the desktop window can
     # come up immediately while heavy plugin imports/install steps continue.
-    _sync_mode = os.environ.get("SLOPSMITH_SYNC_STARTUP", "").lower() in {"1", "true", "yes", "on"}
+    _sync_mode = getenv_compat("FEEDBACK_SYNC_STARTUP", "").lower() in {"1", "true", "yes", "on"}
 
     def _load_plugins_background():
         try:
@@ -3677,7 +3678,7 @@ async def startup_events():
                          route_setup_fn=_route_setup_on_main)
             # Self-heal a freshly recreated container: its filesystem reset to
             # the image-baked sheet (in-tree plugins only), but a mounted
-            # SLOPSMITH_PLUGINS_DIR may carry user-installed plugins whose
+            # FEEDBACK_PLUGINS_DIR may carry user-installed plugins whose
             # classes aren't in it. Run in its OWN daemon thread so the startup
             # status can flip to "complete" immediately rather than waiting on
             # the (up to 120s) Tailwind subprocess. No-op when there are no user
@@ -3723,7 +3724,7 @@ async def startup_events():
         threading.Thread(target=_load_plugins_background, daemon=True).start()
 
     global _DEMO_JANITOR_STARTED, _DEMO_JANITOR_THREAD
-    if os.environ.get("SLOPSMITH_DEMO_MODE") == "1" and not _DEMO_JANITOR_STARTED:
+    if getenv_compat("FEEDBACK_DEMO_MODE") or getenv_compat("FEEDBACK_DEMO_MODE") == "1" and not _DEMO_JANITOR_STARTED:
         _DEMO_JANITOR_STARTED = True
         _DEMO_JANITOR_STOP.clear()
         def _janitor():
@@ -3830,7 +3831,7 @@ def get_version():
                 version = version_file.read_text().strip()
             except (OSError, UnicodeDecodeError):
                 pass
-    default_source_url = "https://github.com/got-feedback/feedback"
+    default_source_url = "https://github.com/got-feedback/feedBack"
     # APP_SOURCE_URL / APP_LICENSE_URL flow straight into <a href> in the UI,
     # so validate with urllib.parse rather than a bare prefix check — a prefix
     # check accepts malformed values like "https://" (no host) which produce
@@ -4514,7 +4515,7 @@ async def list_tuning_names(provider: str = "local"):
     """Distinct tuning names present in the library, with per-tuning
     counts. Powers the tuning multi-select. Sorted by `tuning_sort_key`
     so names appear in the same musical order the sort uses
-    (slopsmith#22) — E Standard first, then nearest neighbors."""
+    (feedBack#22) — E Standard first, then nearest neighbors."""
     library_provider = _get_library_provider(provider)
     _require_library_provider_capability(library_provider, "library.read")
     return await _call_library_provider_async(library_provider, "tuning_names")
@@ -5573,7 +5574,7 @@ def save_settings(data: dict):
     return {"message": ". ".join(messages) if messages else "Settings saved"}
 
 
-# ── Settings export/import (slopsmith#113) ───────────────────────────────────
+# ── Settings export/import (feedBack#113) ───────────────────────────────────
 
 # Bumped only when the bundle JSON shape changes incompatibly. Importer
 # refuses anything but this exact value — version mismatches are warned
@@ -5945,7 +5946,7 @@ def _atomic_write_file(target: Path, payload: bytes):
 def export_settings():
     """Build a settings bundle covering server config + opted-in plugin
     server-side files. Frontend layers in `local_storage` before
-    triggering the download. See slopsmith#113."""
+    triggering the download. See feedBack#113."""
     import datetime
     from plugins import LOADED_PLUGINS, PLUGINS_LOCK
 
@@ -5968,11 +5969,11 @@ def export_settings():
     bundle = {
         "schema": SETTINGS_BUNDLE_SCHEMA,
         "exported_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "slopsmith_version": _running_version(),
+        "feedBack_version": _running_version(),
         "server_config": server_config,
         "plugin_server_configs": plugin_blocks,
     }
-    filename = f"slopsmith-settings-{now.strftime('%Y-%m-%d')}.json"
+    filename = f"feedBack-settings-{now.strftime('%Y-%m-%d')}.json"
     return JSONResponse(
         bundle,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -5984,7 +5985,7 @@ def import_settings(bundle: dict):
     """Apply a previously exported settings bundle. Validates the entire
     bundle in phase 1 (no disk writes); only on full success does
     phase 2 commit each file via temp+rename. The frontend reads
-    `local_storage` itself — server ignores it. See slopsmith#113."""
+    `local_storage` itself — server ignores it. See feedBack#113."""
     from plugins import LOADED_PLUGINS, PLUGINS_LOCK
 
     if not isinstance(bundle, dict):
@@ -6022,7 +6023,7 @@ def import_settings(bundle: dict):
         )
 
     warnings: list[str] = []
-    bundle_version = bundle.get("slopsmith_version")
+    bundle_version = bundle.get("feedBack_version")
     running = _running_version()
     if bundle_version and bundle_version != running:
         warnings.append(
@@ -6155,7 +6156,7 @@ def import_settings(bundle: dict):
     }
 
 
-# ── Diagnostic bundle export (slopsmith#166) ──────────────────────────
+# ── Diagnostic bundle export (feedBack#166) ──────────────────────────
 #
 # One-click "Export Diagnostics" in Settings produces a redacted zip
 # combining server logs, system info, hardware (CPU/GPU/RAM), plugin
@@ -6179,11 +6180,11 @@ def _diag_plugins_roots() -> list[Path]:
     """Return all plugin root directories for orphan scanning.
 
     Includes both the built-in ``plugins/`` directory and
-    ``SLOPSMITH_PLUGINS_DIR`` when set, so user-installed plugins and
+    ``FEEDBACK_PLUGINS_DIR`` when set, so user-installed plugins and
     orphans in the external dir are reflected in the bundle.
     """
     roots: list[Path] = []
-    user_dir = os.environ.get("SLOPSMITH_PLUGINS_DIR", "").strip()
+    user_dir = getenv_compat("FEEDBACK_PLUGINS_DIR", "").strip()
     if user_dir:
         p = Path(user_dir)
         if p.is_dir():
@@ -6363,7 +6364,7 @@ def export_diagnostics(payload: dict = Body(default_factory=dict)):
     )
 
     zip_bytes, filename, _manifest = _diag_build(
-        slopsmith_version=_running_version(),
+        feedBack_version=_running_version(),
         config_dir=CONFIG_DIR,
         dlc_dir=_get_dlc_dir(),
         log_file=_diag_log_file(),
@@ -6409,7 +6410,7 @@ def preview_diagnostics(
     with PLUGINS_LOCK:
         plugins_snapshot = list(LOADED_PLUGINS)
     return _diag_preview(
-        slopsmith_version=_running_version(),
+        feedBack_version=_running_version(),
         config_dir=CONFIG_DIR,
         dlc_dir=_get_dlc_dir(),
         log_file=_diag_log_file(),
@@ -7076,7 +7077,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             "audio_error": audio_error,
             "tuning": arr.tuning,
             # Number of strings on the active arrangement
-            # (slopsmith-plugin-3dhighway#7). arrangement XML / archive sources
+            # (feedBack-plugin-3dhighway#7). arrangement XML / archive sources
             # always emit `tuning` as length 6 with zero-padding for
             # unused string slots, so `len(arr.tuning)` is unreliable
             # there; sloppak / GP-imported sources may instead carry
@@ -7570,7 +7571,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             })
 
         # Per-phrase difficulty data for the master-difficulty slider
-        # (slopsmith#48). Only sent when the source chart had multiple
+        # (feedBack#48). Only sent when the source chart had multiple
         # `<level>` tiers — single-level charts (GP converter, older
         # sloppaks without phrase data) produce arr.phrases=None, and the
         # frontend treats the missing message as "slider disabled".
@@ -7681,9 +7682,9 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 def index():
     # fee[dB]ack v0.3.0: the v3 shell is now the DEFAULT at `/`. The classic v2
     # UI remains fully available as a fallback — opt back in with
-    # SLOPSMITH_UI=v2 (or =legacy), or hit the dedicated /v2 route below (which
+    # FEEDBACK_UI=v2 (or =legacy), or hit the dedicated /v2 route below (which
     # serves it regardless of the env var).
-    if os.environ.get("SLOPSMITH_UI") in ("v2", "legacy"):
+    if getenv_compat("FEEDBACK_UI") or getenv_compat("FEEDBACK_UI") in ("v2", "legacy"):
         return FileResponse(str(STATIC_DIR / "index.html"))
     return FileResponse(str(STATIC_DIR / "v3" / "index.html"))
 
@@ -7698,5 +7699,5 @@ def index_v3():
 @app.get("/v2")
 def index_v2():
     # Always serve the classic v2 UI, independent of the env var, so the
-    # fallback is reachable without flipping SLOPSMITH_UI.
+    # fallback is reachable without flipping FEEDBACK_UI.
     return FileResponse(str(STATIC_DIR / "index.html"))

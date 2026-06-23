@@ -139,7 +139,7 @@ def test_unsupported_version_is_reported_as_incompatible_not_executed():
 
 
 def test_published_schema_declares_generic_settings_descriptors():
-    # Per-instance control descriptors (slopsmith#849) live on the generic
+    # Per-instance control descriptors (feedBack#849) live on the generic
     # capabilityDeclaration so ANY domain can carry them, not just visualization.
     schema = json.loads((ROOT / "docs" / "plugin-manifest.schema.json").read_text(encoding="utf-8"))
     settings = schema["$defs"]["capabilityDeclaration"]["properties"]["settings"]

@@ -23,7 +23,7 @@ def test_seed_creates_builtin_diagnostic_sloppak(tmp_path, server_mod):
     """First seed copies the bundled sloppak into diagnostics-builtin/."""
     dlc = tmp_path / "dlc"
     dlc.mkdir()
-    source = server_mod._slopsmith_server_root() / server_mod._BUILTIN_DIAGNOSTIC_SOURCES[0][1]
+    source = server_mod._feedBack_server_root() / server_mod._BUILTIN_DIAGNOSTIC_SOURCES[0][1]
     if not source.is_file():
         pytest.skip(f"source sloppak not present in checkout: {source}")
 
@@ -38,7 +38,7 @@ def test_seed_is_idempotent_when_destination_exists(tmp_path, server_mod):
     """Second seed leaves an up-to-date destination unchanged."""
     dlc = tmp_path / "dlc"
     dlc.mkdir()
-    source = server_mod._slopsmith_server_root() / server_mod._BUILTIN_DIAGNOSTIC_SOURCES[0][1]
+    source = server_mod._feedBack_server_root() / server_mod._BUILTIN_DIAGNOSTIC_SOURCES[0][1]
     if not source.is_file():
         pytest.skip(f"source sloppak not present in checkout: {source}")
 
@@ -57,7 +57,7 @@ def test_seed_skips_when_destination_is_newer(tmp_path, server_mod):
     """An existing newer destination is not overwritten."""
     dlc = tmp_path / "dlc"
     dlc.mkdir()
-    source = server_mod._slopsmith_server_root() / server_mod._BUILTIN_DIAGNOSTIC_SOURCES[0][1]
+    source = server_mod._feedBack_server_root() / server_mod._BUILTIN_DIAGNOSTIC_SOURCES[0][1]
     if not source.is_file():
         pytest.skip(f"source sloppak not present in checkout: {source}")
     dest_dir = dlc / server_mod._BUILTIN_DIAGNOSTIC_SUBDIR
@@ -77,7 +77,7 @@ def test_seed_refuses_to_follow_symlink_destination(tmp_path, server_mod):
     """A symlink at the destination is skipped, not written through."""
     dlc = tmp_path / "dlc"
     dlc.mkdir()
-    source = server_mod._slopsmith_server_root() / server_mod._BUILTIN_DIAGNOSTIC_SOURCES[0][1]
+    source = server_mod._feedBack_server_root() / server_mod._BUILTIN_DIAGNOSTIC_SOURCES[0][1]
     if not source.is_file():
         pytest.skip(f"source sloppak not present in checkout: {source}")
 

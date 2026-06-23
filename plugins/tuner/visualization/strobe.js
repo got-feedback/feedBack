@@ -1,5 +1,5 @@
 /**
- * Strobe tuner visualization for the Slopsmith tuner plugin.
+ * Strobe tuner visualization for the FeedBack tuner plugin.
  *
  * Contract: window._tunerViz_strobe(container) → { update(note, cents, freq), destroy() }
  *   - note: string | null  (null = no signal)

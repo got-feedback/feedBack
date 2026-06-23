@@ -86,7 +86,7 @@
 
     async function _tryBridgeStart(audioInputMode, myGen) {
         if (audioInputMode === 'browser') return false;
-        var desktop = (typeof window !== 'undefined') ? window.slopsmithDesktop : null;
+        var desktop = (typeof window !== 'undefined') ? window.feedBackDesktop : null;
         if (!desktop || !desktop.isDesktop || !desktop.audio
             || typeof desktop.audio.isAvailable !== 'function') return false;
 

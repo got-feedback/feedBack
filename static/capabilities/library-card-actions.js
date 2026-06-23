@@ -9,7 +9,7 @@
  * owner is registered in the capability runtime so the Capability Inspector and
  * diagnostics can see it (design/05; docs/capability-roadmap.md domain #9).
  *
- * Public API: window.slopsmith.libraryCardActions
+ * Public API: window.feedBack.libraryCardActions
  *   register(spec) -> unregister()    spec: { id, pluginId, label, icon?,
  *       placement?('menu'|'inline'|'overlay'), order?, destructive?,
  *       applies?(song)->bool, enabled?(song)->bool, run(song, ctx) }
@@ -20,9 +20,9 @@
 (function () {
     'use strict';
     const w = (typeof window !== 'undefined') ? window : {};
-    w.slopsmith = w.slopsmith || {};
-    if (w.slopsmith.libraryCardActions && w.slopsmith.libraryCardActions.version === 1) return;
-    const capabilities = w.slopsmith.capabilities;
+    w.feedBack = w.feedBack || {};
+    if (w.feedBack.libraryCardActions && w.feedBack.libraryCardActions.version === 1) return;
+    const capabilities = w.feedBack.capabilities;
     const DOMAIN = 'ui.library-card-injection';
     const PLACEMENTS = ['menu', 'inline', 'overlay'];
 
@@ -117,7 +117,7 @@
 
     function snapshot() {
         return {
-            schema: 'slopsmith.library_card_actions.v1',
+            schema: 'feedBack.library_card_actions.v1',
             actions: Array.from(actions.values()).map((a) => ({ id: a.id, pluginId: a.pluginId, placement: a.placement, order: a.order, destructive: a.destructive })),
         };
     }
@@ -148,5 +148,5 @@
 
     const api = { version: 1, register, unregister, list, run, snapshot };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;  // node tests
-    w.slopsmith.libraryCardActions = api;
+    w.feedBack.libraryCardActions = api;
 })();

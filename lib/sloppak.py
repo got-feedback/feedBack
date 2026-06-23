@@ -22,7 +22,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-log = logging.getLogger("slopsmith.lib.sloppak")
+log = logging.getLogger("feedBack.lib.sloppak")
 
 # The feedpak format version this build targets / writes (manifest
 # `feedpak_version`, a semver string per spec §4). Readers tolerate any version
@@ -892,6 +892,6 @@ def extract_meta(path: Path) -> dict:
         "arrangements": arrangements,
         "has_lyrics": has_lyrics,
         "stem_count": stem_count,
-        # slopsmith#129: per-stem filter needs the id list, not just count.
+        # feedBack#129: per-stem filter needs the id list, not just count.
         "stem_ids": stem_ids,
     }

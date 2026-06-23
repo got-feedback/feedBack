@@ -129,7 +129,7 @@ function createProgressWindow(progressionState) {
             refresh() { return Promise.resolve(progressionState); },
         },
         playSong() {},
-        slopsmith: {
+        feedBack: {
             on(type, handler) {
                 const list = listeners.get(type) || [];
                 list.push(handler);
@@ -163,14 +163,14 @@ test('progression:calibration-attempt with 0.92 shows retry overlay and So close
         mastery_rank: 0,
         onboarding: {
             calibration_status: 'pending',
-            diagnostic_filename: 'diagnostics-builtin/slopsmith-diagnostic-basic-guitar.sloppak',
+            diagnostic_filename: 'diagnostics-builtin/feedBack-diagnostic-basic-guitar.sloppak',
         },
         paths: [],
         wallet: { balance: 0, lifetime_db: 0 },
         quests: {},
     });
 
-    win.slopsmith.emit('progression:calibration-attempt', { accuracy: 0.92 });
+    win.feedBack.emit('progression:calibration-attempt', { accuracy: 0.92 });
 
     const overlay = win.document.getElementById('v3-calibration-retry');
     assert.ok(overlay, 'retry overlay should exist');
@@ -184,14 +184,14 @@ test('progression:calibration-completed shows success overlay and Setup verified
         mastery_rank: 0,
         onboarding: {
             calibration_status: 'pending',
-            diagnostic_filename: 'diagnostics-builtin/slopsmith-diagnostic-basic-guitar.sloppak',
+            diagnostic_filename: 'diagnostics-builtin/feedBack-diagnostic-basic-guitar.sloppak',
         },
         paths: [],
         wallet: { balance: 0, lifetime_db: 0 },
         quests: {},
     });
 
-    win.slopsmith.emit('progression:calibration-completed', {});
+    win.feedBack.emit('progression:calibration-completed', {});
 
     const overlay = win.document.getElementById('v3-calibration-success');
     assert.ok(overlay, 'success overlay should exist');
@@ -205,14 +205,14 @@ test('success overlay for skipped state does not claim rank-up', () => {
         mastery_rank: 1,
         onboarding: {
             calibration_status: 'skipped',
-            diagnostic_filename: 'diagnostics-builtin/slopsmith-diagnostic-basic-guitar.sloppak',
+            diagnostic_filename: 'diagnostics-builtin/feedBack-diagnostic-basic-guitar.sloppak',
         },
         paths: [],
         wallet: { balance: 0, lifetime_db: 0 },
         quests: {},
     });
 
-    win.slopsmith.emit('progression:calibration-completed', {});
+    win.feedBack.emit('progression:calibration-completed', {});
 
     const overlay = win.document.getElementById('v3-calibration-success');
     assert.ok(overlay);
@@ -226,15 +226,15 @@ test('calibration-completed does not stack duplicate success overlays', () => {
         mastery_rank: 1,
         onboarding: {
             calibration_status: 'skipped',
-            diagnostic_filename: 'diagnostics-builtin/slopsmith-diagnostic-basic-guitar.sloppak',
+            diagnostic_filename: 'diagnostics-builtin/feedBack-diagnostic-basic-guitar.sloppak',
         },
         paths: [],
         wallet: { balance: 0, lifetime_db: 0 },
         quests: {},
     });
 
-    win.slopsmith.emit('progression:calibration-completed', {});
-    win.slopsmith.emit('progression:calibration-completed', {});
+    win.feedBack.emit('progression:calibration-completed', {});
+    win.feedBack.emit('progression:calibration-completed', {});
 
     const overlays = win.__bodyChildren.filter((el) => el.id === 'v3-calibration-success');
     assert.equal(overlays.length, 1);

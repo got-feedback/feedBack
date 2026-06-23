@@ -79,7 +79,7 @@ from notation_lift import (  # noqa: E402
     split_hands,
 )
 
-log = logging.getLogger("slopsmith.scripts.lift_keys_notation")
+log = logging.getLogger("feedBack.scripts.lift_keys_notation")
 
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 

@@ -16,7 +16,7 @@ function loadAudioEffects(options = {}) {
 }
 
 function diagnosticsSnapshot(window) {
-    return window.slopsmith.audioEffects.snapshot();
+    return window.feedBack.audioEffects.snapshot();
 }
 
 module.exports = { loadAudioEffects, diagnosticsSnapshot, ROOT };

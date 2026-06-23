@@ -240,7 +240,7 @@
 
     if (typeof document !== 'undefined') {
         const boot = () => {
-            const sm = root && root.slopsmith;
+            const sm = root && root.feedBack;
             if (sm) bindRuntime(sm);
         };
         if (document.readyState === 'loading') {

@@ -55,7 +55,7 @@ def test_qstring_secret_redacted():
 
 def test_home_dir_replaced():
     r = Redactor(home_dir=Path("/home/alice"))
-    out = r.redact_text("config at /home/alice/.config/slopsmith")
+    out = r.redact_text("config at /home/alice/.config/feedBack")
     assert "/home/alice" not in out
     assert "<HOME>" in out
 

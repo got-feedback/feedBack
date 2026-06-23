@@ -2,7 +2,7 @@
     'use strict';
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Slopsmith tour engine — consolidated menu version.
+    // FeedBack tour engine — consolidated menu version.
     //
     // One floating ? button at the bottom-right of the viewport. Click it to
     // see every tour that's relevant to the current screen. Click a tour to
@@ -12,7 +12,7 @@
     //   - has_screen: true   → tour relevant on the plugin's own dedicated
     //                          screen (`plugin-<id>`)
     //   - otherwise          → tour relevant on the player screen
-    //   - plugins can override via slopsmithTour.register(id, { screens: [...] })
+    //   - plugins can override via feedBackTour.register(id, { screens: [...] })
     //
     // First-visit toast: on screen:changed, if any relevant tour is unseen
     // and un-dismissed, a small "Take a quick tour of X?" prompt pops next
@@ -40,8 +40,8 @@
 
     // ── localStorage helpers ──────────────────────────────────────────────
 
-    function _seenKey(id)      { return 'slopsmith_tour_seen_' + id; }
-    function _dismissedKey(id) { return 'slopsmith_tour_dismissed_' + id; }
+    function _seenKey(id)      { return 'feedBack_tour_seen_' + id; }
+    function _dismissedKey(id) { return 'feedBack_tour_dismissed_' + id; }
 
     function hasSeen(pluginId) {
         try { return !!localStorage.getItem(_seenKey(pluginId)); } catch { return false; }
@@ -93,7 +93,7 @@
             ? Array.from(picker.options).map(o => o.value).filter(v => v !== 'auto' && v !== 'default')
             : Object.keys(_tourPlugins).filter(id => _tourPlugins[id].is_viz);
         for (const pluginId of candidateIds) {
-            const factory = window['slopsmithViz_' + pluginId];
+            const factory = window['feedBackViz_' + pluginId];
             if (typeof factory !== 'function') continue;
             const predicate = factory.matchesArrangement;
             if (typeof predicate !== 'function') continue;
@@ -141,11 +141,11 @@
     function _ensureMenu() {
         if (_menuBtn) return;
         _menuBtn = document.createElement('button');
-        _menuBtn.className = 'slopsmith-tour-menu-btn';
+        _menuBtn.className = 'feedBack-tour-menu-btn';
         _menuBtn.setAttribute('aria-label', 'Available tours');
         _menuBtn.setAttribute('aria-haspopup', 'dialog');
         _menuBtn.setAttribute('aria-expanded', 'false');
-        _menuBtn.setAttribute('aria-controls', 'slopsmith-tour-menu-popover');
+        _menuBtn.setAttribute('aria-controls', 'feedBack-tour-menu-popover');
         _menuBtn.title = 'Available tours';
         _menuBtn.textContent = '?';
         _menuBtn.style.display = 'none';
@@ -153,8 +153,8 @@
         document.body.appendChild(_menuBtn);
 
         _menuPopover = document.createElement('div');
-        _menuPopover.id = 'slopsmith-tour-menu-popover';
-        _menuPopover.className = 'slopsmith-tour-menu-popover';
+        _menuPopover.id = 'feedBack-tour-menu-popover';
+        _menuPopover.className = 'feedBack-tour-menu-popover';
         // Plain popover; not a WAI-ARIA "menu" — that role implies roving
         // focus + arrow-key navigation we don't implement (the rows are
         // ordinary <button>s, traversed via normal tab order).
@@ -168,7 +168,7 @@
             if (_menuPopover.style.display === 'none') return;
             const t = e.target;
             if (t && typeof t.closest === 'function' &&
-                (t.closest('.slopsmith-tour-menu-popover') || t.closest('.slopsmith-tour-menu-btn'))) return;
+                (t.closest('.feedBack-tour-menu-popover') || t.closest('.feedBack-tour-menu-btn'))) return;
             _hideMenu();
         }, true);
 
@@ -254,7 +254,7 @@
             // Three states: NEW (never seen + never dismissed), ✓ (completed
             // at least once), or no badge at all (dismissed without taking
             // the tour). The "dismissed but not seen" case used to render
-            // an empty span — slopsmith#272 review.
+            // an empty span — feedBack#272 review.
             const seen = hasSeen(p.id);
             const dismissed = hasDismissed(p.id);
             if (!seen && !dismissed) {
@@ -309,7 +309,7 @@
         if (!_activeToastPluginId) return;
         const id = _activeToastPluginId;
         _activeToastPluginId = null;
-        document.querySelectorAll('.slopsmith-tour-prompt').forEach(el => {
+        document.querySelectorAll('.feedBack-tour-prompt').forEach(el => {
             if (el.dataset.pluginId === id) {
                 el.classList.add('fading');
                 setTimeout(() => el.remove(), 500);
@@ -335,7 +335,7 @@
         const plugin = unseen[0];
 
         const prompt = document.createElement('div');
-        prompt.className = 'slopsmith-tour-prompt';
+        prompt.className = 'feedBack-tour-prompt';
         prompt.dataset.pluginId = plugin.id;
         const text = document.createElement('span');
         text.textContent = 'Take a quick tour of ';
@@ -410,7 +410,7 @@
                 const steps = await _registry[pluginId].buildSteps();
                 if (steps && steps.length) return steps;
             } catch (e) {
-                console.warn('[slopsmithTour] buildSteps() threw for', pluginId, e);
+                console.warn('[feedBackTour] buildSteps() threw for', pluginId, e);
             }
         }
         try {
@@ -419,7 +419,7 @@
             const data = await resp.json();
             return Array.isArray(data.tour) ? data.tour : [];
         } catch (e) {
-            console.warn('[slopsmithTour] Failed to load steps for', pluginId, e);
+            console.warn('[feedBackTour] Failed to load steps for', pluginId, e);
             return [];
         }
     }
@@ -473,7 +473,7 @@
                 try { document.querySelector(sel); }
                 catch (e) {
                     selectorOk = false;
-                    console.warn('[slopsmithTour] step', raw.id, 'waitFor selector is invalid:', sel, e);
+                    console.warn('[feedBackTour] step', raw.id, 'waitFor selector is invalid:', sel, e);
                 }
                 if (selectorOk) {
                     opts.beforeShowPromise = () => new Promise(resolve => {
@@ -520,7 +520,7 @@
 
     async function start(pluginId) {
         if (typeof window.Shepherd === 'undefined' || !window.Shepherd.Tour) {
-            console.error('[slopsmithTour] Shepherd.js not loaded — cannot start tour for', pluginId);
+            console.error('[feedBackTour] Shepherd.js not loaded — cannot start tour for', pluginId);
             return false;
         }
         if (_activeTour) {
@@ -530,7 +530,7 @@
 
         const rawSteps = await _loadSteps(pluginId);
         if (!rawSteps.length) {
-            console.warn('[slopsmithTour] No steps found for', pluginId);
+            console.warn('[feedBackTour] No steps found for', pluginId);
             return false;
         }
 
@@ -610,9 +610,9 @@
             !_deprecationWarned.has(pluginId)) {
             _deprecationWarned.add(pluginId);
             console.warn(
-                '[slopsmithTour] register(' + JSON.stringify(pluginId) + '): ' +
+                '[feedBackTour] register(' + JSON.stringify(pluginId) + '): ' +
                 'injectTriggerInto / injectTriggerOpts are no longer honored — ' +
-                'the consolidated tour menu (slopsmith#272) manages the ? button ' +
+                'the consolidated tour menu (feedBack#272) manages the ? button ' +
                 'for every plugin. Remove these options from your register() call.'
             );
         }
@@ -652,7 +652,7 @@
                 const toRemove = [];
                 for (let i = 0; i < localStorage.length; i++) {
                     const k = localStorage.key(i);
-                    if (k && k.startsWith('slopsmith_tour_')) toRemove.push(k);
+                    if (k && k.startsWith('feedBack_tour_')) toRemove.push(k);
                 }
                 toRemove.forEach(k => localStorage.removeItem(k));
             }
@@ -660,17 +660,17 @@
         _updateMenuVisibility();
     }
 
-    window.slopsmithTour = { register, start, hasSeen, hasDismissed, reset };
+    window.feedBackTour = { register, start, hasSeen, hasDismissed, reset };
 
     // ── Initialise after DOM ──────────────────────────────────────────────
 
     document.addEventListener('DOMContentLoaded', async () => {
         if (!window.Shepherd) {
-            console.error('[slopsmithTour] Shepherd.js not loaded — tour engine disabled');
+            console.error('[feedBackTour] Shepherd.js not loaded — tour engine disabled');
             return;
         }
-        if (!window.slopsmith) {
-            console.error('[slopsmithTour] window.slopsmith not found — tour engine disabled');
+        if (!window.feedBack) {
+            console.error('[feedBackTour] window.feedBack not found — tour engine disabled');
             return;
         }
 
@@ -687,16 +687,16 @@
                 };
             });
         } catch (e) {
-            console.warn('[slopsmithTour] Failed to load plugin list:', e);
+            console.warn('[feedBackTour] Failed to load plugin list:', e);
             return;
         }
 
         _ensureMenu();
-        window.slopsmith.on('screen:changed', _onScreenChanged);
+        window.feedBack.on('screen:changed', _onScreenChanged);
         // song:ready can change the auto-mode viz match without a screen
         // change — re-evaluate relevance so the menu picks up the new
         // active viz on the next song load.
-        window.slopsmith.on('song:ready', () => {
+        window.feedBack.on('song:ready', () => {
             _dismissToast();
             _updateMenuVisibility();
             _maybeShowToast();

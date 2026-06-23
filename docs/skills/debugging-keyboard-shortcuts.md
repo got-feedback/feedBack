@@ -1,12 +1,12 @@
 # Debugging Keyboard Shortcuts
 
-This skill helps you debug keyboard shortcut issues in Slopsmith.
+This skill helps you debug keyboard shortcut issues in FeedBack.
 
 ## Quick Start
 
-1. **Start Slopsmith:**
+1. **Start FeedBack:**
    ```bash
-   cd ~/path/to/slopsmith
+   cd ~/path/to/feedBack
    LIBRARY_PATH=/path/to/your/library docker compose up -d
    ```
 

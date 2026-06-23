@@ -18,7 +18,7 @@ function registerProvider(api, overrides = {}) {
                 'chain.resolve': () => ({
                     outcome: 'handled',
                     plan: {
-                        schema: 'slopsmith.audio_effects.chain_plan.v1',
+                        schema: 'feedBack.audio_effects.chain_plan.v1',
                         planId: 'plan-1',
                         routeKey: 'desktop-main',
                         providerId: overrides.providerId || 'rig-builder',
@@ -42,18 +42,18 @@ function registerProvider(api, overrides = {}) {
 
 test('audio-effects host registers active domain and contributes diagnostics', () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const pipeline = api.inspect('audio-effects');
-    const diagnostics = window.slopsmith.diagnostics.snapshotContributions();
+    const diagnostics = window.feedBack.diagnostics.snapshotContributions();
 
     assert.equal(pipeline.review.lifecycle, 'active');
     assert.equal(pipeline.participants.some(p => p.pluginId === 'core.audio.effects' && p.roles.includes('owner')), true);
-    assert.equal(diagnostics['audio-effects'].schema, 'slopsmith.audio_effects.diagnostics.v1');
+    assert.equal(diagnostics['audio-effects'].schema, 'feedBack.audio_effects.diagnostics.v1');
 });
 
 test('audio-effects runtime providers and executors are capability participants', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerProvider(api, {
         providerId: 'nam-tone',
@@ -91,7 +91,7 @@ test('audio-effects runtime providers and executors are capability participants'
 
 test('unregistering a provider drops its role/operations and clearing all removes the participant', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerProvider(api, {
         providerId: 'nam-tone',
@@ -144,7 +144,7 @@ test('unregistering a provider drops its role/operations and clearing all remove
 
 test('host runtime overlay preserves a plugin-declared audio-effects manifest entry', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // The plugin declares its own audio-effects participancy in its manifest before any runtime
     // registration goes through the host.
@@ -181,7 +181,7 @@ test('host runtime overlay preserves a plugin-declared audio-effects manifest en
 
 test('select-chain requires user action and records selected provider', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerProvider(api);
 
     const denied = await api.dispatch({ capability: 'audio-effects', command: 'select-chain', source: 'test', payload: { routeKey: 'desktop-main' } });
@@ -197,7 +197,7 @@ test('select-chain requires user action and records selected provider', async ()
 
 test('resolve-plan calls selected provider and returns constrained plan without storing raw payload in diagnostics', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerProvider(api);
     await api.dispatch({ capability: 'audio-effects', command: 'select-chain', source: 'test', payload: { routeKey: 'desktop-main', authorization: 'user-action' } });
 
@@ -206,7 +206,7 @@ test('resolve-plan calls selected provider and returns constrained plan without 
     const encoded = JSON.stringify(snapshot);
 
     assert.equal(resolved.outcome, 'handled');
-    assert.equal(resolved.payload.plan.schema, 'slopsmith.audio_effects.chain_plan.v1');
+    assert.equal(resolved.payload.plan.schema, 'feedBack.audio_effects.chain_plan.v1');
     assert.equal(resolved.payload.plan.stages.length, 3);
     assert.deepEqual(JSON.parse(JSON.stringify(resolved.payload.plan.segments[0].stageBypass)), { 'pre-1': true, 'amp-1': false });
     assert.equal(snapshot.routes[0].state, 'resolved');
@@ -218,13 +218,13 @@ test('resolve-plan calls selected provider and returns constrained plan without 
 
 test('resolve-plan rejects raw file paths and records fallback state', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerProvider(api, {
         operationHandlers: {
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'bad-plan',
                     routeKey: 'desktop-main',
                     providerId: 'rig-builder',
@@ -247,9 +247,9 @@ test('resolve-plan rejects raw file paths and records fallback state', async () 
 
 test('load-plan calls trusted executor with provider-private assets without diagnostic leakage', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     let executorRequest = null;
-    window.slopsmithDesktop = {
+    window.feedBackDesktop = {
         audioEffects: {
             loadChainPlan(request) {
                 executorRequest = request;
@@ -262,7 +262,7 @@ test('load-plan calls trusted executor with provider-private assets without diag
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'private-plan',
                     routeKey: 'desktop-main',
                     providerId: 'rig-builder',
@@ -303,9 +303,9 @@ test('load-plan calls trusted executor with provider-private assets without diag
 
 test('route gain and release delegate to the selected executor', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = [];
-    window.slopsmithDesktop = {
+    window.feedBackDesktop = {
         audioEffects: {
             loadChainPlan() { calls.push(['load']); return { outcome: 'handled', status: 'loaded', payload: { slotsLoaded: 1 } }; },
             setRouteGain(request) { calls.push(['gain', request.gains]); return { outcome: 'handled', payload: { gains: request.gains } }; },
@@ -314,9 +314,9 @@ test('route gain and release delegate to the selected executor', async () => {
     };
     await registerProvider(api);
     const loaded = await api.dispatch({ capability: 'audio-effects', command: 'load-plan', source: 'test', payload: { routeKey: 'desktop-main', authorization: 'playback-session' } });
-    const gained = await window.slopsmith.audioEffects.setRouteGain({ routeKey: 'desktop-main', authorization: 'playback-session', gains: { input: 3, chain: 2 } });
-    const released = await window.slopsmith.audioEffects.releaseRoute({ routeKey: 'desktop-main', authorization: 'playback-session' });
-    const inspected = await window.slopsmith.audioEffects.inspectRoute({ routeKey: 'desktop-main' });
+    const gained = await window.feedBack.audioEffects.setRouteGain({ routeKey: 'desktop-main', authorization: 'playback-session', gains: { input: 3, chain: 2 } });
+    const released = await window.feedBack.audioEffects.releaseRoute({ routeKey: 'desktop-main', authorization: 'playback-session' });
+    const inspected = await window.feedBack.audioEffects.inspectRoute({ routeKey: 'desktop-main' });
 
     assert.equal(loaded.outcome, 'handled');
     assert.equal(gained.outcome, 'handled');
@@ -327,8 +327,8 @@ test('route gain and release delegate to the selected executor', async () => {
 
 test('provider unregister clears route plan and executor state', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
-    window.slopsmithDesktop = {
+    const api = window.feedBack.capabilities;
+    window.feedBackDesktop = {
         audioEffects: {
             loadChainPlan() { return { outcome: 'handled', status: 'loaded', payload: { slotsLoaded: 1 } }; },
         },
@@ -360,7 +360,7 @@ test('provider unregister clears route plan and executor state', async () => {
 
 test('registry caps still allow provider and executor refreshes', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     for (let i = 0; i < 50; i++) {
         const result = await registerProvider(api, { providerId: `provider-${i}`, pluginId: `plugin-${i}` });
         assert.equal(result.outcome, 'handled');
@@ -400,8 +400,8 @@ test('registry caps still allow provider and executor refreshes', async () => {
 
 test('route restore preserves loaded state when an executor remains active', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
-    window.slopsmithDesktop = {
+    const api = window.feedBack.capabilities;
+    window.feedBackDesktop = {
         audioEffects: {
             loadChainPlan() { return { outcome: 'handled', status: 'loaded', payload: { slotsLoaded: 1 } }; },
         },
@@ -419,7 +419,7 @@ test('route restore preserves loaded state when an executor remains active', asy
 
 test('load-plan uses a registered compatible executor when Desktop is unavailable', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     let executorRequest = null;
     await registerProvider(api, {
         providerId: 'nam-tone',
@@ -428,7 +428,7 @@ test('load-plan uses a registered compatible executor when Desktop is unavailabl
             'chain.resolve': request => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'browser-plan',
                     routeKey: request.routeKey,
                     providerId: 'nam-tone',
@@ -482,7 +482,7 @@ test('load-plan uses a registered compatible executor when Desktop is unavailabl
 
 test('load-plan redacts circular executor payloads without overflowing', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const circular = { loaded: true };
     circular.self = circular;
     await registerProvider(api);
@@ -516,7 +516,7 @@ test('load-plan redacts circular executor payloads without overflowing', async (
 
 test('load-plan does not use an executor registered for a different provider', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerProvider(api, {
         providerId: 'rig-builder',
         pluginId: 'rig_builder',
@@ -524,7 +524,7 @@ test('load-plan does not use an executor registered for a different provider', a
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'rig-plan',
                     routeKey: 'desktop-main',
                     providerId: 'rig-builder',
@@ -562,7 +562,7 @@ test('load-plan does not use an executor registered for a different provider', a
 
 test('load-plan rejects executors that cannot support the resolved stage kinds', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     let called = false;
     await registerProvider(api, {
         providerId: 'rig-builder',
@@ -571,7 +571,7 @@ test('load-plan rejects executors that cannot support the resolved stage kinds',
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'rig-vst-plan',
                     routeKey: 'desktop-main',
                     providerId: 'rig-builder',
@@ -611,7 +611,7 @@ test('load-plan rejects executors that cannot support the resolved stage kinds',
 
 test('load-plan can fall back to a compatible provider executor when the selected provider has none', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     let loadedProviderId = '';
     await registerProvider(api, {
         providerId: 'rig-builder',
@@ -621,7 +621,7 @@ test('load-plan can fall back to a compatible provider executor when the selecte
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'rig-plan',
                     routeKey: 'desktop-main',
                     providerId: 'rig-builder',
@@ -638,7 +638,7 @@ test('load-plan can fall back to a compatible provider executor when the selecte
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'nam-plan',
                     routeKey: 'desktop-main',
                     providerId: 'nam-tone',
@@ -678,7 +678,7 @@ test('load-plan can fall back to a compatible provider executor when the selecte
 
 test('load-plan can fall back from a selected provider when its executor cannot load the plan', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     let loadedProviderId = '';
     await registerProvider(api, {
         providerId: 'rig-builder',
@@ -688,7 +688,7 @@ test('load-plan can fall back from a selected provider when its executor cannot 
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'rig-vst-plan',
                     routeKey: 'desktop-main',
                     providerId: 'rig-builder',
@@ -705,7 +705,7 @@ test('load-plan can fall back from a selected provider when its executor cannot 
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'nam-plan',
                     routeKey: 'desktop-main',
                     providerId: 'nam-tone',
@@ -759,14 +759,14 @@ test('load-plan can fall back from a selected provider when its executor cannot 
 
 test('provider operations route stage and segment changes through selected provider', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = [];
     await registerProvider(api, {
         operationHandlers: {
             'chain.resolve': () => ({
                 outcome: 'handled',
                 plan: {
-                    schema: 'slopsmith.audio_effects.chain_plan.v1',
+                    schema: 'feedBack.audio_effects.chain_plan.v1',
                     planId: 'switch-plan',
                     routeKey: 'desktop-main',
                     providerId: 'rig-builder',
@@ -793,7 +793,7 @@ test('provider operations route stage and segment changes through selected provi
 
 test('mapping helpers call core mapping API with provider-tagged payloads', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = [];
     window.fetch = async (url, options = {}) => {
         calls.push({ url: String(url), options });
@@ -815,7 +815,7 @@ test('mapping helpers call core mapping API with provider-tagged payloads', asyn
         };
     };
 
-    const saved = await window.slopsmith.audioEffects.upsertMapping({
+    const saved = await window.feedBack.audioEffects.upsertMapping({
         song_key: 'settings-v1-song',
         filename: 'Artist - Song_p.archive',
         tone_key: 'Dist',
@@ -829,8 +829,8 @@ test('mapping helpers call core mapping API with provider-tagged payloads', asyn
         source: 'rig_builder',
         payload: { song_key: 'settings-v1-song', provider_id: 'rig-builder' },
     });
-    const activated = await window.slopsmith.audioEffects.activateMapping({ mappingId: 7, providerId: 'rig-builder' });
-    const cleared = await window.slopsmith.audioEffects.clearActiveMapping({ songKey: 'settings-v1-song', toneKey: 'Dist' });
+    const activated = await window.feedBack.audioEffects.activateMapping({ mappingId: 7, providerId: 'rig-builder' });
+    const cleared = await window.feedBack.audioEffects.clearActiveMapping({ songKey: 'settings-v1-song', toneKey: 'Dist' });
 
     assert.equal(saved.outcome, 'handled');
     assert.equal(saved.payload.mapping.provider_ref, 'chain:99');
@@ -856,21 +856,21 @@ test('mapping helpers forward present falsey fields to the server instead of swa
 
     // A falsey non-string provider_id must reach the server (which rejects it) rather than being
     // coerced to '' client-side, which would become a silent unscoped activate.
-    await window.slopsmith.audioEffects.activateMapping({ mappingId: 7, providerId: false });
+    await window.feedBack.audioEffects.activateMapping({ mappingId: 7, providerId: false });
     assert.equal(JSON.parse(calls[0].options.body).provider_id, false);
 
     // A present falsey query filter is forwarded (stringified) rather than dropped.
-    await window.slopsmith.audioEffects.listMappings({ provider_id: 0 });
+    await window.feedBack.audioEffects.listMappings({ provider_id: 0 });
     assert.match(calls[1].url, /provider_id=0/);
 
     // An omitted filter stays omitted (no spurious empty filter).
-    await window.slopsmith.audioEffects.listMappings({});
+    await window.feedBack.audioEffects.listMappings({});
     assert.equal(calls[2].url, '/api/audio-effects/mappings');
 });
 
 test('bridge hits are safe and diagnosable', async () => {
     const window = loadAudioEffects();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     const result = await api.dispatch({
         capability: 'audio-effects',
@@ -902,7 +902,7 @@ test('bridge hits are safe and diagnosable', async () => {
             routeKey: 'desktop-main',
             bridgeId: 'audio-effects.legacy-native-load',
             pluginId: 'nam_tone',
-            legacySurface: 'window.slopsmithDesktop.audio.loadPreset /Users/example/model.nam',
+            legacySurface: 'window.feedBackDesktop.audio.loadPreset /Users/example/model.nam',
         },
     });
     const encoded = JSON.stringify(diagnosticsSnapshot(window));
@@ -910,7 +910,7 @@ test('bridge hits are safe and diagnosable', async () => {
     assert.equal(result.outcome, 'handled');
     assert.equal(dbResult.outcome, 'handled');
     assert.equal(nativeResult.outcome, 'handled');
-    const sharedShim = window.slopsmith.capabilities.snapshotDiagnostics().compatibilityShims.find(entry => entry.shimId === 'audio-effects.legacy-nam-routing');
+    const sharedShim = window.feedBack.capabilities.snapshotDiagnostics().compatibilityShims.find(entry => entry.shimId === 'audio-effects.legacy-nam-routing');
     assert.equal(sharedShim.status, 'used');
     assert.equal(sharedShim.hitCount >= 1, true);
     assert.equal(encoded.includes('audio-effects.legacy-nam-routing'), true);

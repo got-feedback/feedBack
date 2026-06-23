@@ -10,7 +10,7 @@
         id: 'library-provider',
         selector: '#lib-provider',
         title: 'Choose a library',
-        content: 'Use this menu to switch between your local library and any connected remote libraries. Slopsmith remembers the last library you picked.',
+        content: 'Use this menu to switch between your local library and any connected remote libraries. FeedBack remembers the last library you picked.',
         shape: 'spotlight',
         position: 'bottom',
         waitFor: '#lib-provider'
@@ -57,20 +57,20 @@
 
     function _register() {
         try {
-            window.slopsmithTour.register(PLUGIN_ID, { screens: SCREENS, buildSteps: _buildSteps });
+            window.feedBackTour.register(PLUGIN_ID, { screens: SCREENS, buildSteps: _buildSteps });
         } catch (e) {
             console.warn('[app_tour_library] register failed', e);
         }
     }
 
-    if (window.slopsmithTour && typeof window.slopsmithTour.register === 'function') {
+    if (window.feedBackTour && typeof window.feedBackTour.register === 'function') {
         _register();
     } else {
         // Engine inits on DOMContentLoaded after fetching /api/plugins. Plugin
         // scripts can load before or after that handler runs, so poll briefly.
         var deadline = performance.now() + 5000;
         var pollId = setInterval(function () {
-            if (window.slopsmithTour && typeof window.slopsmithTour.register === 'function') {
+            if (window.feedBackTour && typeof window.feedBackTour.register === 'function') {
                 clearInterval(pollId);
                 _register();
             } else if (performance.now() > deadline) {
@@ -93,9 +93,9 @@
         var s = document.createElement('style');
         s.id = STYLE_ID;
         s.textContent =
-            'body.' + NUDGE_CLASS + ' .slopsmith-tour-menu-btn { bottom: 68px; }' +
-            'body.' + NUDGE_CLASS + ' .slopsmith-tour-menu-popover { bottom: 112px; }' +
-            'body.' + NUDGE_CLASS + ' .slopsmith-tour-prompt { bottom: 112px; }';
+            'body.' + NUDGE_CLASS + ' .feedBack-tour-menu-btn { bottom: 68px; }' +
+            'body.' + NUDGE_CLASS + ' .feedBack-tour-menu-popover { bottom: 112px; }' +
+            'body.' + NUDGE_CLASS + ' .feedBack-tour-prompt { bottom: 112px; }';
         document.head.appendChild(s);
     }
 
@@ -109,8 +109,8 @@
         // Prime from whichever screen is already active.
         var active = document.querySelector('.screen.active');
         _applyNudge(active ? active.id : null);
-        if (window.slopsmith && typeof window.slopsmith.on === 'function') {
-            window.slopsmith.on('screen:changed', function (ev) {
+        if (window.feedBack && typeof window.feedBack.on === 'function') {
+            window.feedBack.on('screen:changed', function (ev) {
                 _applyNudge(ev && ev.detail && ev.detail.id);
             });
         }

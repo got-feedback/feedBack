@@ -2,10 +2,10 @@
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    const capabilities = window.slopsmith.capabilities;
+    window.feedBack = window.feedBack || {};
+    const capabilities = window.feedBack.capabilities;
     if (!capabilities || capabilities.version !== 1) return;
-    if (window.slopsmith.tunings && window.slopsmith.tunings.version === 1) return;
+    if (window.feedBack.tunings && window.feedBack.tunings.version === 1) return;
 
     capabilities.registerOwner('tuning', {
         description: 'Provides merged guitar/bass tunings from core defaults and plugin contributors.',
@@ -42,7 +42,7 @@
         },
     });
 
-    window.slopsmith.tunings = Object.freeze({
+    window.feedBack.tunings = Object.freeze({
         version: 1,
         get: function () {
             return fetch('/api/tunings').then(function (r) { return r.json(); });

@@ -7,7 +7,7 @@ test('legacy audio fader and analyser bridges stay visible in browser diagnostic
   const result = await page.evaluate(() => {
     const appWindow = window as any;
     let faderValue = 1;
-    appWindow.slopsmith.audio.registerFader({
+    appWindow.feedBack.audio.registerFader({
       id: 'browser-smoke',
       label: 'Browser Smoke',
       min: 0,
@@ -17,14 +17,14 @@ test('legacy audio fader and analyser bridges stay visible in browser diagnostic
       getValue: () => faderValue,
       setValue: (value: number) => { faderValue = value; },
     });
-    appWindow.slopsmith.audioSession.recordBridgeHit({
+    appWindow.feedBack.audioSession.recordBridgeHit({
       domain: 'audio-mix',
       bridgeId: 'audio-mix.analyser',
       legacySurface: 'browser smoke analyser',
       participantId: 'highway_3d',
     });
-    const snapshot = appWindow.slopsmith.audioSession.snapshot();
-    const diagnostics = appWindow.slopsmith.capabilities.snapshotDiagnostics();
+    const snapshot = appWindow.feedBack.audioSession.snapshot();
+    const diagnostics = appWindow.feedBack.capabilities.snapshotDiagnostics();
     return {
       hasFader: snapshot.domains['audio-mix'].participants.some((entry: any) => entry.participantId === 'fader.browser-smoke'),
       hasAnalyserBridge: snapshot.domains['audio-mix'].bridges.some((entry: any) => entry.bridgeId === 'audio-mix.analyser'),

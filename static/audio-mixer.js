@@ -1,6 +1,6 @@
-// Audio mixer — registry + popover for per-channel volume control (slopsmith#87).
+// Audio mixer — registry + popover for per-channel volume control (feedBack#87).
 //
-// Plugins (or core) register a fader spec via window.slopsmith.audio.registerFader(spec).
+// Plugins (or core) register a fader spec via window.feedBack.audio.registerFader(spec).
 // Each spec is the source of truth for its own value: the popover only calls
 // getValue() to render and setValue() to commit. Persistence is the plugin's
 // responsibility — the registry doesn't store values.
@@ -10,8 +10,8 @@
 (function () {
 'use strict';
 
-if (!window.slopsmith) {
-    console.warn('[mixer] window.slopsmith missing — audio-mixer.js loaded too early');
+if (!window.feedBack) {
+    console.warn('[mixer] window.feedBack missing — audio-mixer.js loaded too early');
     return;
 }
 
@@ -24,11 +24,11 @@ let _openTimer = null;
 function _audioEl() { return document.getElementById('audio'); }
 
 function _audioSession() {
-    return window.slopsmith && window.slopsmith.audioSession;
+    return window.feedBack && window.feedBack.audioSession;
 }
 
 function _capabilities() {
-    return window.slopsmith && window.slopsmith.capabilities;
+    return window.feedBack && window.feedBack.capabilities;
 }
 
 async function _mixCommand(command, payload) {
@@ -143,7 +143,7 @@ function _applySongVolume(v) {
     // routes every stem through its own master GainNode, so a.volume above is
     // dead. Drive that master instead when the stems plugin has published its
     // hook (it clears the hook on teardown for stem-less songs).
-    const stemsSetMaster = window.slopsmith?.stems?.setMasterVolume;
+    const stemsSetMaster = window.feedBack?.stems?.setMasterVolume;
     if (typeof stemsSetMaster === 'function') {
         // A synchronous throw or a rejected Promise from the stems plugin hook
         // must not abort _applySongVolume before it returns / persists. The
@@ -155,13 +155,13 @@ function _applySongVolume(v) {
             // consistent with the other ignored async calls in this module.
             void Promise.resolve(stemsSetMaster(linear))
                 .then(function () {
-                    _recordAudioBridge('stems.master-volume', 'window.slopsmith.stems.setMasterVolume', 'core.song', 'handled');
+                    _recordAudioBridge('stems.master-volume', 'window.feedBack.stems.setMasterVolume', 'core.song', 'handled');
                 })
                 .catch(function () {
-                    _recordAudioBridge('stems.master-volume', 'window.slopsmith.stems.setMasterVolume', 'core.song', 'failed', 'Stems master volume hook rejected');
+                    _recordAudioBridge('stems.master-volume', 'window.feedBack.stems.setMasterVolume', 'core.song', 'failed', 'Stems master volume hook rejected');
                 });
         } catch (_) {
-            _recordAudioBridge('stems.master-volume', 'window.slopsmith.stems.setMasterVolume', 'core.song', 'failed', 'Stems master volume hook threw');
+            _recordAudioBridge('stems.master-volume', 'window.feedBack.stems.setMasterVolume', 'core.song', 'failed', 'Stems master volume hook threw');
         }
     }
     _registerAudioSessionFader({
@@ -183,7 +183,7 @@ function _applySongVolume(v) {
     _recordAudioBridge('audio-mix.song-volume', 'applySongVolume', 'core.song', 'handled');
     // Desktop + JUCE: song audio is mixed in the native engine; HTML5 volume is ignored.
     if (window._juceMode) {
-        const setGain = window.slopsmithDesktop?.audio?.setGain;
+        const setGain = window.feedBackDesktop?.audio?.setGain;
         if (typeof setGain === 'function') {
             // Same dual guard as the stems hook above: the try/catch covers a
             // synchronous throw from setGain, the .catch() covers a rejected IPC.
@@ -502,17 +502,17 @@ function _init() {
     _btnEl = document.getElementById('btn-mixer');
     _popoverEl = document.getElementById('mixer-popover');
     _registerSongFader();
-    if (window.slopsmith && window.slopsmith.on) {
-        window.slopsmith.on('screen:changed', _onScreenChanged);
-        window.slopsmith.on('audio-mix:fader-value-changed', () => { if (_open) _renderPopover(); });
-        window.slopsmith.on('audio-mix:fader-unavailable', () => { if (_open) _renderPopover(); });
-        window.slopsmith.on('audio-mix:participant-registered', () => { if (_open) _renderPopover(); });
-        window.slopsmith.on('audio-mix:participant-removed', () => { if (_open) _renderPopover(); });
+    if (window.feedBack && window.feedBack.on) {
+        window.feedBack.on('screen:changed', _onScreenChanged);
+        window.feedBack.on('audio-mix:fader-value-changed', () => { if (_open) _renderPopover(); });
+        window.feedBack.on('audio-mix:fader-unavailable', () => { if (_open) _renderPopover(); });
+        window.feedBack.on('audio-mix:participant-registered', () => { if (_open) _renderPopover(); });
+        window.feedBack.on('audio-mix:participant-removed', () => { if (_open) _renderPopover(); });
     }
-    window.dispatchEvent(new Event('slopsmith:audio:ready'));
+    window.dispatchEvent(new Event('feedBack:audio:ready'));
 }
 
-window.slopsmith.audio = Object.assign(window.slopsmith.audio || {}, {
+window.feedBack.audio = Object.assign(window.feedBack.audio || {}, {
     registerFader, unregisterFader, getFaders,
     openMixer, closeMixer, toggleMixer,
     applySongVolume: _applySongVolume,

@@ -2,7 +2,7 @@
 // Visual layer from joel's prototype (vibrant palette, glowing strings,
 // fret heat, dynamic lane, chord frame-boxes, per-note connector labels,
 // board projection, outline+core note meshes) adapted into the
-// slopsmithViz setRenderer contract (slopsmith#36) so it works in the
+// feedBackViz setRenderer contract (feedBack#36) so it works in the
 // main player and per-panel in splitscreen without any architectural
 // changes.
 
@@ -27,12 +27,12 @@
     // high E=purple); Neon pushes saturation harder; Pastel desaturates
     // for long-session comfort; Colorblind (high contrast) is derived from
     // the chart format's built-in colorblind-mode palette, but this preset
-    // intentionally keeps some entries tuned for slopsmith rather than
+    // intentionally keeps some entries tuned for feedBack rather than
     // reproducing every original hex value verbatim. The chart-format base
     // values came from community reverse-engineering of the original chart
     // files; do not treat the tuned values below as the exact original
     // palette.
-    // In slopsmith's index convention s=0 is the low E (thickest) and
+    // In feedBack's index convention s=0 is the low E (thickest) and
     // s=5 is the high E (thinnest), matching the chart format's native string
     // indexing. Per-index ordering is preserved across all palettes so
     // switching between them never reassigns a string to a different
@@ -128,10 +128,10 @@
     const MAX_RENDER_STRINGS = S_COL.length;
 
     // Resolve the string count for the active arrangement. Prefer
-    // bundle.stringCount (exposed by slopsmith core since #93 — derived
+    // bundle.stringCount (exposed by feedBack core since #93 — derived
     // from notes/chords/tuning, so it works for 5-string bass, 7- and
     // 8-string guitar, etc.). Fall back to arrangement-name detection
-    // for older slopsmith cores that don't emit the field. Clamp to the
+    // for older feedBack cores that don't emit the field. Clamp to the
     // palette size so a malformed bundle or a 12-string chart doesn't
     // index past the per-string material arrays.
     function resolveStringCount(bundle) {
@@ -231,7 +231,7 @@
     const AHEAD = 3.0;
     const BEHIND = 0.5;
     // How long a note/chord-frame stays renderable past the hit line while a
-    // note-state provider (slopsmith#254) is attached. The provider's
+    // note-state provider (feedBack#254) is attached. The provider's
     // hit/miss verdict is asynchronous — the engine-side verifier reports it
     // ~0.35-0.5 s after the line — so the default ~50 ms note linger /
     // ~0.48 s chord linger lapses before the tint can apply. Drives both
@@ -664,7 +664,7 @@
     /** Arpeggio rim accent and lane tint. */
     const ARPEGGIO_RIM_BLUE_HEX = 0x454BB6;
     /** Post-hit chord-frame rim tints driven by the note-state provider
-     *  (slopsmith#254). Applied only to the teal frame during the linger
+     *  (feedBack#254). Applied only to the teal frame during the linger
      *  fade (chDt <= 0) when a scorer is attached.
      *  Matches the gem hit/miss colours so chord frame and note body
      *  give a consistent signal:
@@ -922,7 +922,7 @@
      * ====================================================================== */
 
     function _ssActive() {
-        const ss = window.slopsmithSplitscreen;
+        const ss = window.feedBackSplitscreen;
         if (!ss || typeof ss.isActive !== 'function' || !ss.isActive()) return false;
         return typeof ss.isCanvasFocused === 'function'
             && typeof ss.onFocusChange === 'function'
@@ -930,7 +930,7 @@
     }
 
     function _ssIsCanvasFocused(highwayCanvas) {
-        const ss = window.slopsmithSplitscreen;
+        const ss = window.feedBackSplitscreen;
         if (!_ssActive()) return true;
         return !!(ss && typeof ss.isCanvasFocused === 'function' &&
             ss.isCanvasFocused(highwayCanvas));
@@ -941,7 +941,7 @@
      *
      *  Audio-reactive ambient scenery in the fog band beyond the highway.
      *  Module-level singletons share an AudioContext + AnalyserNode tap on
-     *  the slopsmith core <audio id="audio"> element across all panel
+     *  the feedBack core <audio id="audio"> element across all panel
      *  instances; per-panel settings live in localStorage with a global
      *  fallback so settings.html drives a single default while per-panel
      *  overrides (h3d_bg_panel<idx>_*) can be set for splitscreen layouts.
@@ -981,7 +981,7 @@
         const key = `${outcome}:${status}:${reason}`;
         if (_bgBridgeKeys.get(bridgeId) === key) return;
         _bgBridgeKeys.set(bridgeId, key);
-        const session = window.slopsmith && window.slopsmith.audioSession;
+        const session = window.feedBack && window.feedBack.audioSession;
         if (!session || typeof session.recordBridgeHit !== 'function') return;
         try {
             session.recordBridgeHit({
@@ -998,14 +998,14 @@
 
     function _bgGetAnalyser() {
         // Prefer the stems plugin's side-chain analyser when a sloppak is
-        // loaded. As of slopsmith-plugin-stems 0.5.0 (sample-locked playback)
+        // loaded. As of feedBack-plugin-stems 0.5.0 (sample-locked playback)
         // the #audio element is a silent virtual transport on sloppaks, so
         // tapping it sees only silence; the stems mix is exposed at
-        // window.slopsmith.stems.getAnalyser() instead. The stems plugin
+        // window.feedBack.stems.getAnalyser() instead. The stems plugin
         // creates and destroys that AnalyserNode per song, so we re-check
         // each call and key the cache on its identity — when the node
         // changes (song switch), the cache is replaced automatically.
-        const stemsApi = window.slopsmith && window.slopsmith.stems;
+        const stemsApi = window.feedBack && window.feedBack.stems;
         const stemsAnalyser = (stemsApi && typeof stemsApi.getAnalyser === 'function')
             ? stemsApi.getAnalyser() : null;
         if (stemsAnalyser) {
@@ -1023,7 +1023,7 @@
                     freq: new Uint8Array(Math.max(BG_FREQ_BINS, stemsAnalyser.frequencyBinCount)),
                     source: 'stems',
                 };
-                _bgRecordAudioBridge('audio-mix.analyser', 'window.slopsmith.stems.getAnalyser', 'handled', '', 'stems');
+                _bgRecordAudioBridge('audio-mix.analyser', 'window.feedBack.stems.getAnalyser', 'handled', '', 'stems');
             }
             return _bgAudio;
         }
@@ -1352,7 +1352,7 @@
     const FRET_NUMBER_GHOST_SCOPE_IDS = ['chords', 'all'];
 
     function _bgPanelKey(canvas) {
-        const ss = window.slopsmithSplitscreen;
+        const ss = window.feedBackSplitscreen;
         const idx = (ss && typeof ss.panelIndexFor === 'function') ? ss.panelIndexFor(canvas) : null;
         return (idx == null) ? 'main' : 'panel' + idx;
     }
@@ -2324,7 +2324,7 @@
                     // never sees a tainted canvas. Setting
                     // `crossOrigin = "anonymous"` would also strip
                     // cookies from the fetch, which would 401 against
-                    // any cookie-protected slopsmith deployment. If
+                    // any cookie-protected feedBack deployment. If
                     // this ever needs to fetch cross-origin, switch
                     // to `use-credentials` AND have the server send
                     // the matching CORS headers.
@@ -2470,7 +2470,7 @@
     let _nextInstanceId = 0;
 
     /* ======================================================================
-     *  Factory — slopsmith#36 setRenderer contract
+     *  Factory — feedBack#36 setRenderer contract
      * ====================================================================== */
 
     function createFactory() {
@@ -2479,8 +2479,8 @@
         // ── Per-instance Three.js state ───────────────────────────────────
         let scene = null, cam = null, ren = null;
         let wrap = null;
-        // highway:visibility listener (slopsmith#246). Hides the .h3d-wrap
-        // overlay when slopsmith's canvas is display:none'd (splitscreen
+        // highway:visibility listener (feedBack#246). Hides the .h3d-wrap
+        // overlay when feedBack's canvas is display:none'd (splitscreen
         // case). Without this, the wrap is a *sibling* of #highway so
         // hiding #highway leaves the WebGL scene painting full-screen.
         // Bound in initScene after wrap creation, unbound in destroy().
@@ -2842,9 +2842,9 @@
 
         // Notedetect feedback (issue #9). Per-panel mark queues populated
         // by two event sources: (a) legacy `notedetect:hit` /
-        // `notedetect:miss` window CustomEvents, and (b) Slopsmith
+        // `notedetect:miss` window CustomEvents, and (b) FeedBack
         // event-bus `note:hit` / `note:miss` events (subscribed in
-        // initScene() when window.slopsmith exposes both `on` and `off`).
+        // initScene() when window.feedBack exposes both `on` and `off`).
         // Both sources feed the same _ndPushMark() helper which dedupes
         // dual emissions. drawNote looks up its (s, f, t) against these
         // arrays each frame and swaps the outline material when a match
@@ -2901,7 +2901,7 @@
         // no longer reads it — pruning lives once per frame so
         // drawNote's hot path is just the bounded (s, f, t) match.
         let _ndFrameNowMs = 0;
-        // slopsmith#254 — core's per-note judgment provider, captured
+        // feedBack#254 — core's per-note judgment provider, captured
         // from `bundle.getNoteState` at the top of each update(). When
         // present it's authoritative over the event-driven marks above:
         // 'hit'/'active' → bright string-tinted outline (mGlow[s]) +
@@ -2912,7 +2912,7 @@
         // with no scorer registered. Older note_detect builds that only
         // emit notedetect:hit/miss events still work via _ndHitMarks.
         let _ndGetNoteState = null;
-        let _ndHasProvider = false;  // true iff a note-state provider is registered (slopsmith#254)
+        let _ndHasProvider = false;  // true iff a note-state provider is registered (feedBack#254)
         // Sustain verdict latch — persists a provider's hit/miss verdict for the
         // full duration of a sustained note. Once hitGlowDuration expires the
         // provider stops returning state; the latch re-injects the last verdict
@@ -2976,7 +2976,7 @@
         let _fxPalette = _FX_PALETTES.neon;
         function _fxResolvePalette() {
             let skin = null;
-            try { skin = localStorage.getItem('slopsmith_notedetect_skin'); } catch (e) {}
+            try { skin = localStorage.getItem('feedBack_notedetect_skin'); } catch (e) {}
             _fxPalette = _FX_PALETTES[skin] || _FX_PALETTES.neon;
         }
         function _fxSpawnPop(popKey, points, mult, x, y, z) {
@@ -3380,7 +3380,7 @@
 
         function _unsubscribeFocus() {
             if (!_focusSubscribed) return;
-            const ss = window.slopsmithSplitscreen;
+            const ss = window.feedBackSplitscreen;
             if (ss && typeof ss.offFocusChange === 'function') ss.offFocusChange(_onFocusChange);
             _focusSubscribed = false;
         }
@@ -4087,7 +4087,7 @@
         }
 
         // ── Object pool ────────────────────────────────────────────────────
-        // ── Opt-in perf bench harness (slopsmith#226) ──────────────────────
+        // ── Opt-in perf bench harness (feedBack#226) ──────────────────────
         // Enable with `?h3dbench=1` on the player URL. Aggregates per-segment
         // timings of update() into a console.log every _PB_REPORT_MS.
         //
@@ -5073,21 +5073,21 @@
             wrap.setAttribute('data-h3d-primary', '');
             highwayCanvas.parentNode.insertBefore(wrap, highwayCanvas.nextSibling);
 
-            // Subscribe to highway:visibility (slopsmith#246) so the
-            // .h3d-wrap overlay hides in sync with the slopsmith canvas.
+            // Subscribe to highway:visibility (feedBack#246) so the
+            // .h3d-wrap overlay hides in sync with the feedBack canvas.
             // The wrap is a sibling of #highway, so display:none on
             // #highway leaves us painting full-screen otherwise.
             // Guarded lazy bind: tolerate hosts that don't yet expose
-            // slopsmith.on/off (older slopsmith versions, headless
+            // feedBack.on/off (older feedBack versions, headless
             // tests).
-            if (window.slopsmith
-                && typeof window.slopsmith.on === 'function'
-                && typeof window.slopsmith.off === 'function') {
+            if (window.feedBack
+                && typeof window.feedBack.on === 'function'
+                && typeof window.feedBack.off === 'function') {
                 _visibilityHandler = (e) => {
                     if (!wrap) return;
                     // Filter by canvas identity (splitscreen-safe).
                     // Each createHighway() instance emits its own
-                    // visibility events on the shared slopsmith bus —
+                    // visibility events on the shared feedBack bus —
                     // without this gate, one hidden panel would also
                     // hide every other panel's 3D overlay.
                     if (!e || !e.detail || e.detail.canvas !== highwayCanvas) return;
@@ -5095,7 +5095,7 @@
                     wrap.style.display = v === false ? 'none' : '';
                 };
                 try {
-                    window.slopsmith.on('highway:visibility', _visibilityHandler);
+                    window.feedBack.on('highway:visibility', _visibilityHandler);
                 } catch (e) {
                     _visibilityHandler = null;
                 }
@@ -5116,7 +5116,7 @@
                     }
                 };
                 try {
-                    window.slopsmith.on('highway:canvas-replaced', _canvasReplacedHandler);
+                    window.feedBack.on('highway:canvas-replaced', _canvasReplacedHandler);
                 } catch (e) {
                     _canvasReplacedHandler = null;
                 }
@@ -6170,7 +6170,7 @@
                 return _sp;
             });
 
-            // ── Pre-warm pools (slopsmith#226) ─────────────────────────────
+            // ── Pre-warm pools (feedBack#226) ─────────────────────────────
             // Dense 7/8-string charts can outrun the lazy-grow path in the
             // first 1-2s of playback, stalling those frames with `new T.Mesh`
             // allocations *and* growing noteG forever (the pool only hides on
@@ -6459,13 +6459,13 @@
             _ndOnMiss = (e) => { _ndMissMarks = _ndPushMark(_ndMissMarks, e.detail); };
             window.addEventListener('notedetect:hit', _ndOnHit);
             window.addEventListener('notedetect:miss', _ndOnMiss);
-            if (window.slopsmith &&
-                    typeof window.slopsmith.on  === 'function' &&
-                    typeof window.slopsmith.off === 'function') {
+            if (window.feedBack &&
+                    typeof window.feedBack.on  === 'function' &&
+                    typeof window.feedBack.off === 'function') {
                 _ndOnBusHit  = (e) => { _ndHitMarks  = _ndPushMark(_ndHitMarks,  e.detail); };
                 _ndOnBusMiss = (e) => { _ndMissMarks = _ndPushMark(_ndMissMarks, e.detail); };
-                window.slopsmith.on('note:hit', _ndOnBusHit);
-                window.slopsmith.on('note:miss', _ndOnBusMiss);
+                window.feedBack.on('note:hit', _ndOnBusHit);
+                window.feedBack.on('note:miss', _ndOnBusMiss);
             }
 
             // Score FX (notedetect ≥1.13). notedetect dispatches each fx
@@ -6499,10 +6499,10 @@
                 }, 0);
             };
             window.addEventListener('notedetect:fx', _fxOnFx);
-            if (window.slopsmith && typeof window.slopsmith.on === 'function'
-                    && typeof window.slopsmith.off === 'function') {
+            if (window.feedBack && typeof window.feedBack.on === 'function'
+                    && typeof window.feedBack.off === 'function') {
                 _fxOnSkin = () => _fxResolvePalette();
-                window.slopsmith.on('notedetect:skin', _fxOnSkin);
+                window.feedBack.on('notedetect:skin', _fxOnSkin);
             }
 
             return true;
@@ -8315,7 +8315,7 @@
         function smoothNow(bundle) {
             const raw = bundle.currentTime;
             const p = performance.now();
-            // Host pause signal (slopsmith core's bundle.isPlaying): when the
+            // Host pause signal (feedBack core's bundle.isPlaying): when the
             // chart clock isn't advancing (paused / stalled / mid-seek), don't
             // extrapolate forward against a frozen audio sample — that creeps
             // the highway ahead by up to the interp cap and then snaps back
@@ -8437,7 +8437,7 @@
                     if (_ndMissMarks[_pi].expiresAt <= _ndFrameNowMs) _ndMissMarks.splice(_pi, 1);
                 }
             }
-            // slopsmith#254 — capture core's per-note judgment provider for
+            // feedBack#254 — capture core's per-note judgment provider for
             // this frame's drawNote() calls (held-sustain glow + lit gems).
             // bundle.getNoteState is ALWAYS present (the core stub returns
             // null when no provider is registered), so its existence isn't
@@ -9140,10 +9140,10 @@
             {
                 const si = bundle.songInfo;
                 // bundle.songInfo has no filename field (the WS song_info message
-                // never includes it).  Use window.slopsmith.currentSong.filename
+                // never includes it).  Use window.feedBack.currentSong.filename
                 // — set by highway.js from the WS URL — combined with the
                 // arrangement index as a reliable per-song-arrangement key.
-                const currentSong = window.slopsmith && window.slopsmith.currentSong;
+                const currentSong = window.feedBack && window.feedBack.currentSong;
                 const key = currentSong ? currentSong.filename + '\0' + (si ? (si.arrangement_index ?? '') : '') : null;
                 if (key !== null && key !== _songKey) {
                     _songKey = key;
@@ -9729,7 +9729,7 @@
                         // lingering past that point.
                         chordTailHoldS = Math.min(CHORD_HWY_LINGER_S, Math.max(cjNext.t - ch.t, 1e-3));
                     }
-                    // slopsmith#254 — engine verdicts land ~0.4 s after the
+                    // feedBack#254 — engine verdicts land ~0.4 s after the
                     // chord crosses; on a fast different-voicing sequence
                     // the clip above can shrink the rim's draw life below
                     // that, so the green/red latch is set but the rim isn't
@@ -10042,7 +10042,7 @@
                         // Used for the mute X lines so hit/miss feedback only shows on
                         // the outer borders of the framebox, not inside the X pattern.
                         const baseRimHex = rimHex;
-                        // slopsmith#254 — once the chord crosses the hit
+                        // feedBack#254 — once the chord crosses the hit
                         // line, tint the teal frame by the note-state
                         // provider verdict: green on a clean grab, red on a
                         // miss. The verdict is async (the engine verifier
@@ -11723,7 +11723,7 @@
             const effectiveProjWin = _rawGap > 0 ? Math.min(0.6, Math.max(0.05, _rawGap)) : 0.6;
             const projFactorG = Math.max(0, Math.min(1, 1 - Math.max(dt, 0) / effectiveProjWin));
             const inGhostWin = n.f > 0 && isNextOnString && dt > -ghostHold && dt < effectiveProjWin && projFactorG > 0.001;
-            // slopsmith#254 — query the provider once per note, before both !skipBody
+            // feedBack#254 — query the provider once per note, before both !skipBody
             // blocks, so _showHit can be a const and _ndGood is available for the
             // sustain trail (which renders even when skipBody=true for slide targets).
             let _ndGood = false;    // true when provider confirms hit/active
@@ -11898,7 +11898,7 @@
                 const rimXY = n.ac ? ACCENT_RIM_XY_SCALE_MUL : 1;
                 const rimZ = n.ac ? ACCENT_RIM_Z_SCALE_MUL : 1;
 
-                // slopsmith#254 — apply outline + lateral face-fill overrides from provider verdict.
+                // feedBack#254 — apply outline + lateral face-fill overrides from provider verdict.
                 // hit/active → green outline (mHitBright[s]) + green lateral faces;
                 // miss → magenta-red outline (mMissOutline) + dark lateral faces; front/back stay transparent.
                 if (_ndCs) {
@@ -13019,15 +13019,15 @@
             if (_ndOnHit) { window.removeEventListener('notedetect:hit', _ndOnHit); _ndOnHit = null; }
             if (_ndOnMiss) { window.removeEventListener('notedetect:miss', _ndOnMiss); _ndOnMiss = null; }
             if (_fxOnFx) { window.removeEventListener('notedetect:fx', _fxOnFx); _fxOnFx = null; }
-            if (window.slopsmith && typeof window.slopsmith.off === 'function') {
-                if (_fxOnSkin) { try { window.slopsmith.off('notedetect:skin', _fxOnSkin); } catch (e) {} _fxOnSkin = null; }
-                if (_ndOnBusHit)  window.slopsmith.off('note:hit', _ndOnBusHit);
-                if (_ndOnBusMiss) window.slopsmith.off('note:miss', _ndOnBusMiss);
+            if (window.feedBack && typeof window.feedBack.off === 'function') {
+                if (_fxOnSkin) { try { window.feedBack.off('notedetect:skin', _fxOnSkin); } catch (e) {} _fxOnSkin = null; }
+                if (_ndOnBusHit)  window.feedBack.off('note:hit', _ndOnBusHit);
+                if (_ndOnBusMiss) window.feedBack.off('note:miss', _ndOnBusMiss);
                 if (_visibilityHandler) {
-                    try { window.slopsmith.off('highway:visibility', _visibilityHandler); } catch (e) {}
+                    try { window.feedBack.off('highway:visibility', _visibilityHandler); } catch (e) {}
                 }
                 if (_canvasReplacedHandler) {
-                    try { window.slopsmith.off('highway:canvas-replaced', _canvasReplacedHandler); } catch (e) {}
+                    try { window.feedBack.off('highway:canvas-replaced', _canvasReplacedHandler); } catch (e) {}
                 }
             }
             _ndOnBusHit = _ndOnBusMiss = null;
@@ -13261,11 +13261,11 @@
                 _bgReactiveOptOut = !!(bundle && bundle.bgReactive === false);
 
                 if (_ssActive()) {
-                    window.slopsmithSplitscreen.onFocusChange(_onFocusChange);
+                    window.feedBackSplitscreen.onFocusChange(_onFocusChange);
                     _focusSubscribed = true;
                 }
 
-                // Async-ready contract (slopsmith#36 readyPromise). Resolves
+                // Async-ready contract (feedBack#36 readyPromise). Resolves
                 // when Three.js loaded + scene initialised (_isReady = true).
                 // Rejects on any async failure so highway.js can revert.
                 let _resolveReady, _rejectReady;
@@ -13571,11 +13571,11 @@
         };
     }
 
-    window.slopsmithViz_highway_3d = createFactory;
+    window.feedBackViz_highway_3d = createFactory;
     // Per-panel control descriptors (splitscreen). The palette selector was
     // removed — per-string colors are set via the core "Highway String Colors"
     // UI, which drives both highways by named string.
-    window.slopsmithViz_highway_3d.panelControls = [
+    window.feedBackViz_highway_3d.panelControls = [
         {
             key: 'cameraSmoothing',
             label: 'Camera smoothing (X-pan)',
@@ -13618,8 +13618,8 @@
     //                        are matched by the piano plugin instead.
     //                        _canRun3D() in app.js still gates Auto from
     //                        picking us on machines without WebGL2.
-    window.slopsmithViz_highway_3d.contextType = 'webgl2';
-    window.slopsmithViz_highway_3d.__test = {
+    window.feedBackViz_highway_3d.contextType = 'webgl2';
+    window.feedBackViz_highway_3d.__test = {
         getAnalyserForBridgeTest: _bgGetAnalyser,
         readBandsForBridgeTest: _bgReadBands,
         resetAnalyserBridgeForTest() { _bgBridgeKeys.clear(); _bgAudio = null; _bgAudioCore = null; _bgAudioFailedAt = 0; },
@@ -13630,12 +13630,12 @@
     // sloppaks). Word boundaries (\b) keep us from accidentally matching
     // arrangements that merely contain these as substrings (e.g. a
     // "BasslineKeys" arrangement would otherwise match `bass`).
-    window.slopsmithViz_highway_3d.matchesArrangement = function (songInfo) {
+    window.feedBackViz_highway_3d.matchesArrangement = function (songInfo) {
         const arr = (songInfo && songInfo.arrangement) || '';
         return /\b(?:lead|rhythm|bass|combo|guitar)\b/i.test(arr);
     };
 
-    // No imperative register() call needed: slopsmith#272 introduced the
+    // No imperative register() call needed: feedBack#272 introduced the
     // consolidated tour menu, which discovers this plugin's tour automatically
     // via /api/plugins (has_tour:true from plugin.json's tour field) and
     // gates relevance on whether highway_3d is the active viz. A register()

@@ -17,7 +17,7 @@
  */
 (function () {
     'use strict';
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     const PLUGIN_ID = 'tutorials';
     const API = '/api/plugins/' + PLUGIN_ID;
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -228,16 +228,16 @@
         // the first navigation that leaves the launch flow (any screen other
         // than the tutorials waypoint or the player that consumes it).
         try {
-            if (window.slopsmith && typeof window.slopsmith.setReturnScreen === 'function') {
-                window.slopsmith.setReturnScreen('v3-lessons');
+            if (window.feedBack && typeof window.feedBack.setReturnScreen === 'function') {
+                window.feedBack.setReturnScreen('v3-lessons');
                 if (sm && typeof sm.on === 'function' && typeof sm.off === 'function') {
                     const clearStale = (e) => {
                         const id = e && e.detail && e.detail.id;
                         if (id === 'plugin-tutorials') return; // expected waypoint — keep waiting
                         // 'player' means playSong already consumed the override;
                         // anything else means the launch was abandoned.
-                        if (id !== 'player' && window.slopsmith._nextReturnScreen === 'v3-lessons') {
-                            window.slopsmith.setReturnScreen(null);
+                        if (id !== 'player' && window.feedBack._nextReturnScreen === 'v3-lessons') {
+                            window.feedBack.setReturnScreen(null);
                         }
                         sm.off('screen:changed', clearStale);
                     };

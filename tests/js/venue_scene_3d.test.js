@@ -119,7 +119,7 @@ test('venue-scene-3d syncs instrument POV from arrangement signal', () => {
     global.highway = { getSongInfo: () => ({ arrangement: 'Bass' }) };
     global.v3VenueViz = venueViz;
     global.v3VenueInstrumentPov = pov;
-    global.slopsmith = { on() {} };
+    global.feedBack = { on() {} };
     try {
         venueScene.activate();
         assert.equal(global._venuePovInput, 'Bass');
@@ -140,7 +140,7 @@ test('venue-scene-3d syncs instrument POV from arrangement signal', () => {
         delete global.highway;
         delete global.v3VenueViz;
         delete global.v3VenueInstrumentPov;
-        delete global.slopsmith;
+        delete global.feedBack;
         delete global._venuePovInput;
     }
 });
@@ -156,7 +156,7 @@ test('lyrics visibility during guitar practice does not force vocals POV', () =>
     };
     global.v3VenueViz = venueViz;
     global.v3VenueInstrumentPov = pov;
-    global.slopsmith = { on() {} };
+    global.feedBack = { on() {} };
     try {
         venueScene.activate();
         assert.equal(global._venuePovInput, 'Lead');
@@ -174,7 +174,7 @@ test('lyrics visibility during guitar practice does not force vocals POV', () =>
         delete global.highway;
         delete global.v3VenueViz;
         delete global.v3VenueInstrumentPov;
-        delete global.slopsmith;
+        delete global.feedBack;
         delete global._venuePovInput;
     }
 });
@@ -212,7 +212,7 @@ test('syncViz activates only for venue visualization id', () => {
     global.h3dVenueSceneGetState = () => ({ active: !!global._h3dActive, assetsLoaded: false, loadFailed: false });
     global.v3VenueViz = venueViz;
     global.v3VenueInstrumentPov = pov;
-    global.slopsmith = { on() {} };
+    global.feedBack = { on() {} };
     try {
         venueScene.deactivate();
         venueScene.syncViz('highway_3d');
@@ -229,7 +229,7 @@ test('syncViz activates only for venue visualization id', () => {
         delete global.h3dVenueSceneGetState;
         delete global.v3VenueViz;
         delete global.v3VenueInstrumentPov;
-        delete global.slopsmith;
+        delete global.feedBack;
         delete global._h3dActive;
         delete global._h3dMood;
     }
@@ -262,7 +262,7 @@ test('live performance state forwards mood to highway venue scene API', () => {
         isVenueVisualization: () => true,
         readVizSelection: () => 'venue',
     };
-    global.slopsmith = { on() {} };
+    global.feedBack = { on() {} };
     try {
         venueScene.activate();
         venueScene.onPerformanceState({ detail: { state: 'fire' } });
@@ -276,7 +276,7 @@ test('live performance state forwards mood to highway venue scene API', () => {
         delete global.h3dVenueSceneSetInstrumentPov;
         delete global.h3dVenueSceneGetState;
         delete global.v3VenueViz;
-        delete global.slopsmith;
+        delete global.feedBack;
         delete global._mood;
     }
 });
@@ -325,7 +325,7 @@ test('venue-scene-3d syncs motion on activate', () => {
     global.v3VenueMoodFx = { getMotion: () => 'full' };
     global.v3VenueViz = venueViz;
     global.v3VenueInstrumentPov = pov;
-    global.slopsmith = { on() {} };
+    global.feedBack = { on() {} };
     try {
         venueScene.activate();
         assert.equal(global._venueMotion, 'full');
@@ -342,7 +342,7 @@ test('venue-scene-3d syncs motion on activate', () => {
         delete global.v3VenueMoodFx;
         delete global.v3VenueViz;
         delete global.v3VenueInstrumentPov;
-        delete global.slopsmith;
+        delete global.feedBack;
         delete global._venueMotion;
     }
 });
@@ -360,7 +360,7 @@ test('runtime safety: motion pass does not touch scoring detection timing or aud
         'plugins/scoring',
         'static/audio',
         'AudioEngine',
-        'slopsmith-desktop',
+        'feedBack-desktop',
     ];
     const allowedTouched = [
         'plugins/highway_3d/screen.js',

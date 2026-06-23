@@ -22,10 +22,10 @@ def _set_audio_file(monkeypatch, fake_lib_dir):
 
 
 def test_bundled_bin_dir_returns_path_when_vgmstream_marker_present(tmp_path, monkeypatch):
-    """Desktop-bundle layout: resources/slopsmith/lib/audio.py with a
+    """Desktop-bundle layout: resources/feedBack/lib/audio.py with a
     vgmstream-cli marker file in resources/bin/."""
     fake_resources = tmp_path / "resources"
-    fake_lib = fake_resources / "slopsmith" / "lib"
+    fake_lib = fake_resources / "feedBack" / "lib"
     fake_lib.mkdir(parents=True)
     fake_bin = fake_resources / "bin"
     fake_bin.mkdir()
@@ -42,7 +42,7 @@ def test_bundled_bin_dir_returns_none_without_marker(tmp_path, monkeypatch):
     we must NOT treat it as a desktop bundle — otherwise we'd shell out
     to whatever ffmpeg/etc. lives there."""
     fake_resources = tmp_path / "resources"
-    fake_lib = fake_resources / "slopsmith" / "lib"
+    fake_lib = fake_resources / "feedBack" / "lib"
     fake_lib.mkdir(parents=True)
     fake_bin = fake_resources / "bin"
     fake_bin.mkdir()
@@ -57,7 +57,7 @@ def test_bundled_bin_dir_returns_none_without_marker(tmp_path, monkeypatch):
 
 def test_bundled_bin_dir_returns_none_when_bin_dir_missing(tmp_path, monkeypatch):
     fake_resources = tmp_path / "resources"
-    fake_lib = fake_resources / "slopsmith" / "lib"
+    fake_lib = fake_resources / "feedBack" / "lib"
     fake_lib.mkdir(parents=True)
     # no bin/ dir at all
 
@@ -70,7 +70,7 @@ def test_bundled_or_path_prefers_bundled_when_marker_present(tmp_path, monkeypat
     """When the desktop layout is detected, the bundled binary wins over
     whatever shutil.which would find on PATH."""
     fake_resources = tmp_path / "resources"
-    fake_lib = fake_resources / "slopsmith" / "lib"
+    fake_lib = fake_resources / "feedBack" / "lib"
     fake_lib.mkdir(parents=True)
     fake_bin = fake_resources / "bin"
     fake_bin.mkdir()
@@ -89,7 +89,7 @@ def test_bundled_or_path_prefers_bundled_when_marker_present(tmp_path, monkeypat
 def test_bundled_or_path_falls_back_to_which_outside_bundle(tmp_path, monkeypatch):
     """No marker → no bundle → shutil.which result is returned verbatim."""
     fake_resources = tmp_path / "resources"
-    fake_lib = fake_resources / "slopsmith" / "lib"
+    fake_lib = fake_resources / "feedBack" / "lib"
     fake_lib.mkdir(parents=True)
     # No bin/ dir → no marker → not a bundle.
 
@@ -101,7 +101,7 @@ def test_bundled_or_path_falls_back_to_which_outside_bundle(tmp_path, monkeypatc
 
 def test_bundled_or_path_returns_none_when_neither_available(tmp_path, monkeypatch):
     fake_resources = tmp_path / "resources"
-    fake_lib = fake_resources / "slopsmith" / "lib"
+    fake_lib = fake_resources / "feedBack" / "lib"
     fake_lib.mkdir(parents=True)
 
     _set_audio_file(monkeypatch, fake_lib)
@@ -116,7 +116,7 @@ def test_bundled_or_path_falls_through_to_which_when_bundle_has_marker_but_not_t
     fall through to PATH rather than returning None — otherwise a partial
     desktop bundle would silently disable any binary it forgot to ship."""
     fake_resources = tmp_path / "resources"
-    fake_lib = fake_resources / "slopsmith" / "lib"
+    fake_lib = fake_resources / "feedBack" / "lib"
     fake_lib.mkdir(parents=True)
     fake_bin = fake_resources / "bin"
     fake_bin.mkdir()

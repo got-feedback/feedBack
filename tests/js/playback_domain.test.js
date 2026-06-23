@@ -5,12 +5,12 @@ const { loadCapabilities } = require('./capabilities_test_harness');
 
 test('playback reports no-owner no-handler and unsupported command outcomes explicitly', async () => {
     const noOwnerWindow = loadCapabilities();
-    const noOwner = await noOwnerWindow.slopsmith.capabilities.dispatch({ capability: 'playback', command: 'inspect', requester: 'test' });
+    const noOwner = await noOwnerWindow.feedBack.capabilities.dispatch({ capability: 'playback', command: 'inspect', requester: 'test' });
     assert.equal(noOwner.status, 'no-owner');
 
     const noHandlerWindow = loadCapabilities();
-    noHandlerWindow.slopsmith.capabilities.registerOwner('playback', { pluginId: 'test-owner', commands: ['inspect'], events: [] });
-    const noHandler = await noHandlerWindow.slopsmith.capabilities.dispatch({ capability: 'playback', command: 'inspect', requester: 'test' });
+    noHandlerWindow.feedBack.capabilities.registerOwner('playback', { pluginId: 'test-owner', commands: ['inspect'], events: [] });
+    const noHandler = await noHandlerWindow.feedBack.capabilities.dispatch({ capability: 'playback', command: 'inspect', requester: 'test' });
     assert.equal(noHandler.status, 'no-handler');
 
     const unsupportedWindow = loadPlayback();
@@ -20,7 +20,7 @@ test('playback reports no-owner no-handler and unsupported command outcomes expl
 
 test('playback registers as an active core owner', async () => {
     const window = loadPlayback();
-    const snapshot = window.slopsmith.capabilities.snapshotDiagnostics();
+    const snapshot = window.feedBack.capabilities.snapshotDiagnostics();
     const playback = snapshot.pipelines.find(pipeline => pipeline.name === 'playback');
 
     assert.ok(playback, 'playback pipeline exists');
@@ -40,7 +40,7 @@ test('start requires a target and explicit user authorization for fresh audible 
     assert.equal(noGesture.status, 'user-action-required');
 
     const adapter = makeAdapter();
-    window.slopsmith.playback.registerTransportAdapter(adapter);
+    window.feedBack.playback.registerTransportAdapter(adapter);
     const events = captureEvents(window, 'playback:ready');
     const result = await dispatch(window, 'start', { requesterId: 'core.player.controls', authorization: 'user-action', target: makeTarget() });
 
@@ -56,7 +56,7 @@ test('start requires a target and explicit user authorization for fresh audible 
 
 test('settings key is stable across arrangements while target id remains arrangement scoped', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
     const base = makeTarget({ filename: '/Users/example/DLC/Artist - Song_p.archive', arrangement: 'Lead', arrangementIndex: 0 });
 
     await dispatch(window, 'start', { requesterId: 'core.player.controls', authorization: 'user-action', target: base });
@@ -71,7 +71,7 @@ test('settings key is stable across arrangements while target id remains arrange
 
 test('unsafe caller-supplied settings keys are hashed before exposure', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
 
     await dispatch(window, 'start', {
         requesterId: 'core.player.controls',
@@ -86,7 +86,7 @@ test('unsafe caller-supplied settings keys are hashed before exposure', async ()
 
 test('unsafe caller-supplied target ids are hashed before exposure', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
 
     await dispatch(window, 'start', {
         requesterId: 'core.player.controls',
@@ -101,7 +101,7 @@ test('unsafe caller-supplied target ids are hashed before exposure', async () =>
 
 test('dispatch requester owns playback command attribution', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
 
     const started = await dispatch(window, 'start', { requesterId: 'core.player.controls', authorization: 'user-action', target: makeTarget() }, 'plugin.remote');
     const paused = await dispatch(window, 'pause', { requesterId: 'core.player.controls' }, 'plugin.remote');
@@ -118,10 +118,10 @@ test('dispatch requester owns playback command attribution', async () => {
 test('transport commands emit ordered lifecycle events and normalize outcomes', async () => {
     const window = loadPlayback();
     const adapter = makeAdapter({ duration: 10 });
-    window.slopsmith.playback.registerTransportAdapter(adapter);
+    window.feedBack.playback.registerTransportAdapter(adapter);
     const events = [];
     for (const eventName of ['playback:requested', 'playback:loading', 'playback:ready', 'playback:paused', 'playback:resumed', 'playback:seeking', 'playback:seeked', 'playback:loop-set', 'playback:loop-cleared']) {
-        window.slopsmith.on(eventName, event => events.push(event.type.replace('playback:', '')));
+        window.feedBack.on(eventName, event => events.push(event.type.replace('playback:', '')));
     }
 
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
@@ -141,22 +141,22 @@ test('transport commands emit ordered lifecycle events and normalize outcomes', 
 
 test('seek preserves pre-seek playback state and external seek events update state', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter({ startPlaying: true, seekResult: { completed: true, from: 1, to: 5 } }));
+    window.feedBack.playback.registerTransportAdapter(makeAdapter({ startPlaying: true, seekResult: { completed: true, from: 1, to: 5 } }));
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
 
     const seek = await dispatch(window, 'seek', { requesterId: 'core.player.controls', time: 5 });
     assert.equal(seek.status, 'completed');
     assert.equal(diagnosticsSnapshot(window).state.state, 'playing');
 
-    window.slopsmith.playback.transportEvent('seeking', { requesterId: 'core.player.controls', media: { currentTime: 5 }, isPlaying: true });
+    window.feedBack.playback.transportEvent('seeking', { requesterId: 'core.player.controls', media: { currentTime: 5 }, isPlaying: true });
     assert.equal(diagnosticsSnapshot(window).state.state, 'seeking');
-    window.slopsmith.playback.transportEvent('seeked', { requesterId: 'core.player.controls', media: { currentTime: 9 }, isPlaying: true });
+    window.feedBack.playback.transportEvent('seeked', { requesterId: 'core.player.controls', media: { currentTime: 9 }, isPlaying: true });
     assert.equal(diagnosticsSnapshot(window).state.state, 'playing');
 });
 
 test('clear-loop requires an active playback session', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
 
     const cleared = await dispatch(window, 'clear-loop', { requesterId: 'core.player.controls' });
     assert.equal(cleared.status, 'no-target');
@@ -164,13 +164,13 @@ test('clear-loop requires an active playback session', async () => {
 
 test('ended transport events and seek failure/rollback outcomes are distinguishable', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter({ seekResult: { completed: true, from: 5, to: 4.5 } }));
+    window.feedBack.playback.registerTransportAdapter(makeAdapter({ seekResult: { completed: true, from: 5, to: 4.5 } }));
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
     const rolledBack = await dispatch(window, 'seek', { requesterId: 'core.player.controls', time: 8 });
     assert.equal(rolledBack.status, 'rolled-back');
 
     const failedWindow = loadPlayback();
-    failedWindow.slopsmith.playback.registerTransportAdapter(makeAdapter({ seekError: 'seek failed' }));
+    failedWindow.feedBack.playback.registerTransportAdapter(makeAdapter({ seekError: 'seek failed' }));
     await dispatch(failedWindow, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
     const failed = await dispatch(failedWindow, 'seek', { requesterId: 'core.player.controls', time: 3 });
     assert.equal(failed.status, 'failed');
@@ -178,26 +178,26 @@ test('ended transport events and seek failure/rollback outcomes are distinguisha
     assert.equal(diagnosticsSnapshot(failedWindow).state.state, 'paused');
 
     const unsupportedWindow = loadPlayback();
-    unsupportedWindow.slopsmith.playback.registerTransportAdapter({ inspect: () => ({ currentTime: 0, duration: 120, isPlaying: true }), start: () => ({ currentTime: 0, duration: 120, isPlaying: true }) });
+    unsupportedWindow.feedBack.playback.registerTransportAdapter({ inspect: () => ({ currentTime: 0, duration: 120, isPlaying: true }), start: () => ({ currentTime: 0, duration: 120, isPlaying: true }) });
     await dispatch(unsupportedWindow, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
     const unsupported = await dispatch(unsupportedWindow, 'seek', { requesterId: 'core.player.controls', time: 3 });
     assert.equal(unsupported.status, 'unsupported-command');
     assert.equal(diagnosticsSnapshot(unsupportedWindow).state.state, 'playing');
 
     const malformedWindow = loadPlayback();
-    malformedWindow.slopsmith.playback.registerTransportAdapter(makeAdapter({ seekResult: { completed: true, from: 2, to: NaN } }));
+    malformedWindow.feedBack.playback.registerTransportAdapter(makeAdapter({ seekResult: { completed: true, from: 2, to: NaN } }));
     await dispatch(malformedWindow, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
     const malformed = await dispatch(malformedWindow, 'seek', { requesterId: 'core.player.controls', time: 6 });
     assert.equal(malformed.status, 'failed');
     assert.match(malformed.reason, /malformed seek result/i);
 
-    window.slopsmith.playback.transportEvent('ended', { requesterId: 'core.player.controls', currentTime: 120 });
+    window.feedBack.playback.transportEvent('ended', { requesterId: 'core.player.controls', currentTime: 120 });
     assert.equal(diagnosticsSnapshot(window).state.state, 'ended');
 });
 
 test('invalid loop boundaries do not mutate an active loop', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
     await dispatch(window, 'set-loop', { requesterId: 'core.player.controls', startTime: 2, endTime: 4 });
 
@@ -212,7 +212,7 @@ test('invalid loop boundaries do not mutate an active loop', async () => {
 
 test('normal resume is denied after a user-priority pause until a user action resumes', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
     await dispatch(window, 'pause', { requesterId: 'core.player.controls', priority: 'user' });
 
@@ -225,7 +225,7 @@ test('normal resume is denied after a user-priority pause until a user action re
 
 test('stale and cancelled operations are reported distinctly', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter({ seekResult: { completed: false, from: 2, to: NaN } }));
+    window.feedBack.playback.registerTransportAdapter(makeAdapter({ seekResult: { completed: false, from: 2, to: NaN } }));
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
     const sessionId = diagnosticsSnapshot(window).state.sessionId;
 

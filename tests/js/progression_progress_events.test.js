@@ -23,7 +23,7 @@ function load(states) {
         fetch: async () => ({ ok: true, json: async () => states[Math.min(i++, states.length - 1)] }),
     };
     sandbox.window = sandbox;
-    sandbox.window.slopsmith = { emit: (name, detail) => events.push({ name, detail }) };
+    sandbox.window.feedBack = { emit: (name, detail) => events.push({ name, detail }) };
     sandbox.document = { readyState: 'complete', addEventListener: () => {} };
     vm.createContext(sandbox);
     vm.runInContext(SRC, sandbox);

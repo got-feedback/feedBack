@@ -1,6 +1,6 @@
 """Tests for lib/song.py parse_arrangement — XML → Arrangement.
 
-Covers the per-phrase difficulty ladder logic added in slopsmith#48
+Covers the per-phrase difficulty ladder logic added in feedBack#48
 (Phrase / PhraseLevel extraction, None-sentinel semantics, the
 fallback paths for missing or unusable phrase metadata) and the
 <arrangementProperties> flag parsing for smart naming.

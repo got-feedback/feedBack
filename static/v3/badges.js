@@ -17,7 +17,7 @@
  */
 (function () {
     'use strict';
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 

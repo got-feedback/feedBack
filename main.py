@@ -1,4 +1,4 @@
-"""Programmatic entry point for the Slopsmith server.
+"""Programmatic entry point for the FeedBack server.
 
 Using ``uvicorn.run()`` with ``log_config=None`` prevents uvicorn from calling
 ``logging.config.dictConfig(LOGGING_CONFIG)`` during its startup sequence.

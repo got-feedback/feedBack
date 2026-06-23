@@ -8,7 +8,7 @@
 (function (root) {
     'use strict';
 
-    const KEY = 'slopsmith-live-guitar-tone-source';
+    const KEY = 'feedBack-live-guitar-tone-source';
 
     const SOURCES = Object.freeze({
         INTERNAL: 'internal',

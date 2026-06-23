@@ -1,5 +1,5 @@
 // Demo analytics — real impl set by demo.js; no-op in normal builds
-window.slopsmithDemoTrack = window.slopsmithDemoTrack ?? null;
+window.feedBackDemoTrack = window.feedBackDemoTrack ?? null;
 
 // Sync the play/pause button's icon and accessible state in one place so
 // screen readers, tooltips, and aria-pressed stay aligned with playback.
@@ -61,7 +61,7 @@ function _isShortcutHelpSuppressedTarget(el) {
     }
     if (tag === 'TEXTAREA') return true;
     if (el.isContentEditable) return true;
-    if (el.closest && el.closest('#lib-filter-drawer, [role="dialog"], #edit-modal, .slopsmith-modal')) return true;
+    if (el.closest && el.closest('#lib-filter-drawer, [role="dialog"], #edit-modal, .feedBack-modal')) return true;
     return false;
 }
 
@@ -200,7 +200,7 @@ let _lastLibSelected = null;
 
 // Tracks which list screen launched the player so Esc-from-player
 // returns the user to that screen instead of always defaulting to
-// the Library (slopsmith#126). Reset on every `playSong` call so a
+// the Library (feedBack#126). Reset on every `playSong` call so a
 // song launched from a deep-link / plugin screen still gets a sane
 // fallback ('home').
 let _playerOriginScreen = 'home';
@@ -219,8 +219,8 @@ const _libScrollOnNextRender = { home: false, favorites: false };
 // Library and Favorites trees don't fight over the same slot. Only
 // song-row / song-card selections are persisted — header selections
 // in the tree are ephemeral by design (re-derived from arrow nav).
-const _LIB_SELECTED_KEY = 'slopsmith.libLastSelected';
-const _FAV_SELECTED_KEY = 'slopsmith.favLastSelected';
+const _LIB_SELECTED_KEY = 'feedBack.libLastSelected';
+const _FAV_SELECTED_KEY = 'feedBack.favLastSelected';
 function _selectedKeyForActiveScreen() {
     const active = document.querySelector('.screen.active');
     if (!active) return null;
@@ -616,7 +616,7 @@ function _confirmDialog({ title, body = '', confirmText = 'Confirm', cancelText 
     return new Promise((resolve) => {
         const previouslyFocused = document.activeElement;
         const modal = document.createElement('div');
-        modal.className = 'slopsmith-modal fixed inset-0 z-[250] flex items-center justify-center bg-black/70 backdrop-blur-sm';
+        modal.className = 'feedBack-modal fixed inset-0 z-[250] flex items-center justify-center bg-black/70 backdrop-blur-sm';
         modal.setAttribute('role', 'alertdialog');
         modal.setAttribute('aria-modal', 'true');
         modal.setAttribute('aria-label', title || 'Confirm');
@@ -789,7 +789,7 @@ function _openShortcutsModal() {
 
     const modal = document.createElement('div');
     modal.id = 'shortcuts-modal';
-    modal.className = 'slopsmith-modal fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm';
+    modal.className = 'feedBack-modal fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm';
     modal.setAttribute('role', 'dialog');
     modal.setAttribute('aria-modal', 'true');
     modal.setAttribute('aria-label', 'Keyboard shortcuts');
@@ -950,7 +950,7 @@ document.addEventListener('keydown', (e) => {
         // element that opened the modal (tracked in modal._opener)
         // so arrow nav resumes without an extra Tab; falls back to
         // _lastLibSelected when the opener is no longer in the DOM.
-        const modals = document.querySelectorAll('[role="dialog"][aria-modal="true"].slopsmith-modal');
+        const modals = document.querySelectorAll('[role="dialog"][aria-modal="true"].feedBack-modal');
         if (modals.length) {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -1037,14 +1037,14 @@ async function showScreen(id) {
             const payload = _songEventPayload();
             const wasPlaying = isPlaying;
             await jucePlayer.stop().catch(() => {});
-            if (wasPlaying && window.slopsmith) {
-                window.slopsmith.isPlaying = false;
-                window.slopsmith.emit('song:pause', payload);
+            if (wasPlaying && window.feedBack) {
+                window.feedBack.isPlaying = false;
+                window.feedBack.emit('song:pause', payload);
             }
             window._juceMode = false;
             window._juceAudioUrl = null;
         }
-        if (hadPlayableSong) window.slopsmith.emit('song:stop', { time: stopTime || 0, screen: id });
+        if (hadPlayableSong) window.feedBack.emit('song:stop', { time: stopTime || 0, screen: id });
         audio.pause();
         audio.src = '';
         window._currentSongAudio = null;
@@ -1054,7 +1054,7 @@ async function showScreen(id) {
         setPlayButtonState(false);
     }
     window.scrollTo(0, 0);
-    if (window.slopsmith) window.slopsmith.emit('screen:changed', { id });
+    if (window.feedBack) window.feedBack.emit('screen:changed', { id });
 }
 
 // ── Library ──────────────────────────────────────────────────────────────
@@ -1065,10 +1065,10 @@ async function showScreen(id) {
 // single value doesn't wipe the rest. Validation lives at the read
 // site — we coerce unknown values back to safe defaults rather than
 // trusting whatever happens to be in localStorage.
-const _LIB_VIEW_KEY = 'slopsmith.libView';
-const _LIB_SORT_KEY = 'slopsmith.libSort';
-const _LIB_FORMAT_KEY = 'slopsmith.libFormat';
-const _LIB_PROVIDER_KEY = 'slopsmith.libProvider';
+const _LIB_VIEW_KEY = 'feedBack.libView';
+const _LIB_SORT_KEY = 'feedBack.libSort';
+const _LIB_FORMAT_KEY = 'feedBack.libFormat';
+const _LIB_PROVIDER_KEY = 'feedBack.libProvider';
 const _LIB_VIEW_VALUES = new Set(['grid', 'tree']);
 const _LIB_SORT_VALUES = new Set([
     'artist', 'artist-desc', 'title', 'title-desc',
@@ -1084,8 +1084,8 @@ const _LIB_FORMAT_VALUES = new Set(['', 'sloppak', 'loose']);
 // Library and Favorites are separate trees with separate
 // Expand/Collapse buttons, so each gets its own key — toggling one
 // must not flip the other's persisted state.
-const _LIB_TREE_EXPAND_KEY = 'slopsmith.libTreeExpand';
-const _FAV_TREE_EXPAND_KEY = 'slopsmith.favTreeExpand';
+const _LIB_TREE_EXPAND_KEY = 'feedBack.libTreeExpand';
+const _FAV_TREE_EXPAND_KEY = 'feedBack.favTreeExpand';
 const _LIB_TREE_EXPAND_VALUES = new Set(['1', '0']);
 
 function _readPersistedChoice(key, allowed, fallback) {
@@ -1101,7 +1101,7 @@ function _writePersistedChoice(key, value) {
 }
 
 function _libraryProviderApi() {
-    const api = window.slopsmith && window.slopsmith.libraryProviders;
+    const api = window.feedBack && window.feedBack.libraryProviders;
     return api && typeof api === 'object' ? api : null;
 }
 
@@ -1191,7 +1191,7 @@ async function loadLibraryProviders({ restoreSaved = false, reloadOnChange = fal
 async function setLibraryProvider(providerId, options = {}) {
     const beforeProviderId = _activeLibraryProviderId();
     try {
-        const capabilityApi = window.slopsmith && window.slopsmith.capabilities;
+        const capabilityApi = window.feedBack && window.feedBack.capabilities;
         if (capabilityApi && typeof capabilityApi.command === 'function') {
             await capabilityApi.command('library', 'select-provider', {
                 requester: 'app.library',
@@ -1323,8 +1323,8 @@ const PAGE_SIZE = 24;
 // the player so the user lands on the same alphabet group they
 // picked. Validation: any single uppercase letter, or `#` for
 // non-alphabetical artists, or `''` for the All bucket.
-const _LIB_TREE_LETTER_KEY = 'slopsmith.libTreeLetter';
-const _FAV_TREE_LETTER_KEY = 'slopsmith.favTreeLetter';
+const _LIB_TREE_LETTER_KEY = 'feedBack.libTreeLetter';
+const _FAV_TREE_LETTER_KEY = 'feedBack.favTreeLetter';
 function _readPersistedLetter(key) {
     let v = null;
     try { v = localStorage.getItem(key); } catch { return ''; }
@@ -1344,7 +1344,7 @@ let _gridObserver = null;
 // they've been superseded and skip rendering stale results.
 let _libEpoch = 0;
 
-// ── Library filters (slopsmith#129/#69) ────────────────────────────────
+// ── Library filters (feedBack#129/#69) ────────────────────────────────
 //
 // Filter state lives in a single object so the active set can be
 // serialized to localStorage as one key. Each axis is OR-within (Lead
@@ -1415,7 +1415,7 @@ const _STEM_DEFS = [
     { id: 'piano', label: 'Piano' },
     { id: 'other', label: 'Other' },
 ];
-const _LIB_FILTERS_KEY = 'slopsmith.libFilters';
+const _LIB_FILTERS_KEY = 'feedBack.libFilters';
 let _libFilters = _loadLibFilters();
 let _tuningNames = null;  // cached from /api/library/tuning-names
 
@@ -1437,7 +1437,7 @@ function _normalizeLibFilters(parsed) {
     // any shape. Without normalization a later `.join` or `.includes`
     // on a non-array would throw at filter-apply time. Coerce each
     // field back to its expected type, dropping anything we don't
-    // recognize. Slopsmith#134 review.
+    // recognize. FeedBack#134 review.
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         return _defaultLibFilters();
     }
@@ -1821,7 +1821,7 @@ function filterLibrary() {
         // Letter-bar counts depend on `q` and the active filter set —
         // any change to those must invalidate the tree-view stats
         // cache or the next switch to tree view will render stale
-        // letter counts (slopsmith#134 review).
+        // letter counts (feedBack#134 review).
         _treeStats = null;
         loadLibrary(0);
     }, 250);
@@ -2131,7 +2131,7 @@ async function renderTreeInto(containerId, countId, stats, letter, q, favoritesO
     // A previous Expand/Collapse-All click is persisted as '1'/'0' and
     // overrides the auto-open heuristic for both artists and albums.
     // Library and Favorites have independent buttons and independent
-    // keys (slopsmith.libTreeExpand vs slopsmith.favTreeExpand) — fed
+    // keys (feedBack.libTreeExpand vs feedBack.favTreeExpand) — fed
     // off the favoritesOnly flag — so toggling one doesn't flip the
     // other's state. Falsy / unset key → fall back to the existing
     // heuristic (open when there's an active search or few rows).
@@ -2367,8 +2367,9 @@ function displayTuningName(value, offsets) {
 }
 
 window.displayTuningName = displayTuningName;
-window.slopsmith = window.slopsmith || {};
-window.slopsmith.displayTuningName = displayTuningName;
+window.feedBack = window.feedBack || {};
+window.slopsmith = window.feedBack;
+window.feedBack.displayTuningName = displayTuningName;
 
 function isBassArrangement(context) {
     const ctx = context && typeof context === 'object' ? context : {};
@@ -2402,9 +2403,9 @@ function songTuningContext(songInfo) {
     };
 }
 
-window.slopsmith.isBassArrangement = isBassArrangement;
-window.slopsmith.effectiveStringCount = effectiveStringCount;
-window.slopsmith.songTuningContext = songTuningContext;
+window.feedBack.isBassArrangement = isBassArrangement;
+window.feedBack.effectiveStringCount = effectiveStringCount;
+window.feedBack.songTuningContext = songTuningContext;
 
 // Open-string target notes (display only) — mirrors plugins/tuner/utils/tuning-utils.js.
 const _TUNING_BASE_MIDI = {
@@ -2520,9 +2521,9 @@ function parseRawTuningOffsets(value) {
 window.displayTuningTargets = displayTuningTargets;
 window.displayTuningTargetDetails = displayTuningTargetDetails;
 window.parseRawTuningOffsets = parseRawTuningOffsets;
-window.slopsmith.displayTuningTargets = displayTuningTargets;
-window.slopsmith.displayTuningTargetDetails = displayTuningTargetDetails;
-window.slopsmith.parseRawTuningOffsets = parseRawTuningOffsets;
+window.feedBack.displayTuningTargets = displayTuningTargets;
+window.feedBack.displayTuningTargetDetails = displayTuningTargetDetails;
+window.feedBack.parseRawTuningOffsets = parseRawTuningOffsets;
 
 function esc(s) {
     const d = document.createElement('div');
@@ -2705,7 +2706,7 @@ function _syncDefaultArrangementSelect(value) {
 }
 
 function _currentArrangementName() {
-    const song = window.slopsmith?.currentSong;
+    const song = window.feedBack?.currentSong;
     const sel = document.getElementById('arr-select');
     if (song?.arrangements && sel) {
         const match = song.arrangements.find(a => String(a.index) === String(sel.value));
@@ -2801,7 +2802,7 @@ function _hwcSlotKeysForChart(sc, isBass) {
 function _hwcChartShape() {
     let sc = 6, arr = '';
     try { sc = window.highway?.getStringCount?.() || 6; } catch (_) {}
-    try { arr = window.highway?.getSongInfo?.()?.arrangement || window.slopsmith?.currentSong?.arrangement || ''; } catch (_) {}
+    try { arr = window.highway?.getSongInfo?.()?.arrangement || window.feedBack?.currentSong?.arrangement || ''; } catch (_) {}
     return { sc: Math.max(1, Math.min(8, sc)), isBass: /bass/i.test(String(arr)) };
 }
 
@@ -2896,14 +2897,14 @@ function reapplyHighwayStringColors() {
         try {
             if (localStorage.getItem('h3d_bg_palette') !== 'default') window.h3dBgSetPalette?.('default');
         } catch (_) {}
-        try { window.slopsmith?.emit?.('highway:stringColors', {}); } catch (_) {}
+        try { window.feedBack?.emit?.('highway:stringColors', {}); } catch (_) {}
         return;
     }
 
     const eff = _hwcEffectiveIndexColors(_hwcMergedSlotColors(), sc, isBass);
     try { window.highway?.setStringColors?.(eff); } catch (_) {}
     try { window.h3dBgSetStringColors?.(eff); } catch (_) {}
-    try { window.slopsmith?.emit?.('highway:stringColors', custom); } catch (_) {}
+    try { window.feedBack?.emit?.('highway:stringColors', custom); } catch (_) {}
 }
 
 function _hwcReadThemes() {
@@ -2998,16 +2999,16 @@ function importHighwayColorShare(code) {
 let _hwcWired = false;
 function initHighwayColors() {
     reapplyHighwayStringColors();
-    if (!_hwcWired && window.slopsmith && typeof window.slopsmith.on === 'function') {
+    if (!_hwcWired && window.feedBack && typeof window.feedBack.on === 'function') {
         _hwcWired = true;
-        window.slopsmith.on('viz:renderer:ready', reapplyHighwayStringColors);
-        window.slopsmith.on('song:loaded', reapplyHighwayStringColors);
-        window.slopsmith.on('song:ready', reapplyHighwayStringColors);
+        window.feedBack.on('viz:renderer:ready', reapplyHighwayStringColors);
+        window.feedBack.on('song:loaded', reapplyHighwayStringColors);
+        window.feedBack.on('song:ready', reapplyHighwayStringColors);
     }
     _hwcInstallFacade();
 }
 
-// ── Public plugin API: window.slopsmith.highwayColors ─────────────────────
+// ── Public plugin API: window.feedBack.highwayColors ─────────────────────
 // A stable, documented facade over the (otherwise private) string-color
 // manager so plugins can read / react to / set the user's per-string colors
 // without reaching into internals. This is a synchronous data-plane API, not a
@@ -3018,7 +3019,7 @@ function initHighwayColors() {
 // arrangement. See docs/plugin-capability-inventory.md.
 const _hwcChangeWrappers = new WeakMap();
 function _hwcInstallFacade() {
-    if (!window.slopsmith || window.slopsmith.highwayColors) return;
+    if (!window.feedBack || window.feedBack.highwayColors) return;
     const api = {
         version: 1,
         // Ordered named slots: [{ key, label, sub }]. `key` is the stable id.
@@ -3057,29 +3058,29 @@ function _hwcInstallFacade() {
         // (Each fn maps to a Set of wrappers so repeated mount/init paths that
         // subscribe the same handler don't clobber each other or leak.)
         onChange(fn) {
-            if (typeof fn !== 'function' || !window.slopsmith) return () => {};
+            if (typeof fn !== 'function' || !window.feedBack) return () => {};
             const wrapper = () => {
                 try { fn(api.getResolved()); } catch (e) { console.error('[highwayColors] onChange handler threw', e); }
             };
             let set = _hwcChangeWrappers.get(fn);
             if (!set) { set = new Set(); _hwcChangeWrappers.set(fn, set); }
             set.add(wrapper);
-            window.slopsmith.on('highway:stringColors', wrapper);
+            window.feedBack.on('highway:stringColors', wrapper);
             return () => {
-                if (window.slopsmith) window.slopsmith.off('highway:stringColors', wrapper);
+                if (window.feedBack) window.feedBack.off('highway:stringColors', wrapper);
                 const s = _hwcChangeWrappers.get(fn);
                 if (s) { s.delete(wrapper); if (!s.size) _hwcChangeWrappers.delete(fn); }
             };
         },
         offChange(fn) {
             const set = _hwcChangeWrappers.get(fn);
-            if (set && window.slopsmith) {
-                for (const wrapper of set) window.slopsmith.off('highway:stringColors', wrapper);
+            if (set && window.feedBack) {
+                for (const wrapper of set) window.feedBack.off('highway:stringColors', wrapper);
                 _hwcChangeWrappers.delete(fn);
             }
         },
     };
-    window.slopsmith.highwayColors = api;
+    window.feedBack.highwayColors = api;
 }
 
 // ── Highway String Colors — Settings UI wiring ───────────────────────────
@@ -3263,8 +3264,8 @@ async function loadSettings() {
     // Arrangement naming mode is localStorage-only (client preference).
     const namingModeEl = document.getElementById('arrangement-naming-mode');
     if (namingModeEl) namingModeEl.value = _getArrangementNamingMode();
-    // Native folder picker — only present when running inside slopsmith-desktop.
-    if (window.slopsmithDesktop && typeof window.slopsmithDesktop.pickDirectory === 'function') {
+    // Native folder picker — only present when running inside feedBack-desktop.
+    if (window.feedBackDesktop && typeof window.feedBackDesktop.pickDirectory === 'function') {
         document.getElementById('btn-pick-dlc')?.classList.remove('hidden');
     }
     syncDefaultArrangementPin();
@@ -3276,7 +3277,7 @@ async function loadSettings() {
 // ── App Updates (desktop-only) ───────────────────────────────────────────
 // Velopack auto-update controls, rendered as the first block of the Settings
 // page. Whole block stays hidden in the plain web app; unhide + wire only
-// when the slopsmith-desktop bridge (window.slopsmithDesktop.update) is
+// when the feedBack-desktop bridge (window.feedBackDesktop.update) is
 // present. On Linux the block renders but its controls are disabled — the
 // desktop reports platform === 'linux' and short-circuits the IPC.
 
@@ -3286,8 +3287,8 @@ let _appUpdatesWired = false;
 function setupAppUpdates() {
     const block = document.getElementById('app-updates-block');
     if (!block) return;
-    const updateApi = window.slopsmithDesktop?.update;
-    // Per-method capability check: an older or partial slopsmith-desktop
+    const updateApi = window.feedBackDesktop?.update;
+    // Per-method capability check: an older or partial feedBack-desktop
     // bridge may expose `update` without the full shape. Skip wiring (and
     // leave the block hidden) rather than throwing on first interaction.
     if (!updateApi
@@ -3309,11 +3310,13 @@ function setupAppUpdates() {
     // iframes, privacy modes, etc.); fall back to the default channel so the
     // panel still renders rather than aborting wiring entirely.
     let storedRaw = null;
-    try { storedRaw = localStorage.getItem('slopsmith-update-channel'); } catch (_) { /* fall through */ }
+    // Read the canonical key, falling back to the pre-rename
+    // 'slopsmith-update-channel' so an existing channel preference survives.
+    try { storedRaw = localStorage.getItem('feedBack-update-channel') || localStorage.getItem('slopsmith-update-channel'); } catch (_) { /* fall through */ }
     const stored = APP_UPDATE_CHANNELS.includes(storedRaw) ? storedRaw : 'stable';
     channelSelect.value = stored;
 
-    const isLinux = window.slopsmithDesktop?.platform === 'linux';
+    const isLinux = window.feedBackDesktop?.platform === 'linux';
 
     function showLinuxFallback(message) {
         if (linuxNote) linuxNote.classList.remove('hidden');
@@ -3394,7 +3397,7 @@ function setupAppUpdates() {
         channelSelect.addEventListener('change', async () => {
             const val = channelSelect.value;
             if (!APP_UPDATE_CHANNELS.includes(val)) return;
-            try { localStorage.setItem('slopsmith-update-channel', val); } catch (_) {}
+            try { localStorage.setItem('feedBack-update-channel', val); localStorage.removeItem('slopsmith-update-channel'); } catch (_) {}
             try {
                 // Await setChannel so the status line reflects what actually
                 // happened — rendering "Channel set" unconditionally would
@@ -3451,13 +3454,13 @@ function setupAppUpdates() {
 }
 
 // ── Restart banner (desktop-only) ────────────────────────────────────────
-// Subscribes to window.slopsmithDesktop.update.onDownloaded and renders a
+// Subscribes to window.feedBackDesktop.update.onDownloaded and renders a
 // persistent banner with a "Restart now" button. Runs once at app boot so a
 // download finishing while the user is on a non-Settings screen still pops
 // the banner.
 
 function initAppUpdateBanner() {
-    const updateApi = window.slopsmithDesktop?.update;
+    const updateApi = window.feedBackDesktop?.update;
     // Same capability gate as setupAppUpdates — the banner needs onDownloaded
     // to subscribe, getStatus to detect pre-existing pending updates on boot,
     // and apply to actually restart from the button. A bridge missing any
@@ -3469,7 +3472,7 @@ function initAppUpdateBanner() {
         return;
     }
 
-    const BANNER_ID = 'slopsmith-update-banner';
+    const BANNER_ID = 'feedBack-update-banner';
 
     function renderUpdateBanner(payload) {
         // Avoid stacking duplicate banners if onDownloaded fires more than once.
@@ -3658,8 +3661,8 @@ function nudgeAvOffsetMs(delta) {
 // Open a native OS folder picker via the Electron bridge (desktop only) and
 // stash the chosen path into the DLC input. User still has to hit Save.
 async function pickDlcFolder() {
-    if (!window.slopsmithDesktop?.pickDirectory) return;
-    const path = await window.slopsmithDesktop.pickDirectory();
+    if (!window.feedBackDesktop?.pickDirectory) return;
+    const path = await window.feedBackDesktop.pickDirectory();
     if (path) document.getElementById('dlc-path').value = path;
 }
 
@@ -3722,7 +3725,7 @@ async function _postSetting(key, value) {
     }
 }
 
-// ── Settings export / import (slopsmith#113) ─────────────────────────────────
+// ── Settings export / import (feedBack#113) ─────────────────────────────────
 //
 // Bundles server config + every localStorage key + opted-in plugin server
 // files into a single JSON file.
@@ -3775,7 +3778,7 @@ async function exportSettings() {
         // Trigger download via blob + temporary <a download>. We honor the
         // server's Content-Disposition filename when present, otherwise
         // fall back to a date-stamped default.
-        let filename = 'slopsmith-settings.json';
+        let filename = 'feedBack-settings.json';
         const disposition = resp.headers.get('Content-Disposition');
         if (disposition) {
             const match = /filename="([^"]+)"/.exec(disposition);
@@ -3870,14 +3873,14 @@ async function importSettings(file) {
     setTimeout(() => location.reload(), 800);
 }
 
-// ── Diagnostics export (slopsmith#166) ───────────────────────────────────
+// ── Diagnostics export (feedBack#166) ───────────────────────────────────
 //
 // Companion to Settings export but for troubleshooting bug reports.
 // Bundle layout + schemas: docs/diagnostics-bundle-spec.md.
 //
 // Frontend's job is to:
 //   1. Snapshot the browser-only state (console ring buffer, hardware
-//      probe, localStorage, ua) via window.slopsmith.diagnostics.
+//      probe, localStorage, ua) via window.feedBack.diagnostics.
 //   2. POST it to /api/diagnostics/export with the user's include /
 //      redact toggles.
 //   3. Stream the returned zip to disk.
@@ -3902,7 +3905,7 @@ function _diagRedactFromUI() {
 // descriptions for the preview UI. Only paths that show up in
 // previews need entries — unknown paths fall back to the path itself.
 const _DIAG_FILE_LABELS = {
-    'system/version.json':   { label: 'App version',    desc: 'Slopsmith version, Python, OS' },
+    'system/version.json':   { label: 'App version',    desc: 'FeedBack version, Python, OS' },
     'system/env.json':       { label: 'Environment',    desc: 'Allowlisted env vars (LOG_LEVEL, etc.). No secrets.' },
     'system/hardware.json':  { label: 'Hardware (server-side)', desc: 'CPU, RAM, GPU. In Docker this reflects the container, not the host.' },
     'system/plugins.json':   { label: 'Plugins',        desc: 'Loaded plugins + git commit + orphan detection.' },
@@ -3976,7 +3979,7 @@ function _renderDiagPreview(data) {
         }
         if (path === 'system/version.json') {
             const bits = [];
-            if (summary.slopsmith) bits.push(`slopsmith ${summary.slopsmith}`);
+            if (summary.feedBack) bits.push(`feedBack ${summary.feedBack}`);
             if (summary.python) bits.push(`python ${summary.python}`);
             if (summary.os) bits.push(summary.os);
             return bits.join(' · ');
@@ -4092,7 +4095,7 @@ async function exportDiagnostics() {
     const include = _diagIncludeFromUI();
     const redact = _diagRedactFromUI();
 
-    const diag = window.slopsmith && window.slopsmith.diagnostics;
+    const diag = window.feedBack && window.feedBack.diagnostics;
     const body = {
         redact,
         include,
@@ -4118,7 +4121,7 @@ async function exportDiagnostics() {
         status.textContent = `Export failed (HTTP ${resp.status})`;
         return;
     }
-    let filename = 'slopsmith-diag.zip';
+    let filename = 'feedBack-diag.zip';
     const disp = resp.headers.get('Content-Disposition');
     if (disp) {
         const m = /filename="([^"]+)"/.exec(disp);
@@ -4505,7 +4508,7 @@ function _emitSongPositionChanged(time, duration) {
     if (now - _lastSongPositionEventAt < 250) return;
     _lastSongPositionEventAt = now;
     const payload = (typeof _songEventPayload === 'function') ? _songEventPayload() : { time };
-    window.slopsmith.emit('song:position-changed', Object.assign(payload, { duration }));
+    window.feedBack.emit('song:position-changed', Object.assign(payload, { duration }));
 }
 
 function _applyPreservePitch(el) {
@@ -4516,7 +4519,7 @@ function _applyPreservePitch(el) {
 }
 _applyPreservePitch(audio);
 
-// In Slopsmith Desktop, WASAPI Exclusive Mode locks the audio device so Chromium
+// In FeedBack Desktop, WASAPI Exclusive Mode locks the audio device so Chromium
 // cannot play through it. When window._juceMode is true, song audio is routed
 // through the JUCE backing track player instead of the HTML5 <audio> element.
 window._juceMode = false;
@@ -4538,7 +4541,7 @@ const jucePlayer = {
     get duration() { return this._dur; },
     async play() {
         try {
-            await window.slopsmithDesktop.audio.startBacking();
+            await window.feedBackDesktop.audio.startBacking();
         } catch (err) {
             console.warn('[jucePlayer] startBacking failed:', err);
             return false;
@@ -4554,7 +4557,7 @@ const jucePlayer = {
         this._pollAt = performance.now();
         this._stopPolling();
         try {
-            await window.slopsmithDesktop.audio.stopBacking();
+            await window.feedBackDesktop.audio.stopBacking();
         } catch (err) {
             console.warn('[jucePlayer] stopBacking failed:', err);
         }
@@ -4564,7 +4567,7 @@ const jucePlayer = {
         this._pos = s;
         this._pollAt = performance.now();
         try {
-            await window.slopsmithDesktop.audio.seekBacking(s);
+            await window.feedBackDesktop.audio.seekBacking(s);
         } catch (err) {
             console.warn('[jucePlayer] seekBacking failed:', err);
             this._pos = prev;
@@ -4580,7 +4583,7 @@ const jucePlayer = {
             self._timer = setTimeout(async () => {
                 if (!self._polling) return;
                 try {
-                    self._pos = await window.slopsmithDesktop.audio.getBackingPosition();
+                    self._pos = await window.feedBackDesktop.audio.getBackingPosition();
                     self._pollAt = performance.now();
                     _emitSongPositionChanged(self.currentTime, self.duration || null);
                 } catch (err) {
@@ -4621,7 +4624,7 @@ window.jucePlayer = jucePlayer;
 // between the two paths whenever the engine's running state changes, preserving
 // playback position and play/pause state.
 (function _installJuceEngineRoutingWatcher() {
-    const juceApi = window.slopsmithDesktop?.audio;
+    const juceApi = window.feedBackDesktop?.audio;
     if (!juceApi || typeof juceApi.isAudioRunning !== 'function') return;
 
     let _rerouteInFlight = false;
@@ -4653,7 +4656,7 @@ window.jucePlayer = jucePlayer;
         const url = songAudio.url;
         const wasPlaying = isPlaying;
         const pos = audio.currentTime || 0;
-        window.slopsmith?.playback?.recordRouteChange?.({
+        window.feedBack?.playback?.recordRouteChange?.({
             routeKind: 'desktop-native',
             state: 'switching',
             preservedTime: true,
@@ -4663,7 +4666,7 @@ window.jucePlayer = jucePlayer;
         // Mark a reroute in progress so the <audio> 'play'/'pause' listeners
         // suppress their song:play / song:pause emissions: the migration is
         // transparent — playback genuinely continues — so plugin state and
-        // window.slopsmith.isPlaying must NOT flip. This also silences the
+        // window.feedBack.isPlaying must NOT flip. This also silences the
         // "Audio paused unexpectedly" diagnostic. A REFCOUNT (not a boolean)
         // lets an overlapping reroute's deferred release coexist: each switch
         // increments on entry and decrements after its own timeout; listeners
@@ -4687,7 +4690,7 @@ window.jucePlayer = jucePlayer;
                     if (!audio.src) { audio.src = url; audio.load(); }
                     try { await audio.play(); } catch (_) { /* ignore */ }
                 }
-                window.slopsmith?.playback?.recordRouteChange?.({
+                window.feedBack?.playback?.recordRouteChange?.({
                     routeKind: 'browser-media',
                     state: 'degraded',
                     preservedTime: true,
@@ -4737,11 +4740,11 @@ window.jucePlayer = jucePlayer;
             if (_spSlider) setSpeed(_spSlider.value / 100);
             audio.src = '';
             try {
-                const apply = window.slopsmith?.audio?.applySongVolume;
+                const apply = window.feedBack?.audio?.applySongVolume;
                 if (typeof apply === 'function') await apply();
             } catch (_) { /* best-effort */ }
             console.log('[juce-reroute] HTML5 → JUCE @', pos.toFixed(2), 's playing=', wasPlaying);
-            window.slopsmith?.playback?.recordRouteChange?.({
+            window.feedBack?.playback?.recordRouteChange?.({
                 routeKind: 'desktop-native',
                 state: 'active',
                 preservedTime: true,
@@ -4759,7 +4762,7 @@ window.jucePlayer = jucePlayer;
                 if (!audio.src) { audio.src = url; audio.load(); }
                 try { await audio.play(); } catch (_) { /* ignore */ }
             }
-            window.slopsmith?.playback?.recordRouteChange?.({
+            window.feedBack?.playback?.recordRouteChange?.({
                 routeKind: 'browser-media',
                 state: 'degraded',
                 preservedTime: true,
@@ -4785,7 +4788,7 @@ window.jucePlayer = jucePlayer;
         const url = songAudio.url;
         const wasPlaying = isPlaying;
         const pos = (window.jucePlayer ? jucePlayer.currentTime : 0) || 0;
-        window.slopsmith?.playback?.recordRouteChange?.({
+        window.feedBack?.playback?.recordRouteChange?.({
             routeKind: 'browser-media',
             state: 'switching',
             preservedTime: true,
@@ -4875,11 +4878,11 @@ window.jucePlayer = jucePlayer;
             if (!_resumeScheduled) _releaseSuppression();
         }
         try {
-            const apply = window.slopsmith?.audio?.applySongVolume;
+            const apply = window.feedBack?.audio?.applySongVolume;
             if (typeof apply === 'function') await apply();
         } catch (_) { /* best-effort */ }
         console.log('[juce-reroute] JUCE → HTML5 @', pos.toFixed(2), 's playing=', wasPlaying);
-        window.slopsmith?.playback?.recordRouteChange?.({
+        window.feedBack?.playback?.recordRouteChange?.({
             routeKind: 'browser-media',
             state: 'active',
             preservedTime: true,
@@ -4971,7 +4974,7 @@ window.jucePlayer = jucePlayer;
 // (no stopBacking before seek — HTML5 needed that for buffering; JUCE does not).
 let _resetJuceAudioShimChain = function () {};
 (function _installJuceAudioElementShim() {
-    if (!window.slopsmithDesktop?.audio) return;
+    if (!window.feedBackDesktop?.audio) return;
 
     const mediaProto = HTMLMediaElement.prototype;
     const ctDesc = Object.getOwnPropertyDescriptor(mediaProto, 'currentTime');
@@ -5017,7 +5020,7 @@ let _resetJuceAudioShimChain = function () {};
                     if (gen !== _juceShimGen) return;
                     isPlaying = false;
                     setPlayButtonState(false);
-                    const sm = window.slopsmith;
+                    const sm = window.feedBack;
                     if (sm) {
                         sm.isPlaying = false;
                         sm.emit('song:pause', _songEventPayload());
@@ -5033,7 +5036,7 @@ let _resetJuceAudioShimChain = function () {};
                 if (gen !== _juceShimGen) return;
                 isPlaying = false;
                 setPlayButtonState(false);
-                const sm = window.slopsmith;
+                const sm = window.feedBack;
                 if (sm) {
                     sm.isPlaying = false;
                     sm.emit('song:pause', _songEventPayload());
@@ -5113,7 +5116,7 @@ let _resetJuceAudioShimChain = function () {};
                 if (gen !== _juceShimGen || !started) return;
                 isPlaying = true;
                 setPlayButtonState(true);
-                const sm = window.slopsmith;
+                const sm = window.feedBack;
                 if (sm) {
                     sm.isPlaying = true;
                     const payload = _songEventPayload();
@@ -5147,38 +5150,38 @@ function _songEventPayload() {
 function _markPlaybackPaused() {
     isPlaying = false;
     setPlayButtonState(false);
-    if (window.slopsmith) {
-        window.slopsmith.isPlaying = false;
-        window.slopsmith.emit('song:pause', _songEventPayload());
+    if (window.feedBack) {
+        window.feedBack.isPlaying = false;
+        window.feedBack.emit('song:pause', _songEventPayload());
     }
 }
 
 function _markPlaybackResumed() {
     isPlaying = true;
     setPlayButtonState(true);
-    if (window.slopsmith) {
-        window.slopsmith.isPlaying = true;
+    if (window.feedBack) {
+        window.feedBack.isPlaying = true;
         const payload = _songEventPayload();
-        window.slopsmith.emit('song:play', payload);
-        window.slopsmith.emit('song:resume', payload);
+        window.feedBack.emit('song:play', payload);
+        window.feedBack.emit('song:resume', payload);
     }
 }
 
 function _emitPlaybackStopped(time, screen = 'playback-command') {
-    if (window.slopsmith) window.slopsmith.emit('song:stop', { time: time || 0, screen });
+    if (window.feedBack) window.feedBack.emit('song:stop', { time: time || 0, screen });
 }
 
 function _waitForSongReady(expectedSeekGen, timeoutMs = 10000) {
-    if (!window.slopsmith || typeof window.slopsmith.on !== 'function') return Promise.resolve(false);
+    if (!window.feedBack || typeof window.feedBack.on !== 'function') return Promise.resolve(false);
     return new Promise(resolve => {
         let timer = null;
         const done = value => {
             if (timer !== null) clearTimeout(timer);
-            window.slopsmith.off('song:ready', onReady);
+            window.feedBack.off('song:ready', onReady);
             resolve(value);
         };
         const onReady = () => done(expectedSeekGen == null || expectedSeekGen === _audioSeekGen);
-        window.slopsmith.on('song:ready', onReady);
+        window.feedBack.on('song:ready', onReady);
         timer = setTimeout(() => done(false), timeoutMs);
     });
 }
@@ -5253,7 +5256,7 @@ async function _audioSeek(s, reason) {
         if (typeof highway !== 'undefined' && highway && typeof highway.setTime === 'function') {
             highway.setTime(to);
         }
-        window.slopsmith.emit('song:seek', { from, to, reason: reason || null });
+        window.feedBack.emit('song:seek', { from, to, reason: reason || null });
         return { completed: true, from, to };
     }).catch((err) => {
         // Don't let one failed seek poison subsequent ones.
@@ -5266,20 +5269,20 @@ let currentFilename = '';
 
 // Plugin context API — lightweight event bus for plugin integration
 // Preserve any namespace attached by earlier-loaded scripts (e.g.
-// diagnostics.js, slopsmith#166) so reassigning the root doesn't drop
-// their public APIs. Only `slopsmith.diagnostics` exists today, but
+// diagnostics.js, feedBack#166) so reassigning the root doesn't drop
+// their public APIs. Only `feedBack.diagnostics` exists today, but
 // the snapshot pattern is intentional: it keeps app.js the
 // authoritative owner of the EventTarget while letting other modules
 // hang their surfaces off the same namespace without coordinating
 // load order.
-const _slopsmithExisting = (typeof window.slopsmith === 'object' && window.slopsmith !== null) ? window.slopsmith : null;
-const _slopsmithBus = (_slopsmithExisting
-    && typeof _slopsmithExisting.addEventListener === 'function'
-    && typeof _slopsmithExisting.removeEventListener === 'function'
-    && typeof _slopsmithExisting.dispatchEvent === 'function')
-    ? _slopsmithExisting
+const _feedBackExisting = (typeof window.feedBack === 'object' && window.feedBack !== null) ? window.feedBack : null;
+const _feedBackBus = (_feedBackExisting
+    && typeof _feedBackExisting.addEventListener === 'function'
+    && typeof _feedBackExisting.removeEventListener === 'function'
+    && typeof _feedBackExisting.dispatchEvent === 'function')
+    ? _feedBackExisting
     : new EventTarget();
-window.slopsmith = Object.assign(_slopsmithBus, {
+window.feedBack = Object.assign(_feedBackBus, {
     currentSong: null,
     isPlaying: false,
     _navParams: {},
@@ -5304,33 +5307,35 @@ window.slopsmith = Object.assign(_slopsmithBus, {
     // method bodies resolve them lexically; `getLoop` reads the live
     // loopA/loopB bindings at call time.
     seek(seconds, reason, options) {
-        _recordPlaybackBridge('playback.window-slopsmith-transport', 'window.slopsmith.seek', reason || 'plugin-command');
+        _recordPlaybackBridge('playback.window-feedBack-transport', 'window.feedBack.seek', reason || 'plugin-command');
         return _audioSeek(seconds, reason || 'plugin-command');
     },
     setLoop(a, b, options) {
-        _recordPlaybackBridge('playback.loop-api', 'window.slopsmith.setLoop', options && options.reason || 'plugin-command');
+        _recordPlaybackBridge('playback.loop-api', 'window.feedBack.setLoop', options && options.reason || 'plugin-command');
         return setLoop(a, b, options);
     },
     clearLoop(options) {
-        _recordPlaybackBridge('playback.loop-api', 'window.slopsmith.clearLoop', options && options.reason || 'plugin-command');
+        _recordPlaybackBridge('playback.loop-api', 'window.feedBack.clearLoop', options && options.reason || 'plugin-command');
         clearLoop(options);
     },
     getLoop(options) {
-        _recordPlaybackBridge('playback.loop-api', 'window.slopsmith.getLoop', options && options.reason || 'plugin-command');
+        _recordPlaybackBridge('playback.loop-api', 'window.feedBack.getLoop', options && options.reason || 'plugin-command');
         return { loopA, loopB };
     },
 });
-if (_slopsmithExisting && _slopsmithExisting !== window.slopsmith) {
-    for (const key of Object.keys(_slopsmithExisting)) {
-        if (!(key in window.slopsmith)) {
-            window.slopsmith[key] = _slopsmithExisting[key];
+if (_feedBackExisting && _feedBackExisting !== window.feedBack) {
+    for (const key of Object.keys(_feedBackExisting)) {
+        if (!(key in window.feedBack)) {
+            window.feedBack[key] = _feedBackExisting[key];
         }
     }
 }
+window.feedback = window.feedBack;
+window.slopsmith = window.feedback;
 
 function _playbackApi() {
-    return window.slopsmith && window.slopsmith.playback && window.slopsmith.playback.version === 1
-        ? window.slopsmith.playback
+    return window.feedBack && window.feedBack.playback && window.feedBack.playback.version === 1
+        ? window.feedBack.playback
         : null;
 }
 
@@ -5346,7 +5351,7 @@ function _recordPlaybackBridge(bridgeId, legacySurface, reason) {
 }
 
 function _currentPlaybackSnapshot() {
-    const song = window.slopsmith && window.slopsmith.currentSong || null;
+    const song = window.feedBack && window.feedBack.currentSong || null;
     const time = _audioTime();
     return {
         currentTime: Number.isFinite(time) ? time : null,
@@ -5410,14 +5415,14 @@ function _installPlaybackTransportAdapter() {
             const wasPlaying = isPlaying;
             if (!window._juceMode && wasPlaying) {
                 isPlaying = false;
-                window.slopsmith.isPlaying = false;
+                window.feedBack.isPlaying = false;
                 audio.pause();
                 _markPlaybackPaused();
             } else {
                 if (window._juceMode) await jucePlayer.pause();
                 else audio.pause();
                 if (wasPlaying) _markPlaybackPaused();
-                else { isPlaying = false; window.slopsmith.isPlaying = false; setPlayButtonState(false); }
+                else { isPlaying = false; window.feedBack.isPlaying = false; setPlayButtonState(false); }
             }
             return _currentPlaybackSnapshot();
         },
@@ -5429,7 +5434,7 @@ function _installPlaybackTransportAdapter() {
             } else {
                 await audio.play();
                 isPlaying = true;
-                window.slopsmith.isPlaying = true;
+                window.feedBack.isPlaying = true;
                 setPlayButtonState(true);
             }
             return _currentPlaybackSnapshot();
@@ -5441,7 +5446,7 @@ function _installPlaybackTransportAdapter() {
             if (window._juceMode) await jucePlayer.stop().catch(() => {});
             if (!window._juceMode && wasPlaying) {
                 isPlaying = false;
-                window.slopsmith.isPlaying = false;
+                window.feedBack.isPlaying = false;
                 audio.pause();
                 _markPlaybackPaused();
             } else {
@@ -5451,7 +5456,7 @@ function _installPlaybackTransportAdapter() {
                 // spurious) song:pause.
                 if (!window._juceMode) audio.pause();
                 if (wasPlaying) _markPlaybackPaused();
-                else { isPlaying = false; window.slopsmith.isPlaying = false; setPlayButtonState(false); }
+                else { isPlaying = false; window.feedBack.isPlaying = false; setPlayButtonState(false); }
             }
             if (hadPlayableSong) _emitPlaybackStopped(stopTime);
             return _currentPlaybackSnapshot();
@@ -5489,7 +5494,7 @@ function _readSongVolume() {
 audio.volume = _readSongVolume() / 100;
 
 function _adjustSongVolume(delta) {
-    const audioApi = window.slopsmith?.audio;
+    const audioApi = window.feedBack?.audio;
     if (!audioApi) return;
     const current = audioApi.readSongVolume?.() ?? 80;
     const next = Math.max(0, Math.min(100, Math.round(current + delta)));
@@ -5500,15 +5505,15 @@ function _adjustSongVolume(delta) {
 // Re-sync audio.volume from the persisted setting whenever a new source
 // finishes loading metadata. Belt + suspenders — some combinations of plugin
 // audio-graph routing and media-element swaps reset audio.volume to 1.0
-// (slopsmith#54). Delegates to audio-mixer's readSongVolume when loaded so
+// (feedBack#54). Delegates to audio-mixer's readSongVolume when loaded so
 // the in-memory fallback (for storage-blocked contexts) is authoritative.
 audio.addEventListener('loadedmetadata', () => {
     _applyPreservePitch(audio);
-    const applySongVolume = window.slopsmith?.audio?.applySongVolume;
+    const applySongVolume = window.feedBack?.audio?.applySongVolume;
     if (typeof applySongVolume === 'function') {
         void applySongVolume();
     } else {
-        audio.volume = (window.slopsmith?.audio?.readSongVolume?.() ?? _readSongVolume()) / 100;
+        audio.volume = (window.feedBack?.audio?.readSongVolume?.() ?? _readSongVolume()) / 100;
     }
 });
 
@@ -5531,8 +5536,8 @@ audio.addEventListener('waiting', () => console.log('Audio waiting/buffering at'
 audio.addEventListener('ended', () => {
     console.log('Audio ended'); isPlaying = false;
     setPlayButtonState(false);
-    window.slopsmith.isPlaying = false;
-    window.slopsmith.emit('song:ended', _songEventPayload());
+    window.feedBack.isPlaying = false;
+    window.feedBack.emit('song:ended', _songEventPayload());
 });
 audio.addEventListener('timeupdate', () => {
     _emitSongPositionChanged(audio.currentTime, audio.duration || null);
@@ -5540,20 +5545,20 @@ audio.addEventListener('timeupdate', () => {
 audio.addEventListener('play', () => {
     // During a JUCE engine reroute the element is paused/played as a transparent
     // migration step — playback genuinely continues, so don't emit song:play or
-    // flip slopsmith.isPlaying (the watcher keeps the canonical state itself).
+    // flip feedBack.isPlaying (the watcher keeps the canonical state itself).
     if (window._juceRerouteInProgress) return;
-    window.slopsmith.isPlaying = true;
+    window.feedBack.isPlaying = true;
     const payload = _songEventPayload();
-    window.slopsmith.emit('song:play', payload);
-    window.slopsmith.emit('song:resume', payload);
+    window.feedBack.emit('song:play', payload);
+    window.feedBack.emit('song:resume', payload);
 });
 audio.addEventListener('pause', () => {
     if (!isPlaying) return;
     // Same as above: suppress the song:pause emitted by a reroute's deliberate
     // audio.pause() — the migration is transparent to plugin play-state.
     if (window._juceRerouteInProgress) return;
-    window.slopsmith.isPlaying = false;
-    window.slopsmith.emit('song:pause', _songEventPayload());
+    window.feedBack.isPlaying = false;
+    window.feedBack.emit('song:pause', _songEventPayload());
 });
 
 // Screen Wake Lock — keep the display awake while a song is playing so the
@@ -5561,7 +5566,7 @@ audio.addEventListener('pause', () => {
 // the highway animation are active, so the input-idle timer otherwise fires).
 // Engaged only while playing (acquire on play/resume, release on
 // pause/ended/stop) per issue #686. In a plain browser this uses the W3C
-// Screen Wake Lock API; inside slopsmith-desktop (Electron) navigator.wakeLock
+// Screen Wake Lock API; inside feedBack-desktop (Electron) navigator.wakeLock
 // is unreliable, so we also drive the native powerSaveBlocker bridge when it
 // is exposed — both calls are best-effort and degrade silently elsewhere.
 let _screenWakeLock = null;
@@ -5593,7 +5598,7 @@ let _desktopAwakeReq = false;
 // marker — a boolean alone can't tell "my request failed" from "an older
 // same-valued request failed after a newer one already succeeded".
 let _desktopAwakeGen = 0;
-// Drive the native slopsmith-desktop blocker to exactly (wanted && visible),
+// Drive the native feedBack-desktop blocker to exactly (wanted && visible),
 // mirroring the browser wake lock which is only held while the page is visible.
 // Gating on visibility stops a minimized Electron window from keeping the whole
 // display awake. No-op in a plain browser; isolated from the wakeLock path so a
@@ -5601,7 +5606,7 @@ let _desktopAwakeGen = 0;
 function _syncDesktopBridge() {
     const want = _wakeLockWanted && document.visibilityState === 'visible';
     if (want === _desktopAwakeReq) return; // already requested this value
-    const bridge = window.slopsmithDesktop?.power?.setScreenAwake;
+    const bridge = window.feedBackDesktop?.power?.setScreenAwake;
     if (typeof bridge !== 'function') return; // plain browser — nothing to sync
     _desktopAwakeReq = want;
     const gen = ++_desktopAwakeGen;
@@ -5680,11 +5685,11 @@ async function _releaseWakeLock() {
     try { await _screenWakeLock.release(); } catch (e) { /* already released */ }
     _screenWakeLock = null;
 }
-window.slopsmith.on('song:play', _acquireWakeLock);
-window.slopsmith.on('song:resume', _acquireWakeLock);
-window.slopsmith.on('song:pause', _releaseWakeLock);
-window.slopsmith.on('song:ended', _releaseWakeLock);
-window.slopsmith.on('song:stop', _releaseWakeLock);
+window.feedBack.on('song:play', _acquireWakeLock);
+window.feedBack.on('song:resume', _acquireWakeLock);
+window.feedBack.on('song:pause', _releaseWakeLock);
+window.feedBack.on('song:ended', _releaseWakeLock);
+window.feedBack.on('song:stop', _releaseWakeLock);
 // A screen wake lock is auto-released whenever the page is hidden; re-sync the
 // desktop bridge (off while hidden) and re-acquire the browser lock when we
 // become visible again if a song is still playing.
@@ -5712,12 +5717,12 @@ window.setAutoplayExit = function (on) {
 };
 // Read-only view for plugins (e.g. a scoring plugin deciding whether to
 // auto-return after its results screen closes).
-Object.defineProperty(window.slopsmith, 'autoplayExit', {
+Object.defineProperty(window.feedBack, 'autoplayExit', {
     get: _autoplayExitEnabled, configurable: true,
 });
 // One-shot launcher override for the player's return destination.
-window.slopsmith.setReturnScreen = function (id) {
-    window.slopsmith._nextReturnScreen = id || null;
+window.feedBack.setReturnScreen = function (id) {
+    window.feedBack._nextReturnScreen = id || null;
 };
 // Resolve where the player should return on Esc / close / auto-exit.
 // A one-shot setReturnScreen() override wins (consumed here) — used by the
@@ -5730,8 +5735,8 @@ window.slopsmith.setReturnScreen = function (id) {
 // exists (dashboard actions call playSong() directly, so its id is the
 // active screen at launch).
 function _resolvePlayerOrigin() {
-    const override = window.slopsmith && window.slopsmith._nextReturnScreen;
-    if (window.slopsmith) window.slopsmith._nextReturnScreen = null;
+    const override = window.feedBack && window.feedBack._nextReturnScreen;
+    if (window.feedBack) window.feedBack._nextReturnScreen = null;
     if (override && document.getElementById(override)) return override;
     const launchFrom = document.querySelector('.screen.active');
     const launchId = launchFrom && launchFrom.id;
@@ -5746,7 +5751,7 @@ function _resolvePlayerOrigin() {
 // next song:ready. song:ready also fires on arrangement switches / seeks,
 // which never arm the flag, so those don't auto-restart.
 let _pendingAutostart = false;
-window.slopsmith.on('song:ready', () => {
+window.feedBack.on('song:ready', () => {
     if (!_pendingAutostart) return;
     _pendingAutostart = false;
     if (!_autoplayExitEnabled() || isPlaying) return;
@@ -5793,7 +5798,7 @@ function _resultsOverlayVisible() {
 }
 // Plugins call this synchronously from their own song:ended handler (core
 // runs first, so the timer is already pending) to claim the exit.
-window.slopsmith.holdAutoExit = function () {
+window.feedBack.holdAutoExit = function () {
     if (_autoExitTimer) { clearTimeout(_autoExitTimer); _autoExitTimer = null; }
     _autoExitHeld = true;
     const gen = _autoExitGen;
@@ -5807,7 +5812,7 @@ window.slopsmith.holdAutoExit = function () {
         if (typeof window.closeCurrentSong === 'function') window.closeCurrentSong();
     };
 };
-window.slopsmith.on('song:ended', () => {
+window.feedBack.on('song:ended', () => {
     _clearAutoExit();
     if (!_autoplayExitEnabled()) return;
     // Only auto-exit from the player screen (ignore stale/duplicate ends).
@@ -5832,7 +5837,7 @@ async function playSong(filename, arrangement, options) {
     if (!options || options.bridge !== false) {
         _recordPlaybackBridge('playback.window-play-song', 'window.playSong', 'legacy playSong entry point used');
     }
-    window.slopsmith.emit('song:loading', { filename, arrangement: arrangement ?? null });
+    window.feedBack.emit('song:loading', { filename, arrangement: arrangement ?? null });
 
     // Cancel any pending art/metadata requests
     if (artAbortController) artAbortController.abort();
@@ -5860,9 +5865,9 @@ async function playSong(filename, arrangement, options) {
         const payload = _songEventPayload();
         const wasPlaying = isPlaying;
         await jucePlayer.stop().catch(() => {});
-        if (wasPlaying && window.slopsmith) {
-            window.slopsmith.isPlaying = false;
-            window.slopsmith.emit('song:pause', payload);
+        if (wasPlaying && window.feedBack) {
+            window.feedBack.isPlaying = false;
+            window.feedBack.emit('song:pause', payload);
         }
         window._juceMode = false;
         window._juceAudioUrl = null;
@@ -5887,7 +5892,7 @@ async function playSong(filename, arrangement, options) {
     _clearAutoExit();
     // Remember which screen the player was launched from so Esc /
     // navigation back from the player (and auto-exit) returns the user
-    // there (slopsmith#126).
+    // there (feedBack#126).
     _playerOriginScreen = _resolvePlayerOrigin();
     showScreen('player');
 
@@ -5917,7 +5922,7 @@ let _arrBusyTimeout = null;
 
 async function changeArrangement(index) {
     if (currentFilename) {
-        window.slopsmith.emit('song:arrangement-changed', { filename: currentFilename, arrangement: index });
+        window.feedBack.emit('song:arrangement-changed', { filename: currentFilename, arrangement: index });
         const wasPlaying = isPlaying;
         const time = _audioTime();
         if (isPlaying) {
@@ -5999,9 +6004,9 @@ async function changeArrangement(index) {
                 // paused state.
                 if (wasPlaying) {
                     setPlayButtonState(false);
-                    if (window.slopsmith) {
-                        window.slopsmith.isPlaying = false;
-                        window.slopsmith.emit('song:pause', _songEventPayload());
+                    if (window.feedBack) {
+                        window.feedBack.isPlaying = false;
+                        window.feedBack.emit('song:pause', _songEventPayload());
                     }
                 }
                 clearBusy();
@@ -6013,10 +6018,10 @@ async function changeArrangement(index) {
                     const started = await jucePlayer.play();
                     if (started) {
                         isPlaying = true;
-                        window.slopsmith.isPlaying = true;
+                        window.feedBack.isPlaying = true;
                         const payload = _songEventPayload();
-                        window.slopsmith.emit('song:play', payload);
-                        window.slopsmith.emit('song:resume', payload);
+                        window.feedBack.emit('song:play', payload);
+                        window.feedBack.emit('song:resume', payload);
                     }
                 } else audio.play().then(() => { isPlaying = true; }).catch(() => {});
             }
@@ -6037,7 +6042,7 @@ async function changeArrangement(index) {
         _sectionPracticeLastParentCount = -1;
 
         highway.reconnect(currentFilename, index);
-        window.slopsmith.emit('arrangement:changed', { index, filename: currentFilename });
+        window.feedBack.emit('arrangement:changed', { index, filename: currentFilename });
     }
 }
 
@@ -6052,17 +6057,17 @@ async function togglePlay() {
             await jucePlayer.pause();
             isPlaying = false;
             setPlayButtonState(false);
-            window.slopsmith.isPlaying = false;
-            window.slopsmith.emit('song:pause', _songEventPayload());
+            window.feedBack.isPlaying = false;
+            window.feedBack.emit('song:pause', _songEventPayload());
         } else {
             const started = await jucePlayer.play();
             if (!started) return; // startBacking() failed — IPC error already logged
             isPlaying = true;
             setPlayButtonState(true);
-            window.slopsmith.isPlaying = true;
+            window.feedBack.isPlaying = true;
             const payload = _songEventPayload();
-            window.slopsmith.emit('song:play', payload);
-            window.slopsmith.emit('song:resume', payload);
+            window.feedBack.emit('song:play', payload);
+            window.feedBack.emit('song:resume', payload);
         }
         return;
     }
@@ -6107,9 +6112,9 @@ async function restartCurrentSong() {
     _cancelCountIn();
     let loopA = null;
     let loopB = null;
-    if (window.slopsmith && typeof window.slopsmith.getLoop === 'function') {
+    if (window.feedBack && typeof window.feedBack.getLoop === 'function') {
         try {
-            const loop = window.slopsmith.getLoop();
+            const loop = window.feedBack.getLoop();
             if (loop && typeof loop === 'object') {
                 loopA = loop.loopA;
                 loopB = loop.loopB;
@@ -6136,7 +6141,7 @@ async function restartCurrentSong() {
     return true;
 }
 window.restartCurrentSong = restartCurrentSong;
-if (window.slopsmith) window.slopsmith.restartCurrentSong = restartCurrentSong;
+if (window.feedBack) window.feedBack.restartCurrentSong = restartCurrentSong;
 
 // Leave the player and return to the screen the song was launched from
 // (Esc shortcut uses the same origin-aware target). showScreen() owns the
@@ -6145,7 +6150,7 @@ function closeCurrentSong() {
     return showScreen(_playerOriginScreen || 'home');
 }
 window.closeCurrentSong = closeCurrentSong;
-if (window.slopsmith) window.slopsmith.closeCurrentSong = closeCurrentSong;
+if (window.feedBack) window.feedBack.closeCurrentSong = closeCurrentSong;
 
 const SPEED_PRESET_PCTS = [100, 90, 80, 75, 70, 60, 50];
 const SPEED_SNAP_THRESHOLD = 0.02;
@@ -6204,7 +6209,7 @@ function setSpeed(v) {
     }
     if (window._juceMode) {
         window.jucePlayer?.setRate(rate);
-        const juceAudio = window.slopsmithDesktop?.audio;
+        const juceAudio = window.feedBackDesktop?.audio;
         Promise.resolve()
             .then(() => juceAudio?.setBackingSpeed(rate))
             // Match the HTML5 path: preserve pitch on the JUCE backing track too.
@@ -6223,7 +6228,7 @@ function setSpeed(v) {
 
 function _resetPlaybackSpeedForNewSong() {
     // Reset the *actual* playback rate to 1x, not just the visible slider/label
-    // (slopsmith#615). The HTML5 <audio> element and the desktop JUCE/backing
+    // (feedBack#615). The HTML5 <audio> element and the desktop JUCE/backing
     // engine each retain their own rate, and which one drives the next song
     // isn't decided until later in the load, so reset all paths unconditionally.
     // Every setter is idempotent and optional-chained, so this is safe in web
@@ -6232,7 +6237,7 @@ function _resetPlaybackSpeedForNewSong() {
     if (speedSlider) speedSlider.value = 100;
     audio.playbackRate = 1;
     window.jucePlayer?.setRate?.(1);
-    const juceAudio = window.slopsmithDesktop?.audio;
+    const juceAudio = window.feedBackDesktop?.audio;
     Promise.resolve()
         .then(() => juceAudio?.setBackingSpeed?.(1))
         .then(() => juceAudio?.setBackingPreservePitch?.(true))
@@ -6243,7 +6248,7 @@ function _resetPlaybackSpeedForNewSong() {
     handleSliderInput(speedSlider);
     _updateSpeedPresetButtons(100);
 }
-// Master-difficulty slider (slopsmith#48). Persists partial via
+// Master-difficulty slider (feedBack#48). Persists partial via
 // /api/settings — the POST handler merges only the keys present, so
 // this fire-and-forget call doesn't clobber dlc_dir or other settings.
 //
@@ -6290,13 +6295,13 @@ function _applyMasteryAvailability(hasPhraseData) {
         slider.title = 'Source chart has a single difficulty level — slider disabled';
     }
 }
-if (window.slopsmith) {
-    window.slopsmith.on('song:loaded', syncDefaultArrangementPin);
-    window.slopsmith.on('arrangement:changed', syncDefaultArrangementPin);
-    // slopsmith's event bus dispatches CustomEvent with the payload in
+if (window.feedBack) {
+    window.feedBack.on('song:loaded', syncDefaultArrangementPin);
+    window.feedBack.on('arrangement:changed', syncDefaultArrangementPin);
+    // feedBack's event bus dispatches CustomEvent with the payload in
     // event.detail (see EventTarget setup around line 699), so the
     // handler receives an Event, not the raw payload.
-    window.slopsmith.on('song:ready', (e) => {
+    window.feedBack.on('song:ready', (e) => {
         _applyMasteryAvailability(!!e.detail?.hasPhraseData);
         // Auto mode: re-evaluate the active renderer against the
         // newly-loaded song. The picker's current <option> value is the
@@ -6320,7 +6325,7 @@ if (window.slopsmith) {
     // Sync the picker + persisted selection so the UI stops advertising
     // the broken choice and the user doesn't hit the same failure on
     // next reload.
-    window.slopsmith.on('viz:reverted', (e) => {
+    window.feedBack.on('viz:reverted', (e) => {
         const sel = document.getElementById('viz-picker');
         if (sel) sel.value = 'default';
         // Cancel any pending viz:renderer:ready label listener — the renderer
@@ -6336,19 +6341,19 @@ if (window.slopsmith) {
     });
 }
 
-// ── Visualization picker (slopsmith#36) ─────────────────────────────────
+// ── Visualization picker (feedBack#36) ─────────────────────────────────
 //
 // Discovers viz plugins via /api/plugins and adds them to the #viz-picker
 // dropdown. A viz plugin declares itself by setting `"type": "visualization"`
 // in its plugin.json AND exposing a factory function on
-// window.slopsmithViz_<id> that returns an object matching the setRenderer
+// window.feedBackViz_<id> that returns an object matching the setRenderer
 // contract ({init, draw, resize, destroy}).
 //
 // The "default" option in the dropdown is the built-in 2D highway that
 // lives inside createHighway(); selecting it calls setRenderer(null) which
 // restores the default renderer. The bundled 3D Highway plugin
 // (plugins/highway_3d/) registers as id `highway_3d` and is the new
-// fresh-install default per slopsmith#160 PR 3.
+// fresh-install default per feedBack#160 PR 3.
 
 // ── WebGL2 detection (one-shot probe) ────────────────────────────────────
 // 3D Highway requires WebGL2. On environments where it's unavailable
@@ -6373,11 +6378,11 @@ function _canRun3D() {
 }
 
 // ── Migration / nag flags ────────────────────────────────────────────────
-// `slopsmith_3d_promoted_v1` is set the first time we auto-flip an existing
+// `feedBack_3d_promoted_v1` is set the first time we auto-flip an existing
 // `vizSelection='default'` user to `'highway_3d'`. Persistence ensures we
 // don't re-nag on every reload — and ensures the WebGL2 fallback path
 // doesn't ping-pong (one fallback toast, not one per page load).
-const _3D_PROMOTED_FLAG_KEY = 'slopsmith_3d_promoted_v1';
+const _3D_PROMOTED_FLAG_KEY = 'feedBack_3d_promoted_v1';
 function _markPromoted() {
     try { localStorage.setItem(_3D_PROMOTED_FLAG_KEY, '1'); } catch (_) {}
 }
@@ -6389,14 +6394,14 @@ function _hasPromotedFlag() {
 // Pending nag: queued during _populateVizPicker, fired on the first
 // `song:ready` (so the toast lands when the user actually opens the
 // player, not at page load when they're still in the library).
-// `song:ready` is emitted by highway.js via window.slopsmith.emit(), so
-// subscribe through the same EventTarget. window.slopsmith is created in
+// `song:ready` is emitted by highway.js via window.feedBack.emit(), so
+// subscribe through the same EventTarget. window.feedBack is created in
 // this same file before _populateVizPicker is reachable, so the global
 // is guaranteed to exist by the time this listener registers — but guard
 // anyway in case this module is ever loaded standalone for tests.
 let _pendingPromotionNag = false;
-if (window.slopsmith && typeof window.slopsmith.on === 'function') {
-    window.slopsmith.on('song:ready', () => {
+if (window.feedBack && typeof window.feedBack.on === 'function') {
+    window.feedBack.on('song:ready', () => {
         if (!_pendingPromotionNag) return;
         _pendingPromotionNag = false;
         _showPromotionNag();
@@ -6407,10 +6412,10 @@ function _showPromotionNag() {
     // Lightweight toast — no dependency on a generic toast helper, since
     // app.js doesn't currently have one. Fixed bottom-center, dismissed
     // by clicking either action button or the × close.
-    const existing = document.getElementById('slopsmith-3d-nag');
+    const existing = document.getElementById('feedBack-3d-nag');
     if (existing) existing.remove();
     const wrap = document.createElement('div');
-    wrap.id = 'slopsmith-3d-nag';
+    wrap.id = 'feedBack-3d-nag';
     wrap.setAttribute('role', 'dialog');
     wrap.setAttribute('aria-modal', 'false');
     wrap.setAttribute('aria-label', '3D Highway upgrade notification');
@@ -6435,8 +6440,8 @@ function _showPromotionNag() {
         const act = btn.dataset.act;
         if (act === 'tour') {
             try {
-                if (window.slopsmithTour && typeof window.slopsmithTour.start === 'function') {
-                    window.slopsmithTour.start('highway_3d');
+                if (window.feedBackTour && typeof window.feedBackTour.start === 'function') {
+                    window.feedBackTour.start('highway_3d');
                 }
             } catch (_) {}
         } else if (act === 'back') {
@@ -6450,9 +6455,9 @@ function _showPromotionNag() {
 function _showWebGL2FallbackToast() {
     // One-time fallback notice. Same lightweight DOM as the nag, simpler
     // copy and only a dismiss button.
-    if (document.getElementById('slopsmith-3d-fallback')) return;
+    if (document.getElementById('feedBack-3d-fallback')) return;
     const wrap = document.createElement('div');
-    wrap.id = 'slopsmith-3d-fallback';
+    wrap.id = 'feedBack-3d-fallback';
     wrap.setAttribute('role', 'dialog');
     wrap.setAttribute('aria-modal', 'false');
     wrap.setAttribute('aria-label', 'WebGL2 not available');
@@ -6541,7 +6546,7 @@ async function _populateVizPicker(plugins) {
         // Skip entries where the plugin script hasn't exposed a factory —
         // likely means the script failed to load, or the plugin declared
         // itself as a viz without shipping the factory yet.
-        const factoryName = 'slopsmithViz_' + p.id;
+        const factoryName = 'feedBackViz_' + p.id;
         if (typeof window[factoryName] !== 'function') {
             console.warn(`viz picker: plugin '${p.id}' has type=visualization but ${factoryName} is not a function; skipping`);
             continue;
@@ -6555,13 +6560,13 @@ async function _populateVizPicker(plugins) {
     // Refresh the visualization capability domain's provider registry from
     // the picker entries just built (the domain host introspects each
     // factory global for contextType / predicate metadata).
-    if (window.slopsmith.vizDomain && typeof window.slopsmith.vizDomain.refreshProviders === 'function') {
+    if (window.feedBack.vizDomain && typeof window.feedBack.vizDomain.refreshProviders === 'function') {
         try {
             // The host reads manifest-declared per-instance settings
-            // (capabilities.visualization.settings, slopsmith#849) from the
+            // (capabilities.visualization.settings, feedBack#849) from the
             // registered capability participant by id — no need to pass them
             // through the picker here.
-            window.slopsmith.vizDomain.refreshProviders(
+            window.feedBack.vizDomain.refreshProviders(
                 Array.from(sel.options)
                     .filter(opt => !BUILTIN_OPT_VALUES.has(opt.value))
                     .map(opt => ({ id: opt.value, label: opt.text }))
@@ -6579,7 +6584,7 @@ async function _populateVizPicker(plugins) {
     try { saved = localStorage.getItem('vizSelection'); }
     catch (e) { console.warn('viz picker: unable to read vizSelection', e); }
 
-    // ── 3D promotion migration (slopsmith#160 PR 3) ──────────────────────
+    // ── 3D promotion migration (feedBack#160 PR 3) ──────────────────────
     // Existing users with `vizSelection='default'` (the old built-in 2D
     // highway) are auto-flipped to the bundled 3D Highway exactly once,
     // and a non-modal nag toast offers them "Try the tour" / "Switch
@@ -6669,14 +6674,14 @@ function _tagVizRenderer(renderer, id) {
 // Attribution hooks into the visualization capability domain (cap:6).
 // Guarded no-ops when the domain host isn't loaded (minimal/test pages).
 function _notifyVizDomain(id, source) {
-    const domain = window.slopsmith && window.slopsmith.vizDomain;
+    const domain = window.feedBack && window.feedBack.vizDomain;
     if (domain && typeof domain.notifyRendererChanged === 'function') {
         try { domain.notifyRendererChanged(id, source); } catch (_) {}
     }
 }
 
 function _noteVizAutoMatch(id, matched) {
-    const domain = window.slopsmith && window.slopsmith.vizDomain;
+    const domain = window.feedBack && window.feedBack.vizDomain;
     if (domain && typeof domain.noteAutoMatch === 'function') {
         try { domain.noteAutoMatch(id, matched); } catch (_) {}
     }
@@ -6752,21 +6757,21 @@ function setViz(id) {
             fallbackToDefault();
             return;
         }
-        const venueFactory = window['slopsmithViz_highway_3d'];
+        const venueFactory = window['feedBackViz_highway_3d'];
         if (typeof venueFactory !== 'function') {
-            console.error('viz picker: venue requires slopsmithViz_highway_3d');
+            console.error('viz picker: venue requires feedBackViz_highway_3d');
             fallbackToDefault();
             return;
         }
         let venueRenderer;
         try { venueRenderer = venueFactory(); }
         catch (e) {
-            console.error('viz picker: slopsmithViz_highway_3d threw for venue mode', e);
+            console.error('viz picker: feedBackViz_highway_3d threw for venue mode', e);
             fallbackToDefault();
             return;
         }
         if (!venueRenderer || typeof venueRenderer.draw !== 'function') {
-            console.error('viz picker: slopsmithViz_highway_3d returned an invalid renderer for venue mode');
+            console.error('viz picker: feedBackViz_highway_3d returned an invalid renderer for venue mode');
             fallbackToDefault();
             return;
         }
@@ -6797,16 +6802,16 @@ function setViz(id) {
         fallbackToDefault();
         return;
     }
-    const factory = window['slopsmithViz_' + id];
+    const factory = window['feedBackViz_' + id];
     if (typeof factory !== 'function') {
-        console.error(`viz picker: factory slopsmithViz_${id} not available`);
+        console.error(`viz picker: factory feedBackViz_${id} not available`);
         fallbackToDefault();
         return;
     }
     let renderer;
     try { renderer = factory(); }
     catch (e) {
-        console.error(`viz picker: factory slopsmithViz_${id} threw`, e);
+        console.error(`viz picker: factory feedBackViz_${id} threw`, e);
         fallbackToDefault();
         return;
     }
@@ -6814,7 +6819,7 @@ function setViz(id) {
     // default on a bad renderer, but without this check the UI and
     // localStorage would still advertise the broken selection.
     if (!renderer || typeof renderer.draw !== 'function') {
-        console.error(`viz picker: factory slopsmithViz_${id} returned an invalid renderer (missing draw)`);
+        console.error(`viz picker: factory feedBackViz_${id} returned an invalid renderer (missing draw)`);
         fallbackToDefault();
         return;
     }
@@ -6864,8 +6869,8 @@ let _cancelPendingAutoLabel = null;
 // the viz picker instead.
 let _notationHintShownFor = null;
 function _showNotationViewHint(arrangementIndex, activeVizId) {
-    const filename = (window.slopsmith && window.slopsmith.currentSong
-        && window.slopsmith.currentSong.filename) || '';
+    const filename = (window.feedBack && window.feedBack.currentSong
+        && window.feedBack.currentSong.filename) || '';
     if (_notationHintShownFor === filename) return;
     _notationHintShownFor = filename;
     const player = document.getElementById('player');
@@ -6903,8 +6908,8 @@ function _showNotationViewHint(arrangementIndex, activeVizId) {
 function _dropStaleNotationHint(activeVizId) {
     const stale = document.getElementById('notation-view-hint');
     if (!stale) return;
-    const curFilename = (window.slopsmith && window.slopsmith.currentSong
-        && window.slopsmith.currentSong.filename) || '';
+    const curFilename = (window.feedBack && window.feedBack.currentSong
+        && window.feedBack.currentSong.filename) || '';
     if (stale.dataset.filename !== curFilename) { stale.remove(); return; }
     const songInfo = (typeof highway !== 'undefined' && typeof highway.getSongInfo === 'function')
         ? (highway.getSongInfo() || {}) : {};
@@ -6934,7 +6939,7 @@ function _maybeShowNotationViewHint(activeVizId) {
         return false;
     }
     if (activeVizId && activeVizId !== 'default' && activeVizId !== 'auto') {
-        const factory = window['slopsmithViz_' + activeVizId];
+        const factory = window['feedBackViz_' + activeVizId];
         let claimed = false;
         try {
             claimed = typeof factory === 'function'
@@ -6979,8 +6984,8 @@ function _autoMatchViz() {
     // _populateVizPicker, and /api/plugins reflects the order the
     // plugin loader discovered plugins in — plugins/__init__.py walks
     // `sorted(plugins_base_dir.iterdir())`, i.e. sorted by the on-disk
-    // PLUGIN DIRECTORY name (e.g. "slopsmith-plugin-drums" sorts
-    // before "slopsmith-plugin-piano"), not by the plugin id declared
+    // PLUGIN DIRECTORY name (e.g. "feedBack-plugin-drums" sorts
+    // before "feedBack-plugin-piano"), not by the plugin id declared
     // in plugin.json. Two consequences worth noting:
     //   1. First match wins among registered viz plugins — keep each
     //      plugin's matchesArrangement predicate narrow to avoid
@@ -6993,7 +6998,7 @@ function _autoMatchViz() {
         .map(o => o.value)
         .filter(v => v !== 'auto' && v !== 'default');
     for (const id of candidateIds) {
-        const factory = window['slopsmithViz_' + id];
+        const factory = window['feedBackViz_' + id];
         if (typeof factory !== 'function') continue;
         // If the factory statically declares contextType='webgl2', gate on
         // WebGL2 availability so a match never installs a renderer that'll
@@ -7014,11 +7019,11 @@ function _autoMatchViz() {
         let renderer;
         try { renderer = factory(); }
         catch (err) {
-            console.error(`viz auto: factory slopsmithViz_${id} threw`, err);
+            console.error(`viz auto: factory feedBackViz_${id} threw`, err);
             continue;
         }
         if (!renderer || typeof renderer.draw !== 'function') {
-            console.error(`viz auto: factory slopsmithViz_${id} returned an invalid renderer (missing draw)`);
+            console.error(`viz auto: factory feedBackViz_${id} returned an invalid renderer (missing draw)`);
             continue;
         }
         // Deliberately NOT persisting id — vizSelection stays 'auto' so
@@ -7034,8 +7039,8 @@ function _autoMatchViz() {
             const matchedOpt = Array.from(sel.options).find(o => o.value === id);
             const labelText = matchedOpt ? matchedOpt.text : id;
             function _onReady() { if (sel.value === 'auto') _setAutoVizLabel(labelText); }
-            window.slopsmith.on('viz:renderer:ready', _onReady, { once: true });
-            _cancelPendingAutoLabel = () => window.slopsmith.off('viz:renderer:ready', _onReady);
+            window.feedBack.on('viz:renderer:ready', _onReady, { once: true });
+            _cancelPendingAutoLabel = () => window.feedBack.off('viz:renderer:ready', _onReady);
         }
         _installVizRenderer(renderer, id, 'auto-match');
         _noteVizAutoMatch(id, true);
@@ -7112,7 +7117,7 @@ function clearLoop(options) {
     _sectionPracticeSavedPartIndex = 0;
     _updateSectionPracticeHighlight(_audioTime());
     if (hadLoop && emitTransportEvent && typeof window !== 'undefined') {
-        window.slopsmith?.playback?.transportEvent?.('loop-cleared', {
+        window.feedBack?.playback?.transportEvent?.('loop-cleared', {
             requesterId: 'core.loop',
             reason: 'app loop cleared',
             loop: { enabled: false, state: 'inactive' },
@@ -7144,7 +7149,7 @@ function _syncSavedLoopSelection() {
 }
 
 // Programmatically set both loop endpoints and seek to A. The dropdown
-// path (loadSavedLoop) and the plugin-API path (window.slopsmith.setLoop)
+// path (loadSavedLoop) and the plugin-API path (window.feedBack.setLoop)
 // both funnel through here so the UI state stays canonical regardless of
 // who triggered the loop.
 //
@@ -7190,12 +7195,12 @@ async function setLoop(a, b, options) {
     // here — otherwise a stale (superseded / mode-off) practiceSection retry
     // that lands inside setLoop would re-arm the loop and flip the mode back on
     // before the caller's gen check can bail. Direct callers (Saved Loops,
-    // window.slopsmith.setLoop) still sync so their chip selection tracks.
+    // window.feedBack.setLoop) still sync so their chip selection tracks.
     if (!skipSectionSync && typeof _syncSectionPracticeFromLoop === 'function') {
         _syncSectionPracticeFromLoop();
     }
     if (emitTransportEvent && typeof window !== 'undefined') {
-        window.slopsmith?.playback?.transportEvent?.('loop-set', { requesterId: 'core.loop', loopA, loopB, loop: { startTime: loopA, endTime: loopB, enabled: true, state: 'active' } });
+        window.feedBack?.playback?.transportEvent?.('loop-set', { requesterId: 'core.loop', loopA, loopB, loop: { startTime: loopA, endTime: loopB, enabled: true, state: 'active' } });
     }
     return true;
 }
@@ -7312,7 +7317,7 @@ function _sectionPracticeHighway() {
 function _sectionPracticeDuration() {
     const d = _audioDuration();
     if (d && Number.isFinite(d) && d > 0) return d;
-    const cd = window.slopsmith?.currentSong?.duration;
+    const cd = window.feedBack?.currentSong?.duration;
     return (cd && Number.isFinite(cd) && cd > 0) ? cd : 0;
 }
 
@@ -7828,7 +7833,7 @@ function _mountSectionPracticeControlSafe(ctrl) {
 function _placeSectionPracticeControlForChrome() {
     const ctrl = document.getElementById('section-practice-control');
     if (!ctrl) return;
-    const isV3 = !!(window.slopsmith && window.slopsmith.uiVersion === 'v3');
+    const isV3 = !!(window.feedBack && window.feedBack.uiVersion === 'v3');
     ctrl.classList.toggle('section-practice-control--v3', isV3);
     _syncSectionPracticePillV3Chrome(isV3);
     if (isV3) {
@@ -8077,7 +8082,7 @@ function renderSectionPracticeBar() {
     _sectionPracticeRanges = _buildSectionPracticeRanges();
     // Reconcile any active A-B loop with the (re)rendered section bar. Called
     // unconditionally so a loop that arrived before the section markers — e.g.
-    // a Saved Loop or window.slopsmith.setLoop() during song load, when no
+    // a Saved Loop or window.feedBack.setLoop() during song load, when no
     // parent was active yet — still re-selects its chip once markers appear.
     // _syncSectionPracticeFromLoop() scans all parents, so it can activate the
     // matching one; run it before the piece UI so that reflects the result.
@@ -8151,7 +8156,7 @@ window.onPhraseNext = onPhraseNext;
 
 // Find which section parent / phrase part the active A-B loop corresponds to.
 // Scans ALL parents (not just the active one) so a loop arriving from Saved
-// Loops or window.slopsmith.setLoop() can re-select the right chip even when
+// Loops or window.feedBack.setLoop() can re-select the right chip even when
 // its parent isn't the currently-active one. Returns { parentIdx, whole } or
 // { parentIdx, whole:false, index } (the matching phrase part), or null.
 function _sectionPracticeLoopMatch() {
@@ -8430,7 +8435,7 @@ async function loadSavedLoop(loopId) {
 function uiPrompt({ title = '', label = '', value = '', okLabel = 'Save', placeholder = '' } = {}) {
     return new Promise((resolve) => {
         const modal = document.createElement('div');
-        modal.className = 'slopsmith-modal fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm';
+        modal.className = 'feedBack-modal fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm';
         modal.setAttribute('role', 'dialog');
         modal.setAttribute('aria-modal', 'true');
         if (title) modal.setAttribute('aria-label', title);
@@ -8600,8 +8605,8 @@ async function startCountIn(opts = {}) {
         }
         lastAudioTime = loopA;
         highway.setTime(loopA);
-        if (window.slopsmith) {
-            window.slopsmith.emit('loop:restart', { loopA, loopB, time: loopA });
+        if (window.feedBack) {
+            window.feedBack.emit('loop:restart', { loopA, loopB, time: loopA });
         }
         beginCount();
         return;
@@ -8651,9 +8656,9 @@ async function startCountIn(opts = {}) {
                     if (isPlaying) {
                         isPlaying = false;
                         setPlayButtonState(false);
-                        if (window.slopsmith) {
-                            window.slopsmith.isPlaying = false;
-                            window.slopsmith.emit('song:pause', _songEventPayload());
+                        if (window.feedBack) {
+                            window.feedBack.isPlaying = false;
+                            window.feedBack.emit('song:pause', _songEventPayload());
                         }
                     }
                     return;
@@ -8666,7 +8671,7 @@ async function startCountIn(opts = {}) {
                 // audio position.
                 lastAudioTime = r.to;
                 highway.setTime(r.to);
-                window.slopsmith.emit('loop:restart', { loopA, loopB, time: loopA });
+                window.feedBack.emit('loop:restart', { loopA, loopB, time: loopA });
                 beginCount();
             });
         }
@@ -8690,10 +8695,10 @@ async function startCountIn(opts = {}) {
                         if (!started) return;
                         isPlaying = true;
                         setPlayButtonState(true);
-                        window.slopsmith.isPlaying = true;
+                        window.feedBack.isPlaying = true;
                         const payload = _songEventPayload();
-                        window.slopsmith.emit('song:play', payload);
-                        window.slopsmith.emit('song:resume', payload);
+                        window.feedBack.emit('song:play', payload);
+                        window.feedBack.emit('song:resume', payload);
                     }).catch((err) => console.error('[app] jucePlayer.play error:', err));
                 } else {
                     audio.play().then(() => {
@@ -8729,8 +8734,8 @@ setInterval(() => {
         if (window._juceMode && isPlaying && ct >= dur) {
             isPlaying = false;
             setPlayButtonState(false);
-            window.slopsmith.isPlaying = false;
-            window.slopsmith.emit('song:ended', _songEventPayload());
+            window.feedBack.isPlaying = false;
+            window.feedBack.emit('song:ended', _songEventPayload());
             jucePlayer.pause().catch((err) => console.warn('[app] end-of-track pause error:', err));
         }
         // A-B loop: count-in then seek back to A
@@ -9286,7 +9291,7 @@ function openEditModal(songData, openerEl) {
     const artUrl = `/api/song/${encodeURIComponent(songData.f)}/art?t=${Date.now()}`;
     const modal = document.createElement('div');
     modal.id = 'edit-modal';
-    modal.className = 'slopsmith-modal fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm';
+    modal.className = 'feedBack-modal fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm';
     // role=dialog: assistive tech announces it as a modal; also lets
     // the global keyboard listener's `_isInsideInteractiveControl`
     // bail when typing inside the modal so Library shortcuts don't
@@ -9534,7 +9539,7 @@ async function syncLibrarySong(providerId, songId, options = {}) {
     if (currentState && currentState.status === 'syncing') return null;
     _setLibrarySyncState(providerId, songId, { status: 'syncing' });
     try {
-        const capabilityApi = window.slopsmith && window.slopsmith.capabilities;
+        const capabilityApi = window.feedBack && window.feedBack.capabilities;
         let data = null;
         if (capabilityApi && typeof capabilityApi.command === 'function') {
             const result = await capabilityApi.command('library', 'sync-song', {
@@ -9755,8 +9760,8 @@ function _pluginNav(plugin) {
 
 async function _commandUiDomain(domain, command, plugin, payload) {
     try {
-        if (!window.slopsmith?.capabilities?.command) return;
-        await window.slopsmith.capabilities.command(domain, command, {
+        if (!window.feedBack?.capabilities?.command) return;
+        await window.feedBack.capabilities.command(domain, command, {
             requester: plugin.id || 'plugin',
             target: { id: payload.id, pluginId: plugin.id, region: payload.region },
             payload: { ...payload, pluginId: plugin.id },
@@ -9794,9 +9799,9 @@ async function _registerLegacyPluginUiContributions(plugin) {
 }
 
 async function loadPlugins() {
-    if (_loadPluginsInFlight) { console.log('[slopsmith] loadPlugins: in-flight, skipping'); return null; }
+    if (_loadPluginsInFlight) { console.log('[feedBack] loadPlugins: in-flight, skipping'); return null; }
     _loadPluginsInFlight = true;
-    console.log('[slopsmith] loadPlugins: start');
+    console.log('[feedBack] loadPlugins: start');
     let plugins;
     const navContainer = document.getElementById('nav-plugins');
     const mobileNavContainer = document.getElementById('mobile-nav-plugins');
@@ -9819,16 +9824,16 @@ async function loadPlugins() {
                 await _commandUiDomain(contribution.domain, 'unmount', stalePlugin, contribution);
             }
             try {
-                window.slopsmith?.capabilities?.unregisterParticipant?.(pluginId);
+                window.feedBack?.capabilities?.unregisterParticipant?.(pluginId);
             } catch (e) {
                 console.warn(`capability participant unregister failed for ${pluginId}:`, e);
             }
             _pluginUiContributions.delete(pluginId);
         }
-        console.log('[slopsmith] loadPlugins: got', plugins.length, 'plugins');
+        console.log('[feedBack] loadPlugins: got', plugins.length, 'plugins');
 
         try {
-            const capabilityApi = window.slopsmith?.capabilities;
+            const capabilityApi = window.feedBack?.capabilities;
             if (capabilityApi?.registerParticipants) {
                 capabilityApi.registerParticipants(capabilityPlugins);
                 if (capabilityApi.registerCompatibilityShim) {
@@ -9841,7 +9846,7 @@ async function loadPlugins() {
                 capabilityApi.validateRuntime?.({ phase: 'plugin-manifest-load' });
             }
         } catch (e) {
-            console.warn('[slopsmith] capability manifest registration failed:', e);
+            console.warn('[feedBack] capability manifest registration failed:', e);
         }
 
         const settingsContainer = document.getElementById('plugin-settings');
@@ -9867,10 +9872,10 @@ async function loadPlugins() {
         // within one session don't leave stale keys that could mistakenly
         // mark an old version as already-hydrated. Coerce a legacy Set, if
         // present, to an empty Map — the previous shape never shipped.
-        let loadedScripts = window.slopsmith._loadedPluginScripts;
+        let loadedScripts = window.feedBack._loadedPluginScripts;
         if (!(loadedScripts instanceof Map)) {
             loadedScripts = new Map();
-            window.slopsmith._loadedPluginScripts = loadedScripts;
+            window.feedBack._loadedPluginScripts = loadedScripts;
         }
         const _removePluginScriptTags = (pluginId) => {
             // Filter via dataset rather than a CSS attribute selector —
@@ -9886,10 +9891,10 @@ async function loadPlugins() {
         // duplicate tags. The <link> covers both the plugin's screen and its
         // settings panel. Plugins ship preflight-off (utilities only) CSS, so a
         // stylesheet that lingers after deactivation can't bleed a base reset.
-        let loadedStyles = window.slopsmith._loadedPluginStyles;
+        let loadedStyles = window.feedBack._loadedPluginStyles;
         if (!(loadedStyles instanceof Map)) {
             loadedStyles = new Map();
-            window.slopsmith._loadedPluginStyles = loadedStyles;
+            window.feedBack._loadedPluginStyles = loadedStyles;
         }
         const _removePluginStyleTags = (pluginId) => {
             // Same dataset-filter rationale as _removePluginScriptTags.
@@ -10056,8 +10061,8 @@ async function loadPlugins() {
             // click listener on every refetch, each closing over a now-detached
             // dropdown. The one-time handler instead resolves the LIVE dropdown
             // from the DOM at click time, so it always targets the current one.
-            if (!window.slopsmith._pluginDropdownOutsideClickBound) {
-                window.slopsmith._pluginDropdownOutsideClickBound = true;
+            if (!window.feedBack._pluginDropdownOutsideClickBound) {
+                window.feedBack._pluginDropdownOutsideClickBound = true;
                 document.addEventListener('click', (e) => {
                     const menu = document.getElementById('plugin-dropdown');
                     if (!menu) return;
@@ -10096,10 +10101,10 @@ async function loadPlugins() {
                 if (isReady) {
                     item.className = 'block px-4 py-2 text-sm text-gray-400 hover:text-white hover:bg-dark-700 transition';
                     item.textContent = label;
-                    item.onclick = (e) => { e.preventDefault(); ddMenu.classList.add('hidden'); showScreen(screenId); window.slopsmithDemoTrack?.('event/plugin-open/' + plugin.id); };
+                    item.onclick = (e) => { e.preventDefault(); ddMenu.classList.add('hidden'); showScreen(screenId); window.feedBackDemoTrack?.('event/plugin-open/' + plugin.id); };
                     ma.className = 'text-gray-400 hover:text-white pl-4 text-sm';
                     ma.textContent = label;
-                    ma.onclick = (e) => { e.preventDefault(); showScreen(screenId); ma.closest('#mobile-menu').classList.add('hidden'); window.slopsmithDemoTrack?.('event/plugin-open/' + plugin.id); };
+                    ma.onclick = (e) => { e.preventDefault(); showScreen(screenId); ma.closest('#mobile-menu').classList.add('hidden'); window.feedBackDemoTrack?.('event/plugin-open/' + plugin.id); };
                 } else {
                     const installing = status === 'installing';
                     const suffix = installing ? ' (installing…)' : ' (failed)';
@@ -10195,13 +10200,13 @@ async function loadPlugins() {
                 const labelSpan = document.createElement('span');
                 labelSpan.textContent = plugin.name || plugin.id;
                 labelWrap.appendChild(labelSpan);
-                // "Bundled" marker (slopsmith#160). Visually distinguishes
+                // "Bundled" marker (feedBack#160). Visually distinguishes
                 // plugins that ship with the default container image from
                 // user-installed ones so users don't try to remove a core
                 // plugin via the manage-plugin flow and brick a feature
                 // that's expected to "just work".
                 if (plugin.bundled) {
-                    const bundledDesc = 'This plugin ships with Slopsmith core and is expected to be present.';
+                    const bundledDesc = 'This plugin ships with FeedBack core and is expected to be present.';
                     const badge = document.createElement('span');
                     badge.className = 'inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-purple-400/30 bg-purple-500/10 text-purple-300';
                     badge.title = bundledDesc;
@@ -10311,14 +10316,14 @@ async function loadPlugins() {
                         script.src = `/api/plugins/${plugin.id}/screen.js${v ? `?v=${v}` : ''}`;
                         script.dataset.pluginId = plugin.id;
                         script.dataset.pluginVersion = wantedVersion;
-                        window.slopsmith._loadingPluginId = plugin.id;
+                        window.feedBack._loadingPluginId = plugin.id;
                         script.onload = () => {
-                            if (window.slopsmith._loadingPluginId === plugin.id) delete window.slopsmith._loadingPluginId;
+                            if (window.feedBack._loadingPluginId === plugin.id) delete window.feedBack._loadingPluginId;
                             loadedScripts.set(plugin.id, wantedVersion);
                             resolve();
                         };
                         script.onerror = (err) => {
-                            if (window.slopsmith._loadingPluginId === plugin.id) delete window.slopsmith._loadingPluginId;
+                            if (window.feedBack._loadingPluginId === plugin.id) delete window.feedBack._loadingPluginId;
                             loadedScripts.delete(plugin.id);
                             reject(err);
                         };
@@ -10343,7 +10348,7 @@ async function loadPlugins() {
 }
 
 // Re-run loadPlugins (and the viz picker, since a newly-ready plugin may
-// register a window.slopsmithViz_<id> factory) when plugin status changes.
+// register a window.feedBackViz_<id> factory) when plugin status changes.
 // Debounced so a burst of plugin-registered/plugin-error events during
 // startup collapses into a single refetch.
 let _pluginRefreshTimer = null;
@@ -10473,12 +10478,12 @@ async function bootstrapPluginsAndUi() {
         // couldn't catch. Surface failures (e.g. `#player` missing/renamed)
         // instead of silently bringing the library flash back.
         try { await showScreen('player'); }
-        catch (e) { console.warn('[slopsmith] follower-window: showScreen("player") failed:', e); }
+        catch (e) { console.warn('[feedBack] follower-window: showScreen("player") failed:', e); }
     }
     await loadLibraryProviders({ restoreSaved: true });
     // Restore library-filter UI state from localStorage before the first
     // grid fetch so the badge/chips are accurate immediately
-    // (slopsmith#129).
+    // (feedBack#129).
     _renderLibFilterChips();
     _updateLibFiltersBadge();
     // Restore the persisted sort and format-filter dropdowns BEFORE
@@ -10523,7 +10528,7 @@ async function bootstrapPluginsAndUi() {
     const plugins = await bootstrapPluginsAndUi();
     await loadLibraryProviders({ restoreSaved: true, reloadOnChange: true });
     // Viz picker depends on plugin scripts having loaded (to find
-    // window.slopsmithViz_<id> factories), so run it after loadPlugins.
+    // window.feedBackViz_<id> factories), so run it after loadPlugins.
     // Reuse the plugin list loadPlugins just fetched — no need to
     // round-trip /api/plugins a second time.
     _populateVizPicker(plugins);

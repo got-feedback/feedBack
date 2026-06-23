@@ -10,8 +10,8 @@
 (function (root) {
     'use strict';
 
-    const KEY = 'slopsmith-venue-mood-fx';
-    const MOTION_KEY = 'slopsmith-venue-motion';
+    const KEY = 'feedBack-venue-mood-fx';
+    const MOTION_KEY = 'feedBack-venue-motion';
     const SETTINGS = Object.freeze({ OFF: 'off', SUBTLE: 'subtle', FULL: 'full' });
     const DEFAULT = SETTINGS.SUBTLE;
     const MOTION_DEFAULT = SETTINGS.SUBTLE;
@@ -508,7 +508,7 @@
 
     if (typeof document !== 'undefined') {
         const boot = () => {
-            const sm = root && root.slopsmith;
+            const sm = root && root.feedBack;
             if (sm) bindRuntime(sm);
         };
         if (document.readyState === 'loading') {

@@ -6,7 +6,7 @@
 // pause the 3D highway crept forward against a frozen audio clock and then
 // snapped back to raw — a visible twitch on every pause.
 //
-// The fix wires a host pause signal (slopsmith core's bundle.isPlaying) into
+// The fix wires a host pause signal (feedBack core's bundle.isPlaying) into
 // smoothNow: when the chart clock is not advancing, return raw immediately
 // and re-anchor. These tests lock in both halves of the contract by
 // inspecting source (the createHighway / renderer closures own WebGL + audio

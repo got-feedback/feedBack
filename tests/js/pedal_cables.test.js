@@ -21,7 +21,7 @@ function loadCables(opts) {
     opts = opts || {};
     const rafCalls = [];
     const created = [];                 // every createElementNS node
-    const win = { slopsmith: null };
+    const win = { feedBack: null };
     win.addEventListener = () => {};
     win.matchMedia = () => ({ matches: !!opts.reduce });
     const doc = {

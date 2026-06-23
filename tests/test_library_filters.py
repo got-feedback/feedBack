@@ -1,4 +1,4 @@
-"""Tests for library filter + sort additions (slopsmith #129/#69/#128/#22).
+"""Tests for library filter + sort additions (feedBack #129/#69/#128/#22).
 
 Each filter axis is exercised independently and combined. Sort cases
 cover the new year sort and the rewritten tuning sort (now
@@ -77,7 +77,7 @@ def seeded(server_mod):
          stem_ids=["drums", "vocals"],
          tuning_name="Eb Standard", tuning_sort_key=-6)
     # Legacy row: stem_ids deliberately set to NULL via raw SQL to
-    # simulate a row that predates the slopsmith#129 migration.
+    # simulate a row that predates the feedBack#129 migration.
     server_mod.meta_db.conn.execute(
         "INSERT INTO songs (filename, mtime, size, title, artist, album, year, duration, "
         "tuning, arrangements, has_lyrics, format, stem_count, stem_ids, tuning_name, tuning_sort_key) "
@@ -275,7 +275,7 @@ def test_whitelist_rejects_unknown_arrangement(client, seeded):
     assert bogus["total"] == full["total"]
 
 
-# ── Year sort (slopsmith#128) ───────────────────────────────────────────────
+# ── Year sort (feedBack#128) ───────────────────────────────────────────────
 
 def test_year_sort_desc_newest_first(client, seeded):
     data = _get(client, sort="year-desc")
@@ -448,13 +448,13 @@ def test_compound_sort_with_legacy_dir_desc_doesnt_error(client, seeded):
     assert files == ["b.archive", "a.archive", "f.archive", "d.sloppak", "c.sloppak", "e.sloppak"]
 
 
-# ── Tuning sort by pitch distance (slopsmith#22) ────────────────────────────
+# ── Tuning sort by pitch distance (feedBack#22) ────────────────────────────
 
 def test_tuning_sort_by_pitch_distance(client, seeded):
     """Tuning sort previously alphabetized (Drop C, Drop D, E Standard).
     Now it's musical-distance from E Standard via ABS(sort_key) ASC,
     so E Standard (|0|) leads, then Drop D (|-2|), then Eb Standard
-    (|-6|). See slopsmith#22."""
+    (|-6|). See feedBack#22."""
     data = _get(client, sort="tuning")
     # Group by tuning name, preserving order; assert the first
     # appearance of each tuning matches the expected musical-distance
@@ -481,7 +481,7 @@ def test_tuning_names_endpoint(client, seeded):
     assert counts["Eb Standard"] == 2
 
 
-# ── Custom-tuning offsets: served + per-tuning filter (slopsmith#867) ────────
+# ── Custom-tuning offsets: served + per-tuning filter (feedBack#867) ────────
 
 def test_tuning_offsets_served_in_library_list(client, server_mod):
     """Raw offsets round-trip through the DB into the list payload so the v3

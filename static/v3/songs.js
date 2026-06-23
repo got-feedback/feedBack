@@ -11,7 +11,7 @@
  */
 (function () {
     'use strict';
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const enc = encodeURIComponent;
@@ -266,7 +266,7 @@
     async function jget(url) { try { const r = await fetch(url); return r.ok ? r.json() : null; } catch (e) { return null; } }
 
     // ── Provider-aware song helpers ────────────────────────────────────────
-    // Remote library providers (slopsmith-plugin-remote-library-*) expose songs
+    // Remote library providers (feedBack-plugin-remote-library-*) expose songs
     // by provider-owned id with their own art/sync/play flow. Reuse the legacy
     // app.js globals (the shared engine) so v3 behaves identically for remote
     // providers instead of assuming every row is a local file. All degrade to
@@ -835,7 +835,7 @@
         try {
             const lp = sm && sm.libraryProviders;
             // refresh() re-fetches /api/library/providers so REMOTE providers
-            // (registered by slopsmith-plugin-remote-library-*) appear — list()
+            // (registered by feedBack-plugin-remote-library-*) appear — list()
             // returns only the capability's initial local-only snapshot.
             const fn = lp && (typeof lp.refresh === 'function' ? lp.refresh : (typeof lp.list === 'function' ? lp.list : null));
             if (fn) {

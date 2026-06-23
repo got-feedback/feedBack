@@ -4,7 +4,7 @@ const { loadCapabilities } = require('./capabilities_test_harness');
 
 test('diagnostics snapshots redact paths and trim recent decisions under 64 KB', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipant('owner', {
         stems: {
             roles: ['owner'],
@@ -26,7 +26,7 @@ test('diagnostics snapshots redact paths and trim recent decisions under 64 KB',
 
 test('compatibility shim hit counts and attribution are exported', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerCompatibilityShim({ shimId: 'stems:legacy-window', source: 'stems', capability: 'stems', legacySurface: 'window._stemsState', status: 'active', reason: 'legacy global bridge' });
     api.registerCompatibilityShim({ shimId: 'stems:legacy-window', source: 'stems', capability: 'stems', legacySurface: 'window._stemsState', status: 'used', used: true });
     api.registerCompatibilityShim({ shimId: 'stems:legacy-window', source: 'stems', capability: 'stems', legacySurface: 'window._stemsState', status: 'used', hit: true });
@@ -39,7 +39,7 @@ test('compatibility shim hit counts and attribution are exported', () => {
 
 test('diagnostics export expected compatibility shim surfaces', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const expected = api.snapshotDiagnostics().expectedCompatibilityShims;
 
     assert.ok(Array.isArray(expected));
@@ -52,7 +52,7 @@ test('diagnostics export expected compatibility shim surfaces', () => {
 
 test('diagnostics include active playback but exclude deferred and documentation-only future core domains', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipant('playback_probe', {
         playback: {
             roles: ['provider'],
@@ -95,7 +95,7 @@ test('diagnostics include active playback but exclude deferred and documentation
 
 test('server-reported shim hit counts are not inflated by refresh registration', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const shim = {
         shimId: 'stems:legacy-window',
         source: 'stems',
@@ -114,7 +114,7 @@ test('server-reported shim hit counts are not inflated by refresh registration',
 
 test('recordLegacyHit preserves non-library shim attribution', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const first = api.recordLegacyHit({
         capability: 'stems',
         legacySurface: 'window._stemsState',
@@ -136,7 +136,7 @@ test('recordLegacyHit preserves non-library shim attribution', () => {
 
 test('recordLegacyHit counts runtime use and preserves used status across active refreshes', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const first = api.recordLegacyHit({
         capability: 'stems',
         legacySurface: 'window._stemsState',
@@ -168,9 +168,9 @@ test('recordLegacyHit counts runtime use and preserves used status across active
 
 test('capability diagnostics emit a changed event after runtime updates', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     let changes = 0;
-    window.addEventListener('slopsmith:capabilities:changed', () => { changes += 1; });
+    window.addEventListener('feedBack:capabilities:changed', () => { changes += 1; });
 
     api.recordLegacyHit({
         capability: 'stems',

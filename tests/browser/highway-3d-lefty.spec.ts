@@ -92,7 +92,7 @@ test('left-handed setting reaches the 3D Highway renderer with a mocked song str
   await expect(page.locator('#viz-picker')).toHaveValue('highway_3d');
   await page.evaluate(() => {
     (window as any).__h3dReadySeen = false;
-    (window as any).slopsmith.on('viz:renderer:ready', () => {
+    (window as any).feedBack.on('viz:renderer:ready', () => {
       (window as any).__h3dReadySeen = true;
     }, { once: true });
   });

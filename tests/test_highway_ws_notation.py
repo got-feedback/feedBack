@@ -117,7 +117,7 @@ def make_client(tmp_path, monkeypatch):
     def _make():
         monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
         monkeypatch.setenv("DLC_DIR", str(tmp_path / "dlc"))
-        monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+        monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
         sys.modules.pop("server", None)
         server = importlib.import_module("server")
         monkeypatch.setattr(server, "load_plugins", lambda *a, **kw: None)

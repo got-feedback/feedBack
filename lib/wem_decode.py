@@ -6,7 +6,7 @@ import logging
 import struct
 import os
 
-log = logging.getLogger("slopsmith.lib.wem_decode")
+log = logging.getLogger("feedBack.lib.wem_decode")
 
 
 def convert_wem_to_ogg(wem_path: str, output_path: str) -> bool:

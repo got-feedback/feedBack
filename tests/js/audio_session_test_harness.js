@@ -23,12 +23,12 @@ function runBrowserScript(window, relativePath) {
 
 function captureEvents(window, eventName) {
     const events = [];
-    window.slopsmith.on(eventName, event => events.push(event.detail));
+    window.feedBack.on(eventName, event => events.push(event.detail));
     return events;
 }
 
 function diagnosticsSnapshot(window) {
-    return window.slopsmith.audioSession.snapshot();
+    return window.feedBack.audioSession.snapshot();
 }
 
 function storageEntries(window) {
@@ -175,7 +175,7 @@ function installMixerDom(window) {
 
 function loadAudioMixer(window) {
     runBrowserScript(window, path.relative(ROOT, AUDIO_MIXER_JS));
-    return window.slopsmith.audio;
+    return window.feedBack.audio;
 }
 
 module.exports = {

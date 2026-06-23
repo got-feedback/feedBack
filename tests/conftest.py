@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the slopsmith test suite."""
+"""Shared pytest fixtures for the feedBack test suite."""
 
 import logging
 
@@ -6,12 +6,12 @@ import pytest
 import structlog
 
 
-_LOGGING_NAMES = ("slopsmith", "uvicorn", "uvicorn.error", "uvicorn.access")
+_LOGGING_NAMES = ("feedBack", "uvicorn", "uvicorn.error", "uvicorn.access")
 
 
 @pytest.fixture()
 def isolate_logging():
-    """Restore slopsmith / uvicorn logger state after each test.
+    """Restore feedBack / uvicorn logger state after each test.
 
     Saves handlers, level, and propagate flag before the test runs and
     restores all three on teardown.  Import into any test module that calls

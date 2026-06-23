@@ -1,5 +1,5 @@
 // Source-level guards for the pool().warm() helper added in
-// slopsmith#226 — locks in:
+// feedBack#226 — locks in:
 //   1. The factory exposes .warm() (so future refactors don't quietly
 //      remove the boardInit pre-allocation strategy).
 //   2. warm() coerces its argument via `cap | 0` + `Math.max(0, …)` so a

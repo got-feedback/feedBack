@@ -52,7 +52,7 @@ device plane stabilize independently of mapping semantics.
 - **Learn mode:** open a `midi-input` session, capture the next matching event,
   and bind it to the pending action (the per-plugin "learn" UIs in drums today
   are the reference behaviour to generalise).
-- **Diagnostics:** `slopsmith.midi_control.diagnostics.v1` — mapping summaries +
+- **Diagnostics:** `feedBack.midi_control.diagnostics.v1` — mapping summaries +
   bounded recent activations; **no raw MIDI streams, no device labels**.
 
 ## Intended consumers (promotion trigger)

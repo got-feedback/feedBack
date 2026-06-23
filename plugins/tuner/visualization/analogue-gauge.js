@@ -1,5 +1,5 @@
 /**
- * Analogue gauge tuner visualization for the Slopsmith tuner plugin.
+ * Analogue gauge tuner visualization for the FeedBack tuner plugin.
  *
  * Contract: window['_tunerViz_analogue-gauge'](container) → { update(note, cents, freq), destroy() }
  *   - note: string | null  (null = no signal)

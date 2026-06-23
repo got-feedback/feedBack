@@ -6,19 +6,19 @@
 // fallback are attributed in redaction-safe diagnostics.
 //
 // Legacy bridge: today's plugins keep working unchanged. Discovery still
-// happens through `type: "visualization"` manifests and `window.slopsmithViz_*`
+// happens through `type: "visualization"` manifests and `window.feedBackViz_*`
 // factory globals — both are registered here as compatibility shims and their
 // hits accounted, per the promotion checklist in docs/capability-roadmap.md.
-// app.js calls the small runtime API on `window.slopsmith.vizDomain` at its
+// app.js calls the small runtime API on `window.feedBack.vizDomain` at its
 // existing integration points (picker population, renderer install); this
 // module owns everything else.
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    const capabilities = window.slopsmith.capabilities;
+    window.feedBack = window.feedBack || {};
+    const capabilities = window.feedBack.capabilities;
     if (!capabilities || capabilities.version !== 1) return;
-    if (window.slopsmith.vizDomain && window.slopsmith.vizDomain.version === 1) return;
+    if (window.feedBack.vizDomain && window.feedBack.vizDomain.version === 1) return;
 
     // providerId → { id, label, contextType, claims } in picker (= directory)
     // order, which is the auto-match precedence order.
@@ -35,7 +35,7 @@
     function _degraded(reason, payload = {}) { return { outcome: 'degraded', reason, payload }; }
 
     function _factoryFor(providerId) {
-        const factory = window['slopsmithViz_' + providerId];
+        const factory = window['feedBackViz_' + providerId];
         return typeof factory === 'function' ? factory : null;
     }
 
@@ -57,11 +57,11 @@
     }
 
     function _contributeDiagnostics() {
-        const diagnostics = window.slopsmith && window.slopsmith.diagnostics;
+        const diagnostics = window.feedBack && window.feedBack.diagnostics;
         if (diagnostics && typeof diagnostics.contribute === 'function') {
             try {
                 diagnostics.contribute('visualization-capability', {
-                    schema: 'slopsmith.visualization_capability.v1',
+                    schema: 'feedBack.visualization_capability.v1',
                     ..._snapshot(),
                 });
             } catch (_) { /* diagnostics must not break rendering */ }
@@ -145,7 +145,7 @@
         return _deepFreeze(settings);
     }
 
-    // Per-instance control descriptors (slopsmith#849) come from the generic
+    // Per-instance control descriptors (feedBack#849) come from the generic
     // capability participant model: a provider declares them in its manifest
     // (capabilities.visualization.settings), core registers + normalizes them,
     // and we read them back here by pluginId. This keeps inspect('visualization')
@@ -187,7 +187,7 @@
             // registered capability participant (not an app.js side channel). A
             // consuming host (splitscreen) renders these generically and applies
             // values via the renderer instance's applySetting(key, value)
-            // (slopsmith#849). Deep-cloned + frozen so a list-providers consumer
+            // (feedBack#849). Deep-cloned + frozen so a list-providers consumer
             // can't mutate internal provider state through the shallow snapshot
             // clone. Absent until a provider declares them in its manifest.
             const declaredSettings = settingsById.get(id);
@@ -200,8 +200,8 @@
         if (typeof capabilities.registerCompatibilityShim === 'function') {
             capabilities.registerCompatibilityShim({
                 capability: 'visualization',
-                shimId: 'visualization:window.slopsmithViz_*',
-                legacySurface: 'window.slopsmithViz_* factory globals',
+                shimId: 'visualization:window.feedBackViz_*',
+                legacySurface: 'window.feedBackViz_* factory globals',
                 source: 'core.visualization',
                 ownerPluginId: 'core.visualization',
                 reason: 'Renderer factories are discovered via window globals until plugins declare visualization capabilities in their manifests.',
@@ -270,7 +270,7 @@
     // Mirror the legacy event bus into domain events so observers can rely on
     // `visualization:*` without knowing the window bus names. Guarded: the
     // bus may not exist in minimal/test environments.
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     if (typeof sm.on === 'function') {
         try {
             sm.on('viz:renderer:ready', () => _emit('renderer-ready', { providerId: activeProviderId }));
@@ -328,7 +328,7 @@
         },
     });
 
-    window.slopsmith.vizDomain = {
+    window.feedBack.vizDomain = {
         version: 1,
         snapshot: _snapshot,
         refreshProviders,

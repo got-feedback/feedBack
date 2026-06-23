@@ -26,7 +26,7 @@ test('legacy fader API remains compatible while bridge hits are attributed', asy
     runBrowserScript(window, 'static/audio-mixer.js');
 
     let volume = 0.5;
-    window.slopsmith.audio.registerFader({
+    window.feedBack.audio.registerFader({
         id: 'plugin.delay',
         label: 'Delay',
         min: 0,
@@ -37,8 +37,8 @@ test('legacy fader API remains compatible while bridge hits are attributed', asy
         setValue: value => { volume = value; },
     });
 
-    const snapshot = window.slopsmith.audioSession.snapshot();
-    assert.equal(window.slopsmith.audio.getFaders().some(fader => fader.id === 'plugin.delay'), true);
+    const snapshot = window.feedBack.audioSession.snapshot();
+    assert.equal(window.feedBack.audio.getFaders().some(fader => fader.id === 'plugin.delay'), true);
     assert.equal(snapshot.domains['audio-mix'].participants.some(participant => participant.participantId === 'fader.plugin.delay'), true);
     assert.equal(snapshot.domains['audio-mix'].bridges.some(bridge => bridge.bridgeId === 'audio-mix.fader-registry'), true);
 });
@@ -48,9 +48,9 @@ test('legacy analyser fallback records bridge status without losing analyser out
     installAnalyserDom(window);
     runBrowserScript(window, 'plugins/highway_3d/screen.js');
 
-    const analyser = window.slopsmithViz_highway_3d.__test.getAnalyserForBridgeTest();
-    const bands = window.slopsmithViz_highway_3d.__test.readBandsForBridgeTest();
-    const bridge = window.slopsmith.audioSession.snapshot().domains['audio-mix'].bridges.find(entry => entry.bridgeId === 'audio-mix.analyser');
+    const analyser = window.feedBackViz_highway_3d.__test.getAnalyserForBridgeTest();
+    const bands = window.feedBackViz_highway_3d.__test.readBandsForBridgeTest();
+    const bridge = window.feedBack.audioSession.snapshot().domains['audio-mix'].bridges.find(entry => entry.bridgeId === 'audio-mix.analyser');
 
     assert.equal(analyser.source, 'core');
     assert.equal(bands.bass > 0, true);
@@ -59,9 +59,9 @@ test('legacy analyser fallback records bridge status without losing analyser out
 
 test('barrier and input compatibility surfaces are visible in diagnostics', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
-    audioSession.recordBridgeHit({ domain: 'audio-monitoring', bridgeId: 'audio-monitoring.audio-barrier', legacySurface: 'window.slopsmithAudioBarrier', participantId: 'note_detect', outcome: 'degraded', reason: 'timeout' });
+    audioSession.recordBridgeHit({ domain: 'audio-monitoring', bridgeId: 'audio-monitoring.audio-barrier', legacySurface: 'window.feedBackAudioBarrier', participantId: 'note_detect', outcome: 'degraded', reason: 'timeout' });
     audioSession.recordBridgeHit({ domain: 'audio-input', bridgeId: 'audio-input.legacy-source', legacySurface: 'navigator.mediaDevices.getUserMedia', participantId: 'note_detect', outcome: 'denied', reason: 'permission denied' });
 
     const snapshot = audioSession.snapshot();
@@ -71,7 +71,7 @@ test('barrier and input compatibility surfaces are visible in diagnostics', () =
 
 test('a legacy bridge hit with unsafe fields never leaks a path/token into diagnostics', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     audioSession.recordBridgeHit({
         domain: 'audio-input',
@@ -91,7 +91,7 @@ test('a legacy bridge hit with unsafe fields never leaks a path/token into diagn
 
 test('audio-input explicit enumeration registers provider sources without list prompting', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const provider = makeInputProvider({
         providerId: 'desktop_audio',
         sourceId: 'bootstrap-source',
@@ -106,7 +106,7 @@ test('audio-input explicit enumeration registers provider sources without list p
     assert.equal(listed.payload.sources.some(source => source.logicalSourceKey === 'desktop:instrument:secondary'), false);
     assert.deepEqual(provider.calls, []);
 
-    const enumerated = await window.slopsmith.audioSession.enumerateInputSources({ providerId: 'desktop_audio', explicit: true, requesterId: 'settings' });
+    const enumerated = await window.feedBack.audioSession.enumerateInputSources({ providerId: 'desktop_audio', explicit: true, requesterId: 'settings' });
     const after = await api.dispatch({ capability: 'audio-input', command: 'list-sources', source: 'test' });
 
     assert.equal(enumerated.outcome, 'handled');
@@ -117,7 +117,7 @@ test('audio-input explicit enumeration registers provider sources without list p
 
 test('audio-input native source wins over compatibility-backed duplicate', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await api.dispatch({
         capability: 'audio-input',
@@ -150,7 +150,7 @@ test('audio-input native source wins over compatibility-backed duplicate', async
     });
 
     const listed = await api.dispatch({ capability: 'audio-input', command: 'list-sources', source: 'test' });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-input'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-input'];
 
     assert.equal(listed.payload.sources.length, 1);
     assert.equal(listed.payload.sources[0].providerId, 'native_input');
@@ -160,7 +160,7 @@ test('audio-input native source wins over compatibility-backed duplicate', async
 
 test('audio-monitoring native provider wins over legacy compatibility provider and overshadows its compatibility bridge', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const legacy = makeMonitoringProvider({
         providerId: 'legacy_monitor',
         logicalMonitoringKey: 'shared:monitor:primary',
@@ -177,7 +177,7 @@ test('audio-monitoring native provider wins over legacy compatibility provider a
     await api.dispatch({ capability: 'audio-monitoring', command: 'register-provider', source: 'native_monitor', payload: native.provider });
 
     const listed = await api.dispatch({ capability: 'audio-monitoring', command: 'list-providers', source: 'test' });
-    const snapshot = window.slopsmith.audioSession.snapshot().domains['audio-monitoring'];
+    const snapshot = window.feedBack.audioSession.snapshot().domains['audio-monitoring'];
 
     // The compatibility bridge below is the one the registration/supersession path actually produces;
     // asserting only on it (not on manually pre-seeded bridge hits) keeps this test honest if the
@@ -192,10 +192,10 @@ test('legacy registerFader callbacks are usable through audio-mix get and set op
     const window = loadAudioSession();
     installMixerDom(window);
     runBrowserScript(window, 'static/audio-mixer.js');
-    window.slopsmith.audioSession.startSession({ sessionId: 'main:test-song' });
+    window.feedBack.audioSession.startSession({ sessionId: 'main:test-song' });
 
     let gain = 0.35;
-    window.slopsmith.audio.registerFader({
+    window.feedBack.audio.registerFader({
         id: 'plugin.gain',
         label: 'Plugin Gain',
         min: 0,
@@ -206,7 +206,7 @@ test('legacy registerFader callbacks are usable through audio-mix get and set op
         setValue: value => { gain = Math.min(0.9, value); return gain; },
     });
 
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const listed = await api.dispatch({ capability: 'audio-mix', command: 'list-faders', source: 'test' });
     const read = await api.dispatch({ capability: 'audio-mix', command: 'get-fader-value', source: 'test', payload: { participantId: 'fader.plugin.gain', faderId: 'plugin.gain' } });
     const written = await api.dispatch({ capability: 'audio-mix', command: 'set-fader-value', source: 'test', payload: { participantId: 'fader.plugin.gain', faderId: 'plugin.gain', value: 1 } });
@@ -216,7 +216,7 @@ test('legacy registerFader callbacks are usable through audio-mix get and set op
     assert.equal(written.payload.committedValue, 0.9);
     assert.equal(gain, 0.9);
 
-    window.slopsmith.audio.unregisterFader('plugin.gain');
-    assert.equal(window.slopsmith.audio.getFaders().some(fader => fader.id === 'plugin.gain'), false);
-    assert.equal(window.slopsmith.audioSession.snapshot().domains['audio-mix'].participants.some(participant => participant.participantId === 'fader.plugin.gain'), false);
+    window.feedBack.audio.unregisterFader('plugin.gain');
+    assert.equal(window.feedBack.audio.getFaders().some(fader => fader.id === 'plugin.gain'), false);
+    assert.equal(window.feedBack.audioSession.snapshot().domains['audio-mix'].participants.some(participant => participant.participantId === 'fader.plugin.gain'), false);
 });

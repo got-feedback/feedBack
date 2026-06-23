@@ -635,7 +635,7 @@ def test_arrangement_from_wire_missing_fields_use_defaults():
     assert arr.phrases is None
 
 
-# ── Phrase / master-difficulty round-trip (slopsmith#48) ─────────────────────
+# ── Phrase / master-difficulty round-trip (feedBack#48) ─────────────────────
 
 def test_phrase_empty_round_trip():
     p = Phrase(start_time=0.0, end_time=10.0, max_difficulty=0, levels=[])
@@ -973,7 +973,7 @@ def test_chord_with_empty_notes_list_round_trips():
     assert chord_from_wire(chord_to_wire(c)) == c
 
 
-# ── arrangement_string_count (slopsmith-plugin-3dhighway#7) ──────────────────
+# ── arrangement_string_count (feedBack-plugin-3dhighway#7) ──────────────────
 
 def test_string_count_4_for_bass_arrangement_with_full_string_usage():
     # 4-string bass: notes reference strings 0..3.

@@ -1,13 +1,13 @@
 """Tone helpers for sloppak playback.
 
-A slopsmith arrangement may carry a tone block — the initial tone name plus
+A feedBack arrangement may carry a tone block — the initial tone name plus
 in-song tone switches — embedded inline in the arrangement JSON (see
 ``lib/song.py`` ``arrangement_to_wire`` / the ``tones`` wire key). This module
 turns that already-embedded block into the (base, changes) payload the highway
 WebSocket sends to the client.
 
 The proprietary-archive tone-extraction path (lifting tone definitions out of
-an unpacked encrypted archive) has been removed. Slopsmith reads tones only
+an unpacked encrypted archive) has been removed. FeedBack reads tones only
 from its own ``.sloppak`` / arrangement JSON; it never reads or decrypts
 proprietary archive formats.
 """
@@ -18,7 +18,7 @@ import logging
 import math
 import re
 
-log = logging.getLogger("slopsmith.lib.tones")
+log = logging.getLogger("feedBack.lib.tones")
 
 
 def tokens(s: str) -> set[str]:

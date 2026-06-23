@@ -6,7 +6,7 @@ segments, so the handler must (1) contain `filename` under DLC_DIR,
 (2) only serve actual `.sloppak` bundles, and (3) contain `rel_path`
 inside the resolved sloppak. These tests pin that contract so future
 refactors of `resolve_source_dir`/routing can't reintroduce the
-arbitrary-file-read class of bug (slopsmith#638).
+arbitrary-file-read class of bug (feedBack#638).
 """
 
 import importlib
@@ -25,7 +25,7 @@ def dlc_client(tmp_path, monkeypatch):
     config.mkdir()
     monkeypatch.setenv("DLC_DIR", str(dlc))
     monkeypatch.setenv("CONFIG_DIR", str(config))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     # The sloppak source-dir cache is module-level and survives the

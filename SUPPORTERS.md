@@ -1,8 +1,8 @@
 # Supporters
 
-Slopsmith's development is supported by these generous people. Thank you. ❤️
+FeedBack's development is supported by these generous people. Thank you. ❤️
 
-Want to be listed here? See [Support Slopsmith](README.md#support-slopsmith).
+Want to be listed here? See [Support FeedBack](README.md#support-feedBack).
 
 ## Patrons
 

@@ -1,5 +1,5 @@
 // Source-level guards for the playback-aware paused-render throttle
-// (slopsmith#654). The createHighway closure owns the rAF loop + WebGL
+// (feedBack#654). The createHighway closure owns the rAF loop + WebGL
 // context lifecycle that's too heavy to reproduce in a vm sandbox, so —
 // like highway_visibility.test.js — these checks lock in the wiring.
 

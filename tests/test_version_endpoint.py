@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-DEFAULT_SOURCE_URL = "https://github.com/got-feedback/feedback"
+DEFAULT_SOURCE_URL = "https://github.com/got-feedback/feedBack"
 DEFAULT_LICENSE_URL = DEFAULT_SOURCE_URL + "/blob/main/LICENSE"
 
 
@@ -28,7 +28,7 @@ def client(tmp_path, monkeypatch):
     added) don't leak between tests.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     # Clear ambient overrides so the default-URL assertions are deterministic
     # regardless of the caller's shell / CI environment. Individual tests
     # re-set these via their own monkeypatch calls as needed.

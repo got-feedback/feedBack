@@ -1,10 +1,10 @@
 # Browser Tests
 
-This directory contains Playwright browser tests for Slopsmith keyboard shortcuts.
+This directory contains Playwright browser tests for FeedBack keyboard shortcuts.
 
 ## Prerequisites
 
-1. **Slopsmith web server**: Tests need the server reachable at `http://localhost:8000`.
+1. **FeedBack web server**: Tests need the server reachable at `http://localhost:8000`.
    Playwright auto-starts it via `webServer.command` in `playwright.config.ts`, so manual
    startup is optional. Start it manually if you want to debug the server, run tests
    outside Playwright, or skip the per-run boot delay:
@@ -92,7 +92,7 @@ Increase timeout in `playwright.config.ts` if needed.
 ### LIBRARY_PATH not set
 Make sure to set the LIBRARY_PATH environment variable:
 ```bash
-LIBRARY_PATH=~/slopsmith-library docker compose up -d
+LIBRARY_PATH=~/feedBack-library docker compose up -d
 ```
 
 ## CI/CD

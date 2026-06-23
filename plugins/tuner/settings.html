@@ -11,7 +11,7 @@
     </div>
 
     <script>
-    if (window.slopsmithDesktop && window.slopsmithDesktop.isDesktop) {
+    if (window.feedBackDesktop && window.feedBackDesktop.isDesktop) {
         document.currentScript.insertAdjacentHTML('beforebegin', `
     <div class="flex items-center justify-between bg-dark-900/50 p-3 rounded-xl border border-gray-800/50">
         <div>
@@ -129,7 +129,7 @@
                         body: JSON.stringify(config)
                     });
                     if (window._tunerReloadConfig) window._tunerReloadConfig();
-                    if (opts && opts.tuningsChanged) window.slopsmith?.emit('tunings:updated');
+                    if (opts && opts.tuningsChanged) window.feedBack?.emit('tunings:updated');
                 } catch (e) { console.error('Tuner settings: save failed', e); }
             }
 

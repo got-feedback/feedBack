@@ -8,7 +8,7 @@ import logging
 import math
 import xml.etree.ElementTree as ET
 
-log = logging.getLogger("slopsmith.lib.song")
+log = logging.getLogger("feedBack.lib.song")
 
 
 @dataclass
@@ -124,10 +124,10 @@ class PhraseLevel:
     """One difficulty tier's worth of note/chord/anchor/hand-shape data for a
     single phrase iteration. the arrangement XML stores these as `<level
     difficulty="N">` blocks that repeat for every difficulty tier the chart
-    author wrote; slopsmith used to collapse them to the phrase's
+    author wrote; feedBack used to collapse them to the phrase's
     maxDifficulty and throw the rest away. Keeping them around lets the
     highway render a "master difficulty" slider that picks a per-phrase
-    difficulty tier at render time (slopsmith#48)."""
+    difficulty tier at render time (feedBack#48)."""
 
     difficulty: int
     notes: list[Note] = field(default_factory=list)
@@ -175,7 +175,7 @@ class Arrangement:
     # `base`/`changes` drive the highway tone-change markers; `definitions`
     # feed the Tones plugin gear panel.
     tones: dict | None = None
-    # arrangement XML <arrangementProperties> flags for smart naming (slopsmith feat/arrangement).
+    # arrangement XML <arrangementProperties> flags for smart naming (feedBack feat/arrangement).
     # Populated from the XML; default False/0 for sloppak / GP-imported sources.
     path_lead: bool = False
     path_rhythm: bool = False
@@ -622,7 +622,7 @@ def arrangement_string_count(arr: Arrangement) -> int:
     """Derive the active arrangement's string count.
 
     Used by the server to emit ``stringCount`` in the song_info
-    WebSocket payload (slopsmith-plugin-3dhighway#7).
+    WebSocket payload (feedBack-plugin-3dhighway#7).
 
     The arrangement XML schema always emits 6 ``<tuning>`` slots regardless
     of instrument (bass charts populate `string0`–`string3` and pad
@@ -1276,7 +1276,7 @@ def parse_arrangement(xml_path: str) -> Arrangement:
     def _collect_from_parsed(parsed, t_start, t_end):
         """Append a pre-parsed level's time-clipped slice to the flat
         arrangement lists. Used for the max-mastery merge that preserves
-        the pre-slopsmith#48 behaviour for existing consumers."""
+        the pre-feedBack#48 behaviour for existing consumers."""
         lv_notes, lv_chords, lv_anchors, lv_hand_shapes = _extract_level_slice(
             parsed, t_start, t_end
         )
@@ -1295,7 +1295,7 @@ def parse_arrangement(xml_path: str) -> Arrangement:
         _collect_from_parsed(best, 0.0, float("inf"))
 
     # Per-phrase difficulty data for the master-difficulty slider
-    # (slopsmith#48). Only populated when the XML has multiple levels AND
+    # (feedBack#48). Only populated when the XML has multiple levels AND
     # phrase data — left as None for single-level sources so the frontend
     # knows to disable the slider.
     phrases: list[Phrase] | None = None
@@ -1445,7 +1445,7 @@ def _convert_sng_to_xml(extracted_dir: str):
     """No-op stub.
 
     Historically this converted proprietary encrypted ``.notechart`` arrangement
-    files to XML via an external tool. That path has been removed: slopsmith
+    files to XML via an external tool. That path has been removed: feedBack
     reads only its own ``.sloppak`` format and loose-folder/GP/MusicXML-derived
     arrangement XML, and never decodes or decrypts proprietary archives. Kept
     as a no-op so ``load_song`` (which loads plain arrangement XML/JSON from a

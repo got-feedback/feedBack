@@ -26,7 +26,7 @@ async function registerSource(api, payload = {}) {
 
 test('audio-input requires sourceId providerId and logicalSourceKey', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     const missingSource = await api.dispatch({ capability: 'audio-input', command: 'register-source', source: 'test', payload: { providerId: 'test', logicalSourceKey: 'test:key' } });
     const missingProvider = await api.dispatch({ capability: 'audio-input', command: 'register-source', source: 'test', payload: { sourceId: 'source-1', logicalSourceKey: 'test:key' } });
@@ -41,7 +41,7 @@ test('audio-input requires sourceId providerId and logicalSourceKey', async () =
 
 test('audio-input registration list inspect select and snapshots pseudonymize source identity', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const registeredEvents = captureEvents(window, 'audio-input:source-registered');
     const selectedEvents = captureEvents(window, 'audio-input:source-selected');
 
@@ -62,7 +62,7 @@ test('audio-input registration list inspect select and snapshots pseudonymize so
     assert.equal(registeredEvents.length, 1);
     assert.equal(selectedEvents.length, 1);
 
-    const encoded = JSON.stringify(window.slopsmith.audioSession.snapshot().domains['audio-input']);
+    const encoded = JSON.stringify(window.feedBack.audioSession.snapshot().domains['audio-input']);
     assert.equal(encoded.includes('source-raw-id-12345'), false);
     assert.equal(encoded.includes('Scarlett'), false);
     assert.equal(encoded.includes('987654'), false);
@@ -70,7 +70,7 @@ test('audio-input registration list inspect select and snapshots pseudonymize so
 
 test('audio-input pseudonyms are per-bundle: distinct within a snapshot, never leak raw identity', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     audioSession.registerInputSource({ sourceId: 'mic-A', providerId: 'note_detect', logicalSourceKey: 'note_detect:mic-a', label: '/Users/me/My Songs/mic A' });
     audioSession.registerInputSource({ sourceId: 'mic-B', providerId: 'note_detect', logicalSourceKey: 'note_detect:mic-b', label: 'device B' });
@@ -90,7 +90,7 @@ test('audio-input pseudonyms are per-bundle: distinct within a snapshot, never l
 
 test('audio-input degraded select and unknown unregister never leak the raw source id', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     const degraded = audioSession.selectInputSource('/Users/me/secret-device', 'note_detect');
     const removed = audioSession.unregisterInputSource('/Users/me/secret-device');
@@ -107,7 +107,7 @@ test('audio-input degraded select and unknown unregister never leak the raw sour
 
 test('unknown unregister echoes the requested logicalSourceKey/providerId without pseudonymizing them', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     const removed = audioSession.unregisterInputSource({ logicalSourceKey: 'note_detect:instrument:primary', providerId: 'note_detect' });
 
@@ -121,7 +121,7 @@ test('unknown unregister echoes the requested logicalSourceKey/providerId withou
 
 test('unregister-source uses providerId to target the right source among logical-key duplicates', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     audioSession.registerInputSource({ sourceId: 'native-x', logicalSourceKey: 'dup:disambig', providerId: 'native_p', kind: 'instrument', safeLabel: 'N' });
     audioSession.registerInputSource({ sourceId: 'compat-x', logicalSourceKey: 'dup:disambig', providerId: 'compat_p', compatibilitySource: 'legacy', kind: 'instrument', safeLabel: 'C' });
@@ -136,7 +136,7 @@ test('unregister-source uses providerId to target the right source among logical
 
 test('register-source rejects a sourceId already owned by another provider', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     const first = await api.dispatch({ capability: 'audio-input', command: 'register-source', source: 'prov_a', payload: { sourceId: 'shared-id', logicalSourceKey: 'a:key', providerId: 'prov_a' } });
     const collision = await api.dispatch({ capability: 'audio-input', command: 'register-source', source: 'prov_b', payload: { sourceId: 'shared-id', logicalSourceKey: 'b:key', providerId: 'prov_b' } });
@@ -153,20 +153,20 @@ test('register-source rejects a sourceId already owned by another provider', asy
 
 test('register-source rejects a logicalSourceKey that is not redaction-safe', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     const result = await api.dispatch({ capability: 'audio-input', command: 'register-source', source: 'p', payload: { sourceId: 's1', providerId: 'p', logicalSourceKey: '/Users/me/secret token=abc123' } });
 
     assert.equal(result.outcome, 'failed');
     // The unsafe key must not be stored or leak into diagnostics.
-    const encoded = JSON.stringify(window.slopsmith.audioSession.snapshot());
+    const encoded = JSON.stringify(window.feedBack.audioSession.snapshot());
     assert.equal(encoded.includes('/Users/me'), false);
     assert.equal(encoded.includes('token=abc123'), false);
 });
 
 test('enumerate denied with an unsafe providerId never leaks it into diagnostics', async () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     // Missing explicit/userInitiated -> denied; the caller-supplied providerId is unsafe and is
     // recorded as the outcome participantId/providerId, so it must be bounded in the snapshot.
@@ -182,20 +182,20 @@ test('enumerate denied with an unsafe providerId never leaks it into diagnostics
 
 test('a malicious dispatch source is redacted before becoming a requesterId in diagnostics', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'req-raw', logicalSourceKey: 'test:req' });
     // The capability dispatch `source` (the requester identity) is attacker-controlled here.
     await api.dispatch({ capability: 'audio-input', command: 'select-source', source: '/Users/me/plugin token=abc123', payload: { logicalSourceKey: 'test:req' } });
 
-    const encoded = JSON.stringify(window.slopsmith.audioSession.snapshot());
+    const encoded = JSON.stringify(window.feedBack.audioSession.snapshot());
     assert.equal(encoded.includes('/Users/me'), false);
     assert.equal(encoded.includes('abc123'), false);
 });
 
 test('caller-provided logical keys are bounded so a path/token cannot leak into diagnostics on a miss', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     // Untrusted callers may pass an unsafe value as a logical key; select/unregister misses must not
     // echo or record it raw into the redaction-safe diagnostics snapshot.
@@ -211,7 +211,7 @@ test('caller-provided logical keys are bounded so a path/token cannot leak into 
 
 test('audio-monitoring distinguishes a failed state from transient unavailability', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api);
     await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'test:instrument:primary' } });
@@ -231,7 +231,7 @@ test('audio-monitoring distinguishes a failed state from transient unavailabilit
 
 test('inspect list and select do not call provider enumeration or open handlers', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const provider = makeInputProvider({ providerId: 'note_detect', logicalSourceKey: 'note_detect:instrument:primary' });
 
     await registerSource(api, provider.source);
@@ -244,7 +244,7 @@ test('inspect list and select do not call provider enumeration or open handlers'
 
 test('open-source and close-source record outcomes events and no live handles', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const openedEvents = captureEvents(window, 'audio-input:source-opened');
     const closedEvents = captureEvents(window, 'audio-input:source-closed');
     const degradedEvents = captureEvents(window, 'audio-input:source-open-degraded');
@@ -275,7 +275,7 @@ test('open-source and close-source record outcomes events and no live handles', 
     assert.equal(incompatible.payload.state, 'incompatible');
     assert.equal(degradedEvents.length >= 1, true);
 
-    const encoded = JSON.stringify(window.slopsmith.audioSession.snapshot());
+    const encoded = JSON.stringify(window.feedBack.audioSession.snapshot());
     assert.equal(encoded.includes('mediaStream'), false);
     assert.equal(encoded.includes('nativeHandle'), false);
     assert.equal(encoded.includes('token=abc'), false);
@@ -283,7 +283,7 @@ test('open-source and close-source record outcomes events and no live handles', 
 
 test('open-source reports no-owner no-handler unsupported failed and malformed provider data distinctly', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     const noOwner = await api.dispatch({ capability: 'audio-input', command: 'open-source', source: 'note_detect', payload: { requesterId: 'note_detect' } });
     assert.equal(noOwner.outcome, 'no-owner');
@@ -308,7 +308,7 @@ test('open-source reports no-owner no-handler unsupported failed and malformed p
     const malformed = await api.dispatch({ capability: 'audio-input', command: 'open-source', source: 'note_detect', payload: { requesterId: 'note_detect' } });
     assert.equal(malformed.outcome, 'handled');
 
-    const outcomes = window.slopsmith.audioSession.snapshot().recentOutcomes.filter(outcome => outcome.domain === 'audio-input');
+    const outcomes = window.feedBack.audioSession.snapshot().recentOutcomes.filter(outcome => outcome.domain === 'audio-input');
     assert.equal(outcomes.some(outcome => outcome.status === 'no-owner' || outcome.outcome === 'no-owner'), true);
     assert.equal(outcomes.some(outcome => outcome.outcome === 'unsupported-command'), true);
     assert.equal(outcomes.some(outcome => outcome.outcome === 'no-handler'), true);
@@ -317,7 +317,7 @@ test('open-source reports no-owner no-handler unsupported failed and malformed p
 
 test('open-source never switches to a non-selected source addressed by raw sourceId or logical key', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'primary-raw', logicalSourceKey: 'test:primary' });
     await registerSource(api, { sourceId: 'other-raw', logicalSourceKey: 'test:other' });
@@ -335,7 +335,7 @@ test('open-source never switches to a non-selected source addressed by raw sourc
 
 test('open-source emits an open-session-shaped payload (with requester attribution) for a pre-denied source', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const deniedEvents = captureEvents(window, 'audio-input:permission-denied');
 
     await registerSource(api, { sourceId: 'predenied-raw', logicalSourceKey: 'test:predenied', availability: 'denied', reason: 'permission denied' });
@@ -353,7 +353,7 @@ test('open-source emits an open-session-shaped payload (with requester attributi
 
 test('open-source source-open-degraded uses an open-session-shaped payload when nothing is selected', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const degraded = captureEvents(window, 'audio-input:source-open-degraded');
 
     // No source selected -> degraded; the event must share the OpenInputSessionSummary schema.
@@ -369,7 +369,7 @@ test('open-source source-open-degraded uses an open-session-shaped payload when 
 
 test('open-source reports the selected source as unavailable when no matching source is registered', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'gone-raw', logicalSourceKey: 'test:gone' });
     await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'test:gone' } });
@@ -385,7 +385,7 @@ test('open-source reports the selected source as unavailable when no matching so
 
 test('open-source and close-source ignore a payload requesterId so callers cannot spoof session ownership', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'owned-raw', logicalSourceKey: 'test:owned' });
     await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'test:owned' } });
@@ -405,7 +405,7 @@ test('open-source and close-source ignore a payload requesterId so callers canno
 
 test('open-source and close-source propagate a provider non-handled outcome exactly', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // source.open returns an explicit non-denied/failed outcome -> must propagate, not collapse to degraded.
     await registerSource(api, { sourceId: 'po-raw', logicalSourceKey: 'test:po', operationHandlers: {
@@ -430,7 +430,7 @@ test('open-source and close-source propagate a provider non-handled outcome exac
 
 test('close-source accepts logicalKey/sourceKey aliases like the other audio-input paths', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'alias-raw', logicalSourceKey: 'test:alias' });
     await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'test:alias' } });
@@ -445,7 +445,7 @@ test('close-source accepts logicalKey/sourceKey aliases like the other audio-inp
 
 test('close-source resolves by logicalSourceKey when requiredChannelShape is omitted', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // Default source is stereo; open without a channel-shape hint so the session is keyed by the
     // source's resolved shape, then close by logical key alone (requiredChannelShape is optional).
@@ -461,7 +461,7 @@ test('close-source resolves by logicalSourceKey when requiredChannelShape is omi
 
 test('close-source with an explicit wrong requiredChannelShape does not close a differently-shaped session', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // Default source supports mono+stereo; open as mono so the session is keyed by 'mono'.
     await registerSource(api, { sourceId: 'shaped-raw', logicalSourceKey: 'test:shaped' });
@@ -472,7 +472,7 @@ test('close-source with an explicit wrong requiredChannelShape does not close a 
     // An explicit, wrong shape must NOT fall back and close the mono session.
     const wrongShape = await api.dispatch({ capability: 'audio-input', command: 'close-source', source: 'note_detect', payload: { requesterId: 'note_detect', logicalSourceKey: 'test:shaped', requiredChannelShape: 'stereo' } });
     assert.equal(wrongShape.outcome, 'no-handler');
-    assert.equal(window.slopsmith.audioSession.snapshot().domains['audio-input'].totalOpenSessions, 1);
+    assert.equal(window.feedBack.audioSession.snapshot().domains['audio-input'].totalOpenSessions, 1);
 
     // The original session still closes via openSessionId.
     const right = await api.dispatch({ capability: 'audio-input', command: 'close-source', source: 'note_detect', payload: { requesterId: 'note_detect', openSessionId: open.payload.openSessionId } });
@@ -481,7 +481,7 @@ test('close-source with an explicit wrong requiredChannelShape does not close a 
 
 test('open-source rejects a non-selected duplicate sharing the logical key, addressed by sourceId', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // Native + compatibility-backed duplicate share one logical key; the native source wins.
     await registerSource(api, { sourceId: 'native-raw', logicalSourceKey: 'dup:key', providerId: 'native_provider' });
@@ -500,7 +500,7 @@ test('open-source rejects a non-selected duplicate sharing the logical key, addr
 
 test('inspect resolves a raw sourceId to its source via the stable logical key', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'inspect-raw-id', logicalSourceKey: 'test:inspectable' });
 
@@ -516,7 +516,7 @@ test('inspect resolves a raw sourceId to its source via the stable logical key',
 
 test('inspect by a shared logical key returns the native winner, not a suppressed duplicate', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // Register the compatibility duplicate FIRST so a naive logicalSourceKey-only match would pick it.
     await registerSource(api, { sourceId: 'compat-first', logicalSourceKey: 'dup:inspect', providerId: 'compat_p', compatibilitySource: 'legacy' });
@@ -531,7 +531,7 @@ test('inspect by a shared logical key returns the native winner, not a suppresse
 
 test('enumerate preserves a provider-supplied safeLabel through redaction', async () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
     const provider = makeInputProvider({
         providerId: 'labelled',
         sourceId: 'labelled-bootstrap',
@@ -551,7 +551,7 @@ test('enumerate preserves a provider-supplied safeLabel through redaction', asyn
 
 test('enumerate returns no-handler when providers exist but none support source.enumerate', async () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     audioSession.registerInputSource({ sourceId: 'nohandler-raw', logicalSourceKey: 'nh:key', providerId: 'nh_provider', operations: ['source.open'], operationHandlers: { 'source.open': () => ({ outcome: 'handled', status: 'open' }) } });
 
@@ -561,7 +561,7 @@ test('enumerate returns no-handler when providers exist but none support source.
 
 test('open-source hint mismatch echoes a pseudonymized sourceId hint without leaking the raw id', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'sel-raw', logicalSourceKey: 'test:sel' });
     await registerSource(api, { sourceId: 'other-raw', logicalSourceKey: 'test:other' });
@@ -571,13 +571,13 @@ test('open-source hint mismatch echoes a pseudonymized sourceId hint without lea
 
     assert.equal(open.outcome, 'degraded');
     assert.match(open.payload.sourceId, /^source-\d+$/);
-    const encoded = JSON.stringify({ open, snapshot: window.slopsmith.audioSession.snapshot() });
+    const encoded = JSON.stringify({ open, snapshot: window.feedBack.audioSession.snapshot() });
     assert.equal(encoded.includes('other-raw'), false);
 });
 
 test('enumerate propagates a provider source.enumerate denial instead of empty success', async () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
     const provider = makeInputProvider({
         providerId: 'denier',
         sourceId: 'denier-bootstrap',
@@ -608,7 +608,7 @@ test('enumerate propagates a provider source.enumerate denial instead of empty s
 
 test('enumerateInputSources returns distinct sourceId pseudonyms across sources', async () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
     const provider = makeInputProvider({
         providerId: 'multi_provider',
         sourceId: 'mp-bootstrap',
@@ -631,7 +631,7 @@ test('enumerateInputSources returns distinct sourceId pseudonyms across sources'
 
 test('open-session ids correlate between openSessions and recentOutcomes in a snapshot', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'corr-raw', logicalSourceKey: 'test:corr' });
     await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'test:corr' } });
@@ -639,7 +639,7 @@ test('open-session ids correlate between openSessions and recentOutcomes in a sn
     assert.equal(open.outcome, 'handled');
 
     const openId = open.payload.openSessionId;
-    const snap = window.slopsmith.audioSession.snapshot();
+    const snap = window.feedBack.audioSession.snapshot();
     assert.equal(snap.domains['audio-input'].openSessions[0].openSessionId, openId);
     const openOutcome = snap.recentOutcomes.find(outcome => outcome.operation === 'open-source' && outcome.status === 'open' && outcome.openSessionId);
     assert.ok(openOutcome);
@@ -649,8 +649,8 @@ test('open-session ids correlate between openSessions and recentOutcomes in a sn
 
 test('startSession closes open input sessions from the previous session before replacing it', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
     let providerClosed = 0;
 
     await registerSource(api, {
@@ -677,8 +677,8 @@ test('a persisted selected-source key that is not redaction-safe is ignored on r
     const window = loadAudioSession();
 
     // Simulate a tampered/mutated localStorage entry.
-    window.localStorage.setItem('slopsmith.audioInput.selectedLogicalSourceKey', '/Users/me/evil token=zzz999');
-    const snap = window.slopsmith.audioSession.startSession({ sessionId: 'main:restore-test' });
+    window.localStorage.setItem('feedBack.audioInput.selectedLogicalSourceKey', '/Users/me/evil token=zzz999');
+    const snap = window.feedBack.audioSession.startSession({ sessionId: 'main:restore-test' });
 
     assert.equal(snap.domains['audio-input'].selected, null);
     const encoded = JSON.stringify(snap);
@@ -688,8 +688,8 @@ test('a persisted selected-source key that is not redaction-safe is ignored on r
 
 test('stopSession closes open input sessions and notifies providers', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
     const closedEvents = captureEvents(window, 'audio-input:source-closed');
     let providerClosed = 0;
 
@@ -716,17 +716,17 @@ test('stopSession closes open input sessions and notifies providers', async () =
 
 test('startSession keeps the in-memory selection when persistence has failed, ignoring stale storage', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // Seed storage with a stale key, then make subsequent writes fail.
-    window.localStorage.setItem('slopsmith.audioInput.selectedLogicalSourceKey', 'stale:old-input');
+    window.localStorage.setItem('feedBack.audioInput.selectedLogicalSourceKey', 'stale:old-input');
     window.localStorage.setItem = () => { throw new Error('quota'); };
 
     await registerSource(api, { sourceId: 'current-raw', logicalSourceKey: 'current:input' });
     await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'current:input' } });
-    assert.equal(window.slopsmith.audioSession.snapshot().domains['audio-input'].storageStatus, 'failed');
+    assert.equal(window.feedBack.audioSession.snapshot().domains['audio-input'].storageStatus, 'failed');
 
-    const snap = window.slopsmith.audioSession.startSession({ sessionId: 'main:after-fail' });
+    const snap = window.feedBack.audioSession.startSession({ sessionId: 'main:after-fail' });
 
     // Must keep the in-memory 'current:input', not revert to the stale storage key.
     assert.equal(snap.domains['audio-input'].selected.logicalSourceKey, 'current:input');
@@ -735,20 +735,20 @@ test('startSession keeps the in-memory selection when persistence has failed, ig
 
 test('selected source persistence restore and storage-unavailable fallback are stable', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await registerSource(api, { sourceId: 'persisted-source', logicalSourceKey: 'persisted:input' });
     await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'persisted:input' } });
-    const afterStart = window.slopsmith.audioSession.startSession({ sessionId: 'main:next-song' });
+    const afterStart = window.feedBack.audioSession.startSession({ sessionId: 'main:next-song' });
     assert.equal(afterStart.domains['audio-input'].selected.logicalSourceKey, 'persisted:input');
     assert.equal(afterStart.domains['audio-input'].selected.restoreStatus, 'restored');
 
     const noStorageWindow = loadAudioSession();
     noStorageWindow.localStorage.setItem = () => { throw new Error('blocked'); };
-    const noStorageApi = noStorageWindow.slopsmith.capabilities;
+    const noStorageApi = noStorageWindow.feedBack.capabilities;
     await registerSource(noStorageApi, { sourceId: 'session-source', logicalSourceKey: 'session:input' });
     await noStorageApi.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'session:input' } });
-    const noStorageSnapshot = noStorageWindow.slopsmith.audioSession.startSession({ sessionId: 'main:no-storage-song' });
+    const noStorageSnapshot = noStorageWindow.feedBack.audioSession.startSession({ sessionId: 'main:no-storage-song' });
     assert.equal(noStorageSnapshot.domains['audio-input'].storageStatus, 'failed');
     assert.equal(noStorageSnapshot.domains['audio-input'].selected.logicalSourceKey, 'session:input');
 });

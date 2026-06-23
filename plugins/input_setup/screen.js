@@ -15,10 +15,10 @@
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    if (window.slopsmithInputSetup && window.slopsmithInputSetup.version === 1) return;
+    window.feedBack = window.feedBack || {};
+    if (window.feedBackInputSetup && window.feedBackInputSetup.version === 1) return;
 
-    const capabilities = window.slopsmith.capabilities;
+    const capabilities = window.feedBack.capabilities;
     const DONE_KEY = (inst) => `input_setup.done.${inst}`;
     const INSTRUMENTS = {
         guitar: { label: 'Guitar', mode: 'audio' },
@@ -36,7 +36,7 @@
 
     // The Web-MIDI source provider now ships built-in with the core midi-input
     // domain (static/capabilities/midi-input.js), so input_setup is a pure
-    // consumer — it just discovers/selects/opens through `window.slopsmith.midiInput`.
+    // consumer — it just discovers/selects/opens through `window.feedBack.midiInput`.
 
     // ── audio-input helper (guitar/bass device context) ─────────────────────
     async function _audioSources() {
@@ -176,7 +176,7 @@
 
             // Keys/drums: pick a MIDI device via midi-input and confirm a live hit.
             async function renderMidiPanel(inst) {
-                const mi = window.slopsmith.midiInput;
+                const mi = window.feedBack.midiInput;
                 // Availability is the midi-input DOMAIN being present, not the
                 // Web-MIDI browser API — the domain coordinates providers (the
                 // built-in Web-MIDI one, plus any native/desktop adapter), so
@@ -249,7 +249,7 @@
                     // Show every source the midi-input domain surfaces — not just
                     // the built-in Web-MIDI provider — so a native/desktop MIDI
                     // adapter registered with the domain is selectable too.
-                    const sources = window.slopsmith.midiInput.listSources() || [];
+                    const sources = window.feedBack.midiInput.listSources() || [];
                     if (!sources.length) { testEl && (testEl.textContent = ''); wrap.classList.remove('hidden'); select.innerHTML = '<option>No MIDI devices found</option>'; select.disabled = true; return; }
                     wrap.classList.remove('hidden');
                     select.disabled = false;
@@ -327,7 +327,7 @@
         return _runWizard({ host, instruments: instruments || [] }).then((r) => { overlay.remove(); return r; });
     }
 
-    window.slopsmithInputSetup = {
+    window.feedBackInputSetup = {
         version: 1,
         mount,
         launch,

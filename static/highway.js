@@ -23,7 +23,7 @@ function createHighway() {
     let _juceRoutingPromise = Promise.resolve();
 
     function _audioSession() {
-        return window.slopsmith && window.slopsmith.audioSession;
+        return window.feedBack && window.feedBack.audioSession;
     }
 
     function _reportAudioSessionStart(info) {
@@ -102,7 +102,7 @@ function createHighway() {
     // pause listener early-returns and never emits.
     let _chartLastAdvanceAt = 0;
     // Observed playback rate, derived from the actual delta between
-    // successive anchor updates. Slopsmith's speed slider (audio
+    // successive anchor updates. FeedBack's speed slider (audio
     // playbackRate != 1) means audio time advances slower/faster than
     // real time; interpolating with a fixed 1x rate would drift. Each
     // re-anchor refines the estimate from the latest segment. Default
@@ -113,7 +113,7 @@ function createHighway() {
     // threshold for "audio looks paused" — if setTime hasn't advanced t
     // in this long, treat as paused.
     const _CHART_MAX_INTERP_MS = 100;
-    // Visibility-aware rAF (slopsmith#246): when the canvas is hidden
+    // Visibility-aware rAF (feedBack#246): when the canvas is hidden
     // (display:none on itself or any ancestor — e.g. splitscreen's
     // workaround), pause renderer.draw and emit highway:visibility on
     // transitions so renderers that mount sibling DOM (3D Highway's
@@ -123,7 +123,7 @@ function createHighway() {
     let _visibleOverride = null;
     let _lastVisible = null;
     let animFrame = null;
-    // Paused-render throttle (slopsmith#654). The rAF loop runs
+    // Paused-render throttle (feedBack#654). The rAF loop runs
     // unconditionally and only gates on visibility + ready, never on
     // playback — so an expensive renderer (3D Highway's Three.js WebGL
     // scene) does a full render every frame even while paused. That is
@@ -177,7 +177,7 @@ function createHighway() {
     // "drums loaded but empty".
     let drumTab = null;  // { version, name, kit: [...], hits: [...] }
     let ready = false;
-    // Master-difficulty (slopsmith#48). _phrases stays null as a
+    // Master-difficulty (feedBack#48). _phrases stays null as a
     // "slider disabled" sentinel when the source chart has no ladder
     // data (GP imports, legacy sloppak) — the server omits the
     // `phrases` message entirely in that case. When populated, the
@@ -216,7 +216,7 @@ function createHighway() {
     // absent key reads as on; only an explicit 'false' hides it.
     let _showFingerHints = localStorage.getItem('showFingerHints') !== 'false';
     let _drawHooks = [];  // plugin draw callbacks: fn(ctx, W, H)
-    // slopsmith#254 — per-note judgment overlay. A plugin (note_detect)
+    // feedBack#254 — per-note judgment overlay. A plugin (note_detect)
     // registers fn(note, chartTime) -> 'hit' | 'active' | 'miss' | null
     // (or { state, alpha?, color? }); renderers consult it per visible
     // note so the gem itself can light up / a held sustain can glow,
@@ -229,7 +229,7 @@ function createHighway() {
         const v = parseFloat(localStorage.getItem('renderScale') || '1');
         return Number.isFinite(v) ? Math.max(0.25, Math.min(1, v)) : 1;
     })();
-    // Load-adaptive render scale (slopsmith#654). _renderScale is the
+    // Load-adaptive render scale (feedBack#654). _renderScale is the
     // user's manual ceiling; _autoScale is an automatic multiplier the
     // draw loop lowers when the active renderer's per-frame cost blows
     // the budget (a heavy 3D Highway WebGL scene on a weak GPU, or on
@@ -270,8 +270,8 @@ function createHighway() {
     let _lefty = localStorage.getItem('lefty') === '1';
     let _lastChordOnFretLine = null;  // chord object currently shown on fret line
     let _chordFretLineNotes = [];  // notes to render on fret line
-    const _frameMismatchWarned = new Set();  // chord ids already warned about (slopsmith#88)
-    // Per-chord render info, computed lazily once per src array (slopsmith#88).
+    const _frameMismatchWarned = new Set();  // chord ids already warned about (feedBack#88)
+    // Per-chord render info, computed lazily once per src array (feedBack#88).
     const _chordRenderInfo = new WeakMap();  // chord -> { chainIndex, chainLen, isFull, baseFret, sortedNotes, nonZeroNotes, nonZeroFrets, allMuted, hasMultipleNotes }
     let _chordRenderCacheSrc = null;
     let _chordRenderCacheInverted = null;
@@ -452,7 +452,7 @@ function createHighway() {
     }
 
     function updateSmoothAnchor(anchor, dt) {
-        // Smoothing rate balances two regressions seen in slopsmith#88:
+        // Smoothing rate balances two regressions seen in feedBack#88:
         //   rate=1.0 (was) snapped to target every frame — visible jitter
         //   on aerial passages where anchors moved every few frames.
         //   rate=0.15 (Knaifhogg) was too gentle — large jumps (low frets
@@ -560,7 +560,7 @@ function createHighway() {
         ctx.restore();
     }
 
-    // ── Per-note judgment state (slopsmith#254) ──────────────────────────
+    // ── Per-note judgment state (feedBack#254) ──────────────────────────
     // Resolves the registered provider for one chart note. Returns null
     // when no provider is set, the provider throws, it reports nothing,
     // or the reported alpha is non-positive. Otherwise a normalized
@@ -690,7 +690,7 @@ function createHighway() {
 
     // ── Drawing ──────────────────────────────────────────────────────────
     //
-    // slopsmith#36 — swappable renderers.
+    // feedBack#36 — swappable renderers.
     //
     // The default renderer below is the original 2D canvas highway. Its
     // methods still reach into the factory closure (ctx, beats, notes,
@@ -776,7 +776,7 @@ function createHighway() {
             // signal to fall back to legacy MIDI-encoded drums.
             drumTab,
 
-            // Master-difficulty (slopsmith#48)
+            // Master-difficulty (feedBack#48)
             mastery: _mastery,
             hasPhraseData: !!(_phrases && _phrases.length > 0),
             // When phrase data authored ANY handshape, respect the filtered
@@ -809,7 +809,7 @@ function createHighway() {
             project,
             fretX,
 
-            // Per-note judgment overlay (slopsmith#254). Renderers call
+            // Per-note judgment overlay (feedBack#254). Renderers call
             // this per visible note / chord-note to find out whether a
             // scorer (note_detect) has flagged it hit / actively-held /
             // missed, so the gem itself can light up instead of relying
@@ -941,8 +941,8 @@ function createHighway() {
         // per-panel picker in Wave C) that the factory auto-reverted
         // to the default renderer — so the UI / persisted selection
         // don't keep advertising the broken plugin.
-        if (window.slopsmith && typeof window.slopsmith.emit === 'function') {
-            try { window.slopsmith.emit('viz:reverted', { reason }); }
+        if (window.feedBack && typeof window.feedBack.emit === 'function') {
+            try { window.feedBack.emit('viz:reverted', { reason }); }
             catch (e) { console.error('viz:reverted emit:', e); }
         }
     }
@@ -952,8 +952,8 @@ function createHighway() {
         // and is actively drawing (its sync init returned, or its async
         // readyPromise resolved).  App.js uses this to update the Auto
         // closed-state label only once the renderer is confirmed active.
-        if (window.slopsmith && typeof window.slopsmith.emit === 'function') {
-            try { window.slopsmith.emit('viz:renderer:ready', {}); }
+        if (window.feedBack && typeof window.feedBack.emit === 'function') {
+            try { window.feedBack.emit('viz:renderer:ready', {}); }
             catch (e) { console.error('viz:renderer:ready emit:', e); }
         }
     }
@@ -1045,9 +1045,9 @@ function createHighway() {
         // canvas element across events. Lazy lookups via
         // getElementById('highway') do not need this — they'll pick
         // up the new element on their next call.
-        if (window.slopsmith && typeof window.slopsmith.emit === 'function') {
+        if (window.feedBack && typeof window.feedBack.emit === 'function') {
             try {
-                window.slopsmith.emit('highway:canvas-replaced', {
+                window.feedBack.emit('highway:canvas-replaced', {
                     oldCanvas, newCanvas, contextType: newType,
                 });
             } catch (e) { console.error('highway:canvas-replaced emit:', e); }
@@ -1252,9 +1252,9 @@ function createHighway() {
         if (v === _lastVisible) return;
         _lastVisible = v;
         if (typeof window !== 'undefined'
-            && window.slopsmith
-            && typeof window.slopsmith.emit === 'function') {
-            window.slopsmith.emit('highway:visibility', { visible: v, canvas });
+            && window.feedBack
+            && typeof window.feedBack.emit === 'function') {
+            window.feedBack.emit('highway:visibility', { visible: v, canvas });
         }
     }
 
@@ -1360,7 +1360,7 @@ function createHighway() {
         // Decide once whether this frame renders, and reuse it for both the
         // perf-HUD reset and the draw gate. `_lastVisible` going false has two
         // distinct causes that differ for a CUSTOM renderer painting its own
-        // surface (slopsmith#819):
+        // surface (feedBack#819):
         //   • override-hide (`_visibleOverride === false`) — a renderer called
         //     `setVisible(false)` because an opaque overlay covers the
         //     *canvas*. The `highway:visibility` event already fired above so
@@ -1376,7 +1376,7 @@ function createHighway() {
         //     renderer, even if an override-hide is also in effect.
         // Previously the gate was a bare `if (!_lastVisible) return`, which
         // starved an active custom renderer's draw() on an override-hide — the
-        // Tab View cursor froze in single-player (slopsmith#734).
+        // Tab View cursor froze in single-player (feedBack#734).
         let _rendering = _lastVisible;
         if (!_rendering
             && _visibleOverride === false
@@ -1558,7 +1558,7 @@ function createHighway() {
     }
 
     function drawNote(W, H, x, y, scale, string, fret, opts, ns) {
-        // ns (slopsmith#254): normalized judgment state from _noteState,
+        // ns (feedBack#254): normalized judgment state from _noteState,
         // or null/undefined. `lit` means render the gem in the bright
         // string colour with an additive halo; a miss gets a faint red
         // wash instead. ns absent → byte-for-byte the original render.
@@ -1603,7 +1603,7 @@ function createHighway() {
             ctx.fillStyle = color;
             roundRect(ctx, W/2 - hw, y - barH/2, hw * 2, barH, 2);
             ctx.fill();
-            // Judgment glow (slopsmith#254) — central halo on the bar.
+            // Judgment glow (feedBack#254) — central halo on the bar.
             // _paintGemGlow takes a half-extent; barH is the full bar height.
             _paintGemGlow(W/2, y, barH * 0.5, string, ns);
             // "0" label
@@ -1708,7 +1708,7 @@ function createHighway() {
             ctx.fill();
         }
 
-        // Judgment glow (slopsmith#254) — additive halo for a correct
+        // Judgment glow (feedBack#254) — additive halo for a correct
         // hit / held sustain, faint red wash for a miss. Drawn before
         // the fret number so the number stays legible on top.
         _paintGemGlow(x, y, isHarmonic ? half * 1.2 : half, string, ns);
@@ -1913,7 +1913,7 @@ function createHighway() {
             const sw0 = Math.max(2, 6 * p0.scale);
             const sw1 = Math.max(2, 6 * p1.scale);
 
-            // slopsmith#254 — a sustain that's currently being held
+            // feedBack#254 — a sustain that's currently being held
             // correctly "sizzles" in the bright string colour (glow +
             // flickering brightness + a crackling current down the
             // middle); otherwise the usual dim trail. A miss is left dim
@@ -1931,7 +1931,7 @@ function createHighway() {
                 // frames yet drifts on song progression; combined with
                 // _frameIdx + n.s it gives a non-correlated walk through
                 // the LUT, matching the original visual intent
-                // (slopsmith#254 comment above).
+                // (feedBack#254 comment above).
                 const seedBase = (_frameIdx + n.s + ((n.t * 60) | 0)) | 0;
                 ctx.save();
                 ctx.fillStyle = col;
@@ -1977,7 +1977,7 @@ function createHighway() {
     }
 
     function drawNotes(W, H) {
-        // Master-difficulty filter (slopsmith#48): when the source had
+        // Master-difficulty filter (feedBack#48): when the source had
         // phrase-level ladder data, render from the mastery-filtered
         // array. _filteredNotes stays null for slider-disabled sources
         // so rendering falls through to the flat notes array unchanged.
@@ -2315,7 +2315,7 @@ function createHighway() {
                 const cn = sorted[j];
                 const x = fretX(cn.f, p.scale, W);
                 const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
-                // slopsmith#254 — per-string judgment, keyed by the
+                // feedBack#254 — per-string judgment, keyed by the
                 // chord's chart time (matches how note_detect stores it).
                 const cnNs = _noteStateProvider ? _noteState(cn, ch.t) : null;
 
@@ -2606,7 +2606,7 @@ function createHighway() {
         return lo;
     }
 
-    // ── Chord rendering — chains, frames, fretline preview (slopsmith#88) ──
+    // ── Chord rendering — chains, frames, fretline preview (feedBack#88) ──
     //
     // Charts often repeat the same chord shape several times in a
     // row (e.g. a G strummed 4 times). We call a contiguous run of same-id
@@ -2962,7 +2962,7 @@ function createHighway() {
             ready = false;
             notes = []; chords = []; handShapes = []; beats = []; sections = []; anchors = []; chordTemplates = []; lyrics = []; lyricsSource = ""; toneChanges = []; toneBase = ""; drumTab = null;
             stringCount = 6;  // default until song_info arrives
-            // Reset phrase ladder + filter (slopsmith#48). _mastery
+            // Reset phrase ladder + filter (feedBack#48). _mastery
             // persists across arrangement switches — the slider's
             // position stays put. Filter rebuilds on the next `ready`
             // once the new arrangement's phrases arrive (or stays
@@ -3070,7 +3070,7 @@ function createHighway() {
 
         getLefty() { return _lefty; },
 
-        // Master-difficulty (slopsmith#48). Per-instance: splitscreen
+        // Master-difficulty (feedBack#48). Per-instance: splitscreen
         // plugins that call createHighway() separately get their own
         // _mastery via closure.
         setMastery(fraction) {
@@ -3201,7 +3201,7 @@ function createHighway() {
                             }
                             // Pick up the active arrangement's string count.
                             // Prefer the explicit `stringCount` field (added
-                            // in slopsmith-plugin-3dhighway#7); fall back to
+                            // in feedBack-plugin-3dhighway#7); fall back to
                             // `tuning.length` for older servers that haven't
                             // started emitting it (works correctly for
                             // GP-imported sources where tuning is already
@@ -3322,7 +3322,7 @@ function createHighway() {
                                         ? window._juceAudioUrl === msg.audio_url
                                         : (audio.src && audio.src.includes(audioFilename));
                                     if (!alreadyLoaded) {
-                                        const juceApi = window.slopsmithDesktop?.audio;
+                                        const juceApi = window.feedBackDesktop?.audio;
                                         if (isAudioUrl && juceApi) {
                                             // Run JUCE routing off the critical message-processing chain
                                             // so subsequent notes/chords/ready messages aren't blocked
@@ -3347,19 +3347,19 @@ function createHighway() {
                                                     // plugin barrier that never settles cannot wedge song entry;
                                                     // the try/catch + Promise.resolve wrapper also covers a
                                                     // synchronous throw from the barrier call.
-                                                    if (typeof window.slopsmithAudioBarrier === 'function') {
+                                                    if (typeof window.feedBackAudioBarrier === 'function') {
                                                         let barrierTimer;
                                                         let barrierTimedOut = false;
                                                         try {
                                                             await Promise.race([
-                                                                Promise.resolve().then(() => window.slopsmithAudioBarrier()),
+                                                                Promise.resolve().then(() => window.feedBackAudioBarrier()),
                                                                 new Promise((r) => { barrierTimer = setTimeout(() => { barrierTimedOut = true; r(); }, 3000); }),
                                                             ]);
                                                             _reportAudioMonitoring('juce-audio-barrier', barrierTimedOut ? 'unavailable' : 'active', barrierTimedOut ? 'Audio barrier timed out before native route setup' : '');
-                                                            _reportAudioBridge('audio-monitoring.audio-barrier', 'audio-monitoring', 'window.slopsmithAudioBarrier', barrierTimedOut ? 'degraded' : 'handled', barrierTimedOut ? 'Audio barrier timed out before native route setup' : '');
+                                                            _reportAudioBridge('audio-monitoring.audio-barrier', 'audio-monitoring', 'window.feedBackAudioBarrier', barrierTimedOut ? 'degraded' : 'handled', barrierTimedOut ? 'Audio barrier timed out before native route setup' : '');
                                                         } catch (_) {
                                                             _reportAudioMonitoring('juce-audio-barrier', 'failed', 'Audio barrier failed before native route setup');
-                                                            _reportAudioBridge('audio-monitoring.audio-barrier', 'audio-monitoring', 'window.slopsmithAudioBarrier', 'failed', 'Audio barrier failed before native route setup');
+                                                            _reportAudioBridge('audio-monitoring.audio-barrier', 'audio-monitoring', 'window.feedBackAudioBarrier', 'failed', 'Audio barrier failed before native route setup');
                                                         }
                                                         // Promise.race doesn't cancel the loser — clear the timer
                                                         // when the barrier wins so rapid song switches don't leak.
@@ -3385,7 +3385,7 @@ function createHighway() {
                                                         // track is loaded so song-to-song switches keep the same
                                                         // user-selected level instead of the engine default.
                                                         try {
-                                                            const apply = window.slopsmith?.audio?.applySongVolume;
+                                                            const apply = window.feedBack?.audio?.applySongVolume;
                                                             if (typeof apply === 'function') {
                                                                 await apply();
                                                             } else {
@@ -3427,8 +3427,8 @@ function createHighway() {
                                                 window._juceAudioUrl = null;
                                                 audio.src = audioUrl;
                                                 _reportAudioRoute('html5', pathLabel === '<missing>' ? 'available' : 'degraded', pathLabel === '<missing>' ? '' : 'JUCE fallback');
-                                                if (typeof window.slopsmith?.audio?.applySongVolume === 'function') {
-                                                    void window.slopsmith.audio.applySongVolume();
+                                                if (typeof window.feedBack?.audio?.applySongVolume === 'function') {
+                                                    void window.feedBack.audio.applySongVolume();
                                                 }
                                                 audio.load();
                                                 _showAudioBufferingOverlay(audio);
@@ -3454,8 +3454,8 @@ function createHighway() {
                                             window._juceAudioUrl = null;
                                             audio.src = msg.audio_url;
                                             _reportAudioRoute(isAudioUrl ? 'html5' : 'stems', 'available');
-                                            if (typeof window.slopsmith?.audio?.applySongVolume === 'function') {
-                                                void window.slopsmith.audio.applySongVolume();
+                                            if (typeof window.feedBack?.audio?.applySongVolume === 'function') {
+                                                void window.feedBack.audio.applySongVolume();
                                             }
                                             audio.load();
                                             _showAudioBufferingOverlay(audio);
@@ -3485,10 +3485,10 @@ function createHighway() {
                                 }
                             }
                             // Plugin context API — broadcast current song state
-                            if (window.slopsmith) {
+                            if (window.feedBack) {
                                 const wsPath = ws.url.split('/ws/highway/')[1] || '';
                                 const filename = decodeURIComponent(wsPath.split('?')[0]);
-                                window.slopsmith.currentSong = {
+                                window.feedBack.currentSong = {
                                     filename,
                                     title: msg.title,
                                     artist: msg.artist,
@@ -3512,7 +3512,7 @@ function createHighway() {
                                     // arrangement name.
                                     hasNotation: Boolean(msg.has_notation),
                                 };
-                                window.slopsmith.emit('song:loaded', window.slopsmith.currentSong);
+                                window.feedBack.emit('song:loaded', window.feedBack.currentSong);
                             }
                             break;
                         case 'beats':
@@ -3523,8 +3523,8 @@ function createHighway() {
                             // streaming the beats array. Verify .emit is
                             // callable too — the namespace can be partially
                             // attached during early boot.
-                            if (window.slopsmith && typeof window.slopsmith.emit === 'function') {
-                                window.slopsmith.emit('beats:loaded', { count: beats.length });
+                            if (window.feedBack && typeof window.feedBack.emit === 'function') {
+                                window.feedBack.emit('beats:loaded', { count: beats.length });
                             }
                             break;
                         case 'sections': sections = msg.data; break;
@@ -3593,10 +3593,10 @@ function createHighway() {
                             // app.js). Fires on every `ready`, including
                             // arrangement switches — unlike `_onReady`,
                             // which is a single-use callback slot.
-                            if (window.slopsmith) {
+                            if (window.feedBack) {
                                 // Reuse api.hasPhraseData so the emit and
                                 // the public getter agree on the sentinel.
-                                window.slopsmith.emit('song:ready', {
+                                window.feedBack.emit('song:ready', {
                                     hasPhraseData: api.hasPhraseData(),
                                 });
                             }
@@ -3699,14 +3699,14 @@ function createHighway() {
             if (elapsedMs > _CHART_MAX_INTERP_MS) return chartTime;
             // Scale by the observed playback rate so getTime stays
             // accurate across slowdowns / speedups (audio.playbackRate
-            // != 1 is a first-class slopsmith feature). Add songOffset
+            // != 1 is a first-class feedBack feature). Add songOffset
             // so interpolated chart time stays consistent with the
             // chartTime that setTime() / the early-return branches
             // expose — anchors are stored in raw audio time, so the
             // offset is applied on the way out.
             return _chartAnchorAudioT + (_chartObservedRate * elapsedMs) / 1000 + songOffset;
         },
-        // Returns the slopsmith <audio> element so plugins don't have to
+        // Returns the feedBack <audio> element so plugins don't have to
         // reach for `document.getElementById('audio')` directly. In JUCE
         // mode the same element is shimmed: `audio.currentTime` reads
         // jucePlayer's clock and writes go through the seek queue, and
@@ -3714,7 +3714,7 @@ function createHighway() {
         // returned element behaves uniformly regardless of mode.
         getAudioElement() {
             if (typeof window !== 'undefined' && !_audioElementBridgeRecorded) {
-                const playback = window.slopsmith && window.slopsmith.playback;
+                const playback = window.feedBack && window.feedBack.playback;
                 if (playback && typeof playback.recordBridgeHit === 'function') {
                     // Consume the one-shot before recording so a reentrant poll
                     // during the synchronous bridge-hit emit can't double-record;
@@ -3803,7 +3803,7 @@ function createHighway() {
         },
         getSongInfo() { return songInfo; },
         // Number of strings on the active arrangement
-        // (slopsmith-plugin-3dhighway#7). 4 for bass, 6 for guitar,
+        // (feedBack-plugin-3dhighway#7). 4 for bass, 6 for guitar,
         // 7+ for extended-range GP imports. Plugins should size
         // string-indexed UI / geometry against THIS rather than
         // assuming 6. Defaults to 6 between songs (until the next
@@ -3814,7 +3814,7 @@ function createHighway() {
         },
         removeDrawHook(fn) { _drawHooks = _drawHooks.filter(h => h !== fn); },
         /**
-         * Register a per-note judgment-state provider (slopsmith#254).
+         * Register a per-note judgment-state provider (feedBack#254).
          * `fn(note, chartTime)` is called by renderers for each visible
          * chart note and should return one of:
          *   - falsy → no special state (render normally)
@@ -3928,7 +3928,7 @@ function createHighway() {
             // calls that fire before the next song_info arrives don't
             // bias the clock with stale data.
             songOffset = 0.0;
-            // Reset phrase ladder + filter (slopsmith#48). _mastery
+            // Reset phrase ladder + filter (feedBack#48). _mastery
             // persists across arrangement switches — the slider's
             // position stays put. Filter rebuilds on the next `ready`
             // once the new arrangement's phrases arrive (or stays
@@ -4009,7 +4009,7 @@ function createHighway() {
         },
 
         /**
-         * Install a custom renderer. Contract (slopsmith#36):
+         * Install a custom renderer. Contract (feedBack#36):
          *   r.init(canvas, bundle) — one-time setup; owns getContext().
          *   r.draw(bundle)         — per rAF frame.
          *   r.resize(w, h)         — optional; called when canvas dims change.

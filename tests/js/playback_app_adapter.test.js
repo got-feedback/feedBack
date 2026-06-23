@@ -26,7 +26,7 @@ function buildReadySandbox() {
     const listeners = new Map();
     const sandbox = {
         window: {
-            slopsmith: {
+            feedBack: {
                 on(event, fn) { listeners.set(event, fn); },
                 off(event, fn) { if (listeners.get(event) === fn) listeners.delete(event); },
             },
@@ -84,5 +84,5 @@ test('playback adapter suppresses duplicate HTML5 pause events before emitting c
     const src = fs.readFileSync(APP_JS, 'utf8');
     const fn = extractFunction(src, 'function _installPlaybackTransportAdapter()');
 
-    assert.match(fn, /if \(!window\._juceMode && wasPlaying\) \{\s*isPlaying = false;\s*window\.slopsmith\.isPlaying = false;\s*audio\.pause\(\);\s*_markPlaybackPaused\(\);\s*\}/);
+    assert.match(fn, /if \(!window\._juceMode && wasPlaying\) \{\s*isPlaying = false;\s*window\.feedBack\.isPlaying = false;\s*audio\.pause\(\);\s*_markPlaybackPaused\(\);\s*\}/);
 });

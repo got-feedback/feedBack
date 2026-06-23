@@ -3,7 +3,7 @@
     "tour": [
         {
             "id": "welcome",
-            "title": "Welcome to Slopsmith",
+            "title": "Welcome to FeedBack",
             "content": "This is your library — every song we found in your library folder. Let's take a quick spin through the controls.",
             "shape": "bubble",
             "position": "auto"

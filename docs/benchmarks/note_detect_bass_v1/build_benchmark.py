@@ -20,11 +20,11 @@ the guitar one:
   than guitar E2 at ~82 Hz. The benchmark should exercise that
   regime explicitly so we can spot regressions there.
 
-How to run inside the slopsmith container:
+How to run inside the feedBack container:
 
     docker cp docs/benchmarks/note_detect_bass_v1/build_benchmark.py \\
-              slopsmith-web-1:/tmp/build_benchmark_bass.py
-    docker exec slopsmith-web-1 python /tmp/build_benchmark_bass.py \\
+              feedBack-web-1:/tmp/build_benchmark_bass.py
+    docker exec feedBack-web-1 python /tmp/build_benchmark_bass.py \\
               /app/static/sloppak_cache/note_detect_benchmark_bass_v1.sloppak
 
 After regenerating, copy the zip output to the tracked path with the
@@ -351,7 +351,7 @@ def build(out_dir: Path):
 
     arrangement = {
         'name': 'Bass',
-        # Pad to 6 slots even on bass — slopsmith's `tuning_name()` only
+        # Pad to 6 slots even on bass — feedBack's `tuning_name()` only
         # recognises named tunings (E Standard, Drop D, etc.) on 6-element
         # arrays, so a 4-element array shows up in the library card as the
         # raw numeric form ("0 0 0 0") instead of "E Standard". The
@@ -371,7 +371,7 @@ def build(out_dir: Path):
 
     manifest = {
         'title': 'Note Detect Bass Benchmark v1',
-        'artist': 'Slopsmith',
+        'artist': 'FeedBack',
         'album': 'Note Detection Benchmark',
         'year': 2026,
         'duration': round(end_t, 3),
@@ -389,7 +389,7 @@ def build(out_dir: Path):
             {'id': 'full', 'file': 'stems/full.ogg', 'default': True},
         ],
         'benchmark': {
-            'id': 'slopsmith-note-detect-benchmark-bass',
+            'id': 'feedBack-note-detect-benchmark-bass',
             'version': 1,
         },
     }
@@ -461,7 +461,7 @@ def _build_zip(src_dir: Path):
 
 
 def _benchmark_readme(duration_s):
-    return f"""# Slopsmith Note Detect Bass Benchmark — v1
+    return f"""# FeedBack Note Detect Bass Benchmark — v1
 
 A bass-focused companion to the guitar benchmarks
 (note_detect_v1 + note_detect_v2). Tests `note_detect` against bass-

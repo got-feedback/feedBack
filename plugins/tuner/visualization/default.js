@@ -1,5 +1,5 @@
 /**
- * Default (gauge) tuner visualization for the Slopsmith tuner plugin.
+ * Default (gauge) tuner visualization for the FeedBack tuner plugin.
  *
  * Contract: window._tunerViz_default(container) → { update(note, cents, freq), destroy() }
  *   - note: string | null  (null = no signal)

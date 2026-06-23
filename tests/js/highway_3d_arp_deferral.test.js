@@ -1,5 +1,5 @@
 // Pins the arpeggio chord-gem deferral gating in plugins/highway_3d/screen.js
-// (slopsmith#262). Without these guards, an over-eager `deferChordGems` makes
+// (feedBack#262). Without these guards, an over-eager `deferChordGems` makes
 // arpeggio frames empty when standalone notes don't actually cover the shape,
 // and an under-eager one duplicates gems on top of the standalone passage.
 //

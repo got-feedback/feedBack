@@ -39,7 +39,7 @@ def _isolate_logging(isolate_logging):
 def _setup(monkeypatch, *, fmt: str = "json", level: str = "DEBUG") -> tuple:
     """Configure logging with the given env vars and return (logger, capture_buf).
 
-    Returns a stdlib logger under the slopsmith hierarchy and a StringIO buffer
+    Returns a stdlib logger under the feedBack hierarchy and a StringIO buffer
     wired to the console handler's stream.
     """
     monkeypatch.setenv("LOG_FORMAT", fmt)
@@ -51,7 +51,7 @@ def _setup(monkeypatch, *, fmt: str = "json", level: str = "DEBUG") -> tuple:
     logging_setup.configure_logging()
 
     buf = io.StringIO()
-    root = logging.getLogger("slopsmith")
+    root = logging.getLogger("feedBack")
     for h in root.handlers:
         # Replace stream on the console StreamHandler (not file handlers).
         if isinstance(h, logging.StreamHandler) and not isinstance(
@@ -59,7 +59,7 @@ def _setup(monkeypatch, *, fmt: str = "json", level: str = "DEBUG") -> tuple:
         ):
             h.stream = buf
 
-    return logging.getLogger("slopsmith.test"), buf
+    return logging.getLogger("feedBack.test"), buf
 
 
 # ---------------------------------------------------------------------------
@@ -182,13 +182,13 @@ def test_reconfigure_picks_up_new_level(monkeypatch):
     logging_setup.configure_logging()
 
     buf = io.StringIO()
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         if isinstance(h, logging.StreamHandler) and not isinstance(
             h, logging.FileHandler
         ):
             h.stream = buf
 
-    test_log = logging.getLogger("slopsmith.reconfig")
+    test_log = logging.getLogger("feedBack.reconfig")
     test_log.info("should_not_appear")
     assert buf.getvalue() == "", "INFO should be suppressed after reconfigure to WARNING"
 
@@ -205,16 +205,16 @@ def test_log_file_creates_rotating_handler(monkeypatch, tmp_path):
     """LOG_FILE wires up a RotatingFileHandler that writes log records."""
     import logging_setup
 
-    log_path = tmp_path / "slopsmith.log"
+    log_path = tmp_path / "feedBack.log"
     monkeypatch.setenv("LOG_FORMAT", "json")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("LOG_FILE", str(log_path))
     logging_setup.configure_logging()
 
-    logging.getLogger("slopsmith.filelog").info("written_to_file")
+    logging.getLogger("feedBack.filelog").info("written_to_file")
 
     # Flush all file handlers so the write is committed.
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         h.flush()
 
     assert log_path.exists(), "log file was not created"
@@ -228,15 +228,15 @@ def test_log_file_creates_parent_dirs(monkeypatch, tmp_path):
     """LOG_FILE auto-creates missing parent directories instead of raising."""
     import logging_setup
 
-    log_path = tmp_path / "nested" / "deeper" / "slopsmith.log"
+    log_path = tmp_path / "nested" / "deeper" / "feedBack.log"
     monkeypatch.setenv("LOG_FORMAT", "json")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("LOG_FILE", str(log_path))
     logging_setup.configure_logging()
 
-    logging.getLogger("slopsmith.nested").info("nested_dir_event")
+    logging.getLogger("feedBack.nested").info("nested_dir_event")
 
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         h.flush()
 
     assert log_path.exists(), "log file was not created in nested directories"
@@ -251,7 +251,7 @@ def test_log_file_bad_path_falls_back_gracefully(monkeypatch, tmp_path, capsys):
     # parent is a file, not a directory).
     blocker = tmp_path / "blocker"
     blocker.write_text("I am a file, not a directory")
-    bad_path = str(blocker / "slopsmith.log")
+    bad_path = str(blocker / "feedBack.log")
 
     monkeypatch.setenv("LOG_FORMAT", "json")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
@@ -265,7 +265,7 @@ def test_log_file_bad_path_falls_back_gracefully(monkeypatch, tmp_path, capsys):
     assert "LOG_FILE" in captured.err
 
     # Console logging still works.
-    root = logging.getLogger("slopsmith")
+    root = logging.getLogger("feedBack")
     file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
     assert not file_handlers, "no FileHandler should have been added after open failure"
 
@@ -274,15 +274,15 @@ def test_log_file_text_mode_no_ansi(monkeypatch, tmp_path):
     """LOG_FILE with LOG_FORMAT=text must not write ANSI escape sequences."""
     import logging_setup
 
-    log_path = tmp_path / "slopsmith.log"
+    log_path = tmp_path / "feedBack.log"
     monkeypatch.setenv("LOG_FORMAT", "text")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("LOG_FILE", str(log_path))
     logging_setup.configure_logging()
 
-    logging.getLogger("slopsmith.plain").info("plain_text_event")
+    logging.getLogger("feedBack.plain").info("plain_text_event")
 
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         h.flush()
 
     content = log_path.read_text(encoding="utf-8")
@@ -295,15 +295,15 @@ def test_log_file_json_mode_is_valid_json(monkeypatch, tmp_path):
     """LOG_FILE with LOG_FORMAT=json writes one valid JSON object per line."""
     import logging_setup
 
-    log_path = tmp_path / "slopsmith.log"
+    log_path = tmp_path / "feedBack.log"
     monkeypatch.setenv("LOG_FORMAT", "json")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("LOG_FILE", str(log_path))
     logging_setup.configure_logging()
 
-    logging.getLogger("slopsmith.jsonfile").warning("json_file_event")
+    logging.getLogger("feedBack.jsonfile").warning("json_file_event")
 
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         h.flush()
 
     lines = [l for l in log_path.read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -333,13 +333,13 @@ def test_bad_log_level_falls_back_to_info_with_warning(monkeypatch, capsys):
 
     # Fallback to INFO: INFO records pass through, DEBUG does not.
     buf = io.StringIO()
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         if isinstance(h, logging.StreamHandler) and not isinstance(
             h, logging.FileHandler
         ):
             h.stream = buf
 
-    log = logging.getLogger("slopsmith.typo_level")
+    log = logging.getLogger("feedBack.typo_level")
     log.debug("should_be_filtered")
     assert buf.getvalue() == "", "DEBUG should be suppressed when level is INFO"
     log.info("should_pass")
@@ -368,13 +368,13 @@ def test_non_integer_log_level_attribute_falls_back_to_info(monkeypatch, capsys)
 
     # Verify INFO-level fallback: DEBUG suppressed, INFO passes.
     buf = io.StringIO()
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         if isinstance(h, logging.StreamHandler) and not isinstance(
             h, logging.FileHandler
         ):
             h.stream = buf
 
-    log = logging.getLogger("slopsmith.basic_format_level")
+    log = logging.getLogger("feedBack.basic_format_level")
     log.debug("should_be_filtered")
     assert buf.getvalue() == "", "DEBUG should be suppressed when level fell back to INFO"
     log.info("should_pass")
@@ -396,13 +396,13 @@ def test_bad_log_format_falls_back_to_text_with_warning(monkeypatch, capsys):
 
     # Text fallback: output should not be JSON.
     buf = io.StringIO()
-    for h in logging.getLogger("slopsmith").handlers:
+    for h in logging.getLogger("feedBack").handlers:
         if isinstance(h, logging.StreamHandler) and not isinstance(
             h, logging.FileHandler
         ):
             h.stream = buf
 
-    logging.getLogger("slopsmith.typo_fmt").info("text_fallback_event")
+    logging.getLogger("feedBack.typo_fmt").info("text_fallback_event")
     line = buf.getvalue().strip()
     assert line, "no output captured"
     with pytest.raises((json.JSONDecodeError, ValueError)):

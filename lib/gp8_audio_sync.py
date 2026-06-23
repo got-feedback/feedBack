@@ -3,7 +3,7 @@ lib/gp8_audio_sync.py — Extract embedded audio and sync data from GP8 (.gp) fi
 
 Guitar Pro 8 can embed a backing track (OGG audio) into a .gp file alongside
 sync points that map bar positions to exact audio timestamps. This module
-extracts both, giving Slopsmith:
+extracts both, giving FeedBack:
 
   1. A real backing track audio file (OGG) — no MIDI synthesis needed
   2. A precise audio_offset (seconds) from the FramePadding value
@@ -45,7 +45,7 @@ import io
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_log = logging.getLogger("slopsmith.lib.gp8_audio_sync")
+_log = logging.getLogger("feedBack.lib.gp8_audio_sync")
 
 # GP8 embeds the backing track under Content/Assets/ as OGG *or* one of
 # several other formats (MP3 is common — e.g. tracks rendered straight

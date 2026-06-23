@@ -23,12 +23,12 @@ test('venueMoodClassForState maps performance states', () => {
     assert.equal(venue.venueMoodClassForState('unknown'), 'venue-mood-state-idle');
 });
 
-test('setting persistence key is slopsmith-venue-mood-fx', () => {
-    assert.equal(venue.KEY, 'slopsmith-venue-mood-fx');
+test('setting persistence key is feedBack-venue-mood-fx', () => {
+    assert.equal(venue.KEY, 'feedBack-venue-mood-fx');
 });
 
-test('venue motion setting key is slopsmith-venue-motion', () => {
-    assert.equal(venue.MOTION_KEY, 'slopsmith-venue-motion');
+test('venue motion setting key is feedBack-venue-motion', () => {
+    assert.equal(venue.MOTION_KEY, 'feedBack-venue-motion');
     assert.equal(venue.MOTION_DEFAULT, 'subtle');
 });
 
@@ -296,7 +296,7 @@ test('venue visualization session hides strip and marks scene pending', () => {
     sceneWash.classList.add('hidden');
     const vizPicker = new El();
     vizPicker.value = 'venue';
-    const storage = new Map([['slopsmith-venue-mood-fx', 'full']]);
+    const storage = new Map([['feedBack-venue-mood-fx', 'full']]);
     const origDocument = global.document;
     global.document = {
         getElementById(id) {
@@ -404,7 +404,7 @@ test('window.v3VenueMoodFx exposes getState with venue flag', () => {
     assert.equal(typeof st.isVenueVisualization, 'boolean');
 });
 
-test('setMotion persists slopsmith-venue-motion and syncs renderer', () => {
+test('setMotion persists feedBack-venue-motion and syncs renderer', () => {
     const storage = new Map();
     let synced = null;
     global.localStorage = {
@@ -416,7 +416,7 @@ test('setMotion persists slopsmith-venue-motion and syncs renderer', () => {
     global.document = { getElementById: () => null };
     try {
         assert.equal(venue.setMotion('full'), 'full');
-        assert.equal(storage.get('slopsmith-venue-motion'), 'full');
+        assert.equal(storage.get('feedBack-venue-motion'), 'full');
         assert.equal(synced, 'full');
         assert.equal(venue.setMotion('nope'), 'subtle');
         assert.equal(synced, 'subtle');
@@ -448,7 +448,7 @@ test('bindRuntime wires venue motion select', () => {
     let synced = null;
     globalThis.h3dVenueSceneSetMotionMode = (mode) => { synced = mode; };
     global.localStorage = {
-        getItem(k) { return k === 'slopsmith-venue-motion' ? 'subtle' : null; },
+        getItem(k) { return k === 'feedBack-venue-motion' ? 'subtle' : null; },
         setItem() {},
     };
     global.document = {

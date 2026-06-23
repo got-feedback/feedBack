@@ -37,11 +37,11 @@ test('audio mixer opens with audio-mix command-backed controls', async ({ page }
   await page.goto('/');
   await page.waitForSelector('#btn-mixer', { state: 'attached', timeout: 10000 });
 
-  await page.evaluate(() => window.slopsmith?.audio?.openMixer?.());
+  await page.evaluate(() => window.feedBack?.audio?.openMixer?.());
   await expect(page.locator('#mixer-popover')).not.toHaveClass(/hidden/);
 
   const faderState = await page.evaluate(async () => {
-    const api = window.slopsmith?.capabilities;
+    const api = window.feedBack?.capabilities;
     if (!api?.command) return { outcome: 'no-owner' };
     const result = await api.command('audio-mix', 'list-faders', { requester: 'browser-smoke' });
     return { outcome: result.outcome, count: result.payload?.faders?.length || 0 };

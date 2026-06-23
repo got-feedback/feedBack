@@ -58,7 +58,7 @@ function loadInspector(snapshot, options = {}) {
             for (const handler of (listeners.get(event.type) || []).slice()) handler(event);
             return true;
         },
-        slopsmith: {
+        feedBack: {
             capabilities: {
                 snapshotDiagnostics: () => (typeof snapshot === 'function' ? snapshot() : snapshot),
             },
@@ -90,7 +90,7 @@ test('capability inspector renders playback session route loop bridges and outco
         expectedCompatibilityShims: [],
     };
     const playbackSnapshot = {
-        schema: 'slopsmith.playback.diagnostics.v1',
+        schema: 'feedBack.playback.diagnostics.v1',
         state: {
             sessionId: 'playback-1',
             state: 'playing',
@@ -158,8 +158,8 @@ test('capability inspector renders shims inside their capability domain', () => 
                 lastHitAt: '2026-05-24T00:00:00.000Z',
             },
             {
-                shimId: 'runtime:library:refresh:window.slopsmith.libraryProviders.refresh',
-                source: 'window.slopsmith.libraryProviders.refresh',
+                shimId: 'runtime:library:refresh:window.feedBack.libraryProviders.refresh',
+                source: 'window.feedBack.libraryProviders.refresh',
                 capability: 'library',
                 legacySurface: 'refresh',
                 status: 'used',
@@ -243,8 +243,8 @@ test('capability inspector renders shims inside their capability domain', () => 
     assert.doesNotMatch(content, /id="capability-domain-library-graph-frame"/);
     assert.doesNotMatch(content, /Domain summary/);
 
-    window.__slopsmithCapabilityInspector.expandedDomains = { library: true, playback: true, 'custom.practice': true };
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.expandedDomains = { library: true, playback: true, 'custom.practice': true };
+    window.__feedBackCapabilityInspector.render();
     const expandedContent = elements.get('capability-inspector-content').innerHTML;
 
     assert.match(expandedContent, /aria-expanded="true"/);
@@ -307,7 +307,7 @@ test('capability inspector renders shims inside their capability domain', () => 
     assert.doesNotMatch(expandedContent, /data-copy-surface=/);
 
     filterElement.value = 'playback';
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.render();
     const selectedContent = elements.get('capability-inspector-content').innerHTML;
 
     assert.match(selectedContent, /data-domain-graph="playback"/);
@@ -400,11 +400,11 @@ test('capability inspector renders shims inside their capability domain', () => 
     assert.ok(selectedContent.indexOf('data-legend-icon="operation"') < selectedContent.indexOf('data-legend-icon="command"'));
     assert.doesNotMatch(selectedContent, /Domain group/);
 
-    window.__slopsmithCapabilityInspector.graphCollapsedGroups = {
+    window.__feedBackCapabilityInspector.graphCollapsedGroups = {
         'playback|provider|all|command': true,
         'playback|participant|2|event': true,
     };
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.render();
     const collapsedGroupContent = elements.get('capability-inspector-content').innerHTML;
     assert.match(collapsedGroupContent, /data-graph-group-collapsed="true"/);
     assert.match(collapsedGroupContent, /data-graph-capability-port="group:command"/);
@@ -416,12 +416,12 @@ test('capability inspector renders shims inside their capability domain', () => 
     assert.doesNotMatch(collapsedParticipantButton, /<svg class="h-3\.5 w-3\.5/);
     assert.doesNotMatch(collapsedParticipantButton, /<path d="m9 6 6 6-6 6"\/>/);
 
-    window.__slopsmithCapabilityInspector.graphCollapsedGroups = {};
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.graphCollapsedGroups = {};
+    window.__feedBackCapabilityInspector.render();
 
     filterElement.value = 'library';
-    window.__slopsmithCapabilityInspector.domainGraphFilter = 'operations';
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.domainGraphFilter = 'operations';
+    window.__feedBackCapabilityInspector.render();
     const operationsOnlyContent = elements.get('capability-inspector-content').innerHTML;
     assert.match(operationsOnlyContent, /aria-pressed="true" class="rounded border px-2 py-1 transition bg-purple-500\/40 text-white border-purple-400\/40">Operations/);
     assert.match(operationsOnlyContent, /data-capability-node="operation:query-page"/);
@@ -430,25 +430,25 @@ test('capability inspector renders shims inside their capability domain', () => 
     assert.doesNotMatch(operationsOnlyContent, /data-capability-node="event:providers-refreshed"/);
 
     filterElement.value = 'playback';
-    window.__slopsmithCapabilityInspector.domainGraphFilter = 'events';
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.domainGraphFilter = 'events';
+    window.__feedBackCapabilityInspector.render();
     const eventsOnlyContent = elements.get('capability-inspector-content').innerHTML;
     assert.match(eventsOnlyContent, /aria-pressed="true" class="rounded border px-2 py-1 transition bg-purple-500\/40 text-white border-purple-400\/40">Events/);
     assert.match(eventsOnlyContent, /data-capability-node="event:song:ready"/);
     assert.doesNotMatch(eventsOnlyContent, /data-capability-node="command:play"/);
 
     filterElement.value = 'library';
-    window.__slopsmithCapabilityInspector.domainGraphFilter = 'shimmed';
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.domainGraphFilter = 'shimmed';
+    window.__feedBackCapabilityInspector.render();
     const shimmedOnlyContent = elements.get('capability-inspector-content').innerHTML;
     assert.match(shimmedOnlyContent, /data-link-kind="shimmed"/);
     assert.doesNotMatch(shimmedOnlyContent, /data-link-kind="observed"/);
     assert.match(shimmedOnlyContent, /title="4 participants" aria-label="4 participants" role="img"/);
 
     filterElement.value = '';
-    window.__slopsmithCapabilityInspector.expandedDomains = {};
-    window.__slopsmithCapabilityInspector.domainGraphFilter = 'all';
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.expandedDomains = {};
+    window.__feedBackCapabilityInspector.domainGraphFilter = 'all';
+    window.__feedBackCapabilityInspector.render();
     const collapsedFilteredContent = elements.get('capability-inspector-content').innerHTML;
     assert.match(collapsedFilteredContent, /data-domain-graph="playback" data-domain-graph-expanded="false"[\s\S]*?title="3 participants" aria-label="3 participants" role="img"/);
 });
@@ -468,7 +468,7 @@ test('capability inspector drops stale future-domain filter options', () => {
 
     filter.innerHTML += '<option value="ui.player-panels">ui.player-panels</option>';
     filter.value = 'ui.player-panels';
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.render();
 
     assert.equal(filter.value, '');
     assert.doesNotMatch(filter.innerHTML, /ui\.player-panels/);
@@ -492,9 +492,9 @@ test('capability inspector refreshes collapsed counts after runtime capability c
 
     currentSnapshot = {
         ...currentSnapshot,
-        participants: [{ pluginId: 'core' }, { pluginId: 'window.slopsmith.libraryProviders.refresh' }, { pluginId: 'remote_library_client' }],
+        participants: [{ pluginId: 'core' }, { pluginId: 'window.feedBack.libraryProviders.refresh' }, { pluginId: 'remote_library_client' }],
         compatibilityShims: [
-            { shimId: 'runtime:library:refresh:window.slopsmith.libraryProviders.refresh', source: 'window.slopsmith.libraryProviders.refresh', capability: 'library', legacySurface: 'refresh', status: 'used', hitCount: 1 },
+            { shimId: 'runtime:library:refresh:window.feedBack.libraryProviders.refresh', source: 'window.feedBack.libraryProviders.refresh', capability: 'library', legacySurface: 'refresh', status: 'used', hitCount: 1 },
             { shimId: 'runtime:library:select:remote_library_client', source: 'remote_library_client', capability: 'library', legacySurface: 'select', status: 'used', hitCount: 1 },
         ],
         expectedCompatibilityShims: [
@@ -502,7 +502,7 @@ test('capability inspector refreshes collapsed counts after runtime capability c
             { capability: 'library', legacySurface: 'select', reason: 'legacy library provider selector calls are counted as library.select command use' },
         ],
     };
-    window.dispatchEvent(new window.CustomEvent('slopsmith:capabilities:changed'));
+    window.dispatchEvent(new window.CustomEvent('feedBack:capabilities:changed'));
 
     const refreshedContent = elements.get('capability-inspector-content').innerHTML;
     assert.match(refreshedContent, /data-domain-graph="library" data-domain-graph-expanded="false"[\s\S]*?title="2 participants"/);
@@ -518,7 +518,7 @@ test('capability inspector links library legacy command surfaces to canonical en
         ],
         participants: [{ pluginId: 'core' }],
         compatibilityShims: [
-            { shimId: 'runtime:library:refresh:window.slopsmith.libraryProviders.refresh', source: 'window.slopsmith.libraryProviders.refresh', capability: 'library', legacySurface: 'refresh', status: 'used', hitCount: 1 },
+            { shimId: 'runtime:library:refresh:window.feedBack.libraryProviders.refresh', source: 'window.feedBack.libraryProviders.refresh', capability: 'library', legacySurface: 'refresh', status: 'used', hitCount: 1 },
             { shimId: 'runtime:library:select:remote_library_client', source: 'remote_library_client', capability: 'library', legacySurface: 'select', status: 'used', hitCount: 1 },
             { shimId: 'runtime:library:sync-song:remote_library_client', source: 'remote_library_client', capability: 'library', legacySurface: 'sync-song', status: 'used', hitCount: 1 },
         ],
@@ -532,9 +532,9 @@ test('capability inspector links library legacy command surfaces to canonical en
     const filter = elements.get('capability-inspector-filter');
 
     filter.value = 'library';
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.render();
     const libraryContent = elements.get('capability-inspector-content').innerHTML;
-    assert.match(libraryContent, /data-domain-participant-card="window\.slopsmith\.libraryProviders\.refresh"/);
+    assert.match(libraryContent, /data-domain-participant-card="window\.feedBack\.libraryProviders\.refresh"/);
     assert.match(libraryContent, /data-domain-participant-card="remote_library_client"/);
     assert.match(libraryContent, /data-link-kind="shimmed"[^>]*>refresh<\/span>/);
     assert.match(libraryContent, /data-link-kind="shimmed"[^>]*>select<\/span>/);
@@ -575,7 +575,7 @@ test('selected domain participant count includes shim-only graph participants', 
         ],
         participants: [{ pluginId: 'core' }],
         compatibilityShims: [
-            { shimId: 'runtime:library:refresh:window.slopsmith.libraryProviders.refresh', source: 'window.slopsmith.libraryProviders.refresh', capability: 'library', legacySurface: 'refresh', status: 'used', hitCount: 1 },
+            { shimId: 'runtime:library:refresh:window.feedBack.libraryProviders.refresh', source: 'window.feedBack.libraryProviders.refresh', capability: 'library', legacySurface: 'refresh', status: 'used', hitCount: 1 },
             { shimId: 'runtime:library:select:remote_library_client', source: 'remote_library_client', capability: 'library', legacySurface: 'select', status: 'used', hitCount: 1 },
         ],
         expectedCompatibilityShims: [],
@@ -583,12 +583,12 @@ test('selected domain participant count includes shim-only graph participants', 
     const { window, elements } = loadInspector(snapshot);
     const filter = elements.get('capability-inspector-filter');
     filter.value = 'library';
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.render();
     const selectedContent = elements.get('capability-inspector-content').innerHTML;
 
     assert.match(selectedContent, /title="2 participants"/);
     assert.doesNotMatch(selectedContent, /2 Participants/);
-    assert.match(selectedContent, /data-domain-participant-card="window\.slopsmith\.libraryProviders\.refresh"/);
+    assert.match(selectedContent, /data-domain-participant-card="window\.feedBack\.libraryProviders\.refresh"/);
     assert.match(selectedContent, /data-domain-participant-card="remote_library_client"/);
 });
 
@@ -604,9 +604,9 @@ test('capability inspector renders audio-mix fader diagnostics from audio-sessio
         expectedCompatibilityShims: [],
     };
     const { window, elements } = loadInspector(snapshot);
-    window.slopsmith.audioSession = {
+    window.feedBack.audioSession = {
         snapshot: () => ({
-            schema: 'slopsmith.audio_session.diagnostics.v1',
+            schema: 'feedBack.audio_session.diagnostics.v1',
             session: { route: { routeKind: 'desktop', availability: 'degraded' }, analyser: { source: 'plugin', availability: 'available' } },
             domains: {
                 'audio-mix': {
@@ -627,7 +627,7 @@ test('capability inspector renders audio-mix fader diagnostics from audio-sessio
         }),
     };
 
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.render();
     const content = elements.get('capability-inspector-content').innerHTML;
 
     assert.match(content, /data-audio-session-support/);
@@ -649,9 +649,9 @@ test('capability inspector renders audio-input sources selection sessions bridge
         expectedCompatibilityShims: [],
     };
     const { window, elements } = loadInspector(snapshot);
-    window.slopsmith.audioSession = {
+    window.feedBack.audioSession = {
         snapshot: () => ({
-            schema: 'slopsmith.audio_session.diagnostics.v1',
+            schema: 'feedBack.audio_session.diagnostics.v1',
             session: { route: { routeKind: 'html5', availability: 'available' }, analyser: { source: 'none', availability: 'unavailable' } },
             domains: {
                 'audio-mix': { participants: [], faders: [], route: { routeKind: 'html5', availability: 'available' }, analyser: { source: 'none', availability: 'unavailable' }, bridges: [] },
@@ -673,7 +673,7 @@ test('capability inspector renders audio-input sources selection sessions bridge
         }),
     };
 
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.render();
     const content = elements.get('capability-inspector-content').innerHTML;
 
     assert.match(content, /Input: Input 1:available:mono:native, Legacy Input:available:stereo:compatibility:superseded/);
@@ -695,9 +695,9 @@ test('capability inspector renders audio-monitoring providers sessions direct mo
         expectedCompatibilityShims: [],
     };
     const { window, elements } = loadInspector(snapshot);
-    window.slopsmith.audioSession = {
+    window.feedBack.audioSession = {
         snapshot: () => ({
-            schema: 'slopsmith.audio_session.diagnostics.v1',
+            schema: 'feedBack.audio_session.diagnostics.v1',
             session: { route: { routeKind: 'desktop', availability: 'available' }, analyser: { source: 'plugin', availability: 'available' } },
             domains: {
                 'audio-mix': { participants: [], faders: [], route: { routeKind: 'desktop', availability: 'available' }, analyser: { source: 'plugin', availability: 'available' }, bridges: [] },
@@ -726,7 +726,7 @@ test('capability inspector renders audio-monitoring providers sessions direct mo
         }),
     };
 
-    window.__slopsmithCapabilityInspector.render();
+    window.__feedBackCapabilityInspector.render();
     const content = elements.get('capability-inspector-content').innerHTML;
 
     assert.match(content, /Monitoring providers: Native Monitor:available:native, Legacy Monitor:available:compatibility:superseded/);

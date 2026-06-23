@@ -1,14 +1,14 @@
 # Plugin styling — the `styles` capability
 
-> Building for the redesigned **v3 UI** (`SLOPSMITH_UI=v3` / `/v3`)? v3 uses `fb-*`
+> Building for the redesigned **v3 UI** (`FEEDBACK_UI=v3` / `/v3`)? v3 uses `fb-*`
 > design tokens and a restructured player chrome with a dedicated plugin-control
 > slot. See **[plugin-v3-ui.md](plugin-v3-ui.md)** for the player-chrome contract
 > plugins must follow in v3.
 
-Slopsmith serves Tailwind as a **prebuilt** stylesheet
+FeedBack serves Tailwind as a **prebuilt** stylesheet
 (`static/tailwind.min.css`), never the runtime Play CDN. The CDN's on-the-fly
 JIT rescanned the DOM on the main thread and dropped ~26% of frames with the 3D
-highway running (slopsmith-desktop#110). See **constitution Principle II**.
+highway running (feedBack-desktop#110). See **constitution Principle II**.
 
 A prebuilt stylesheet only contains the classes the build scanner saw in **core
 source at core build time**. That has a consequence for plugins:

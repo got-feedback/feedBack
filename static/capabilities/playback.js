@@ -2,12 +2,12 @@
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    const capabilities = window.slopsmith.capabilities;
+    window.feedBack = window.feedBack || {};
+    const capabilities = window.feedBack.capabilities;
     if (!capabilities || capabilities.version !== 1) return;
-    if (window.slopsmith.playback && window.slopsmith.playback.version === 1) return;
+    if (window.feedBack.playback && window.feedBack.playback.version === 1) return;
 
-    const SCHEMA = 'slopsmith.playback.diagnostics.v1';
+    const SCHEMA = 'feedBack.playback.diagnostics.v1';
     const OWNER_ID = 'core.playback';
     const MAX_CURRENT_OUTCOMES = 50;
     const MAX_CURRENT_EVENTS = 50;
@@ -659,12 +659,12 @@
     }
 
     function _flushDiagnostics() {
-        const diagnostics = window.slopsmith && window.slopsmith.diagnostics;
+        const diagnostics = window.feedBack && window.feedBack.diagnostics;
         if (diagnostics && typeof diagnostics.contribute === 'function') {
             try { diagnostics.contribute('playback', snapshot({ exportMode: 'exported' })); }
             catch (_) { /* diagnostics must never break playback */ }
         }
-        try { window.dispatchEvent(new CustomEvent('slopsmith:playback:changed', { detail: { timestamp: _now() } })); }
+        try { window.dispatchEvent(new CustomEvent('feedBack:playback:changed', { detail: { timestamp: _now() } })); }
         catch (_) { /* support UI refresh is best effort */ }
     }
 
@@ -1062,7 +1062,7 @@
     }
 
     function _installLegacyEventBridge() {
-        if (!window.slopsmith || typeof window.slopsmith.on !== 'function') return;
+        if (!window.feedBack || typeof window.feedBack.on !== 'function') return;
         const map = {
             'song:loading': 'loading',
             'song:loaded': 'ready',
@@ -1076,7 +1076,7 @@
             'loop:restart': 'loop-restarted',
         };
         for (const [legacy, playbackEvent] of Object.entries(map)) {
-            window.slopsmith.on(legacy, event => {
+            window.feedBack.on(legacy, event => {
                 // Skip echoes of our own command: while a command handler is
                 // driving the transport adapter, the song:* events it produces
                 // are not genuine legacy-surface usage and would duplicate the
@@ -1141,7 +1141,7 @@
         inspect: () => snapshot({ exportMode: 'exported' }),
     };
 
-    window.slopsmith.playback = api;
+    window.feedBack.playback = api;
     _installLegacyEventBridge();
     _contributeDiagnostics();
 })();

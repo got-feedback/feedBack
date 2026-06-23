@@ -1,16 +1,16 @@
-"""Build the Slopsmith Diagnostic — Basic Guitar sloppak (POC).
+"""Build the FeedBack Diagnostic — Basic Guitar sloppak (POC).
 
 A short, generated, non-copyrighted mini-song for technique-assessment
 style checks: open strings, one fretted note, and repeated E5 power chords.
 Click-track backing only — no external audio.
 
-Run from the slopsmith repo root:
+Run from the feedBack repo root:
 
     python3 docs/diagnostics/build_diagnostic_basic_guitar.py
 
 Output (zip archive):
 
-    docs/diagnostics/slopsmith-diagnostic-basic-guitar.sloppak
+    docs/diagnostics/feedBack-diagnostic-basic-guitar.sloppak
 
 Pattern matches docs/benchmarks/note_detect_v1/build_benchmark.py.
 """
@@ -289,8 +289,8 @@ def build_chart():
     }
 
     manifest = {
-        'title': 'Slopsmith Diagnostic — Basic Guitar',
-        'artist': 'Slopsmith',
+        'title': 'FeedBack Diagnostic — Basic Guitar',
+        'artist': 'FeedBack',
         'album': 'Technique Assessment Diagnostics',
         'year': 2026,
         'duration': round(end_t, 3),
@@ -405,7 +405,7 @@ def build(output_zip: Path) -> dict:
 
 
 def _diagnostic_readme(duration_s: float) -> str:
-    return f"""# Slopsmith Diagnostic — Basic Guitar
+    return f"""# FeedBack Diagnostic — Basic Guitar
 
 Short generated diagnostic track for technique-assessment style checks.
 Non-copyrighted click-track backing only.
@@ -422,7 +422,7 @@ Built by docs/diagnostics/build_diagnostic_basic_guitar.py
 
 def main():
     repo_root = Path(__file__).resolve().parents[2]
-    default_out = Path(__file__).resolve().parent / 'slopsmith-diagnostic-basic-guitar.sloppak'
+    default_out = Path(__file__).resolve().parent / 'feedBack-diagnostic-basic-guitar.sloppak'
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else default_out
     if not out.is_absolute():
         out = repo_root / out

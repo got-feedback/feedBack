@@ -7,7 +7,7 @@ services:
       # Mount your song library folder (adjust path for your system)
       - ${LIBRARY_PATH:-./library}:/dlc
       # Persistent config and cache
-      - slopsmith-config:/config
+      - feedBack-config:/config
       # Mount source for live reload during development
       - ./static:/app/static
       - ./server.py:/app/server.py
@@ -28,10 +28,10 @@ services:
       # Logging (optional)
       # - LOG_LEVEL=DEBUG       # DEBUG | INFO | WARNING | ERROR  (default: INFO)
       # - LOG_FORMAT=json       # json | text  (default: text — coloured console)
-      # - LOG_FILE=/config/slopsmith.log  # also write to a persistent file
+      # - LOG_FILE=/config/feedBack.log  # also write to a persistent file
     dns:
       - 8.8.8.8
       - 1.1.1.1
 
 volumes:
-  slopsmith-config:
+  feedBack-config:

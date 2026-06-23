@@ -4,7 +4,7 @@ const { loadAudioSession, runBrowserScript, installMixerDom } = require('./audio
 
 test('audio session records route transitions without blocking callers', () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
 
     const html5 = audioSession.setRoute({ routeKind: 'html5', availability: 'available', selectedByUser: true });
     const stems = audioSession.setRoute({ routeKind: 'stems', availability: 'available', selectedByUser: true });
@@ -24,10 +24,10 @@ test('legacy song fader registration is bridged into audio-mix participants and 
     window.localStorage.setItem('volume', '65');
 
     runBrowserScript(window, 'static/audio-mixer.js');
-    assert.equal(typeof window.slopsmith.audio.applySongVolume, 'function');
+    assert.equal(typeof window.feedBack.audio.applySongVolume, 'function');
 
-    await window.slopsmith.audio.applySongVolume(72);
-    const snapshot = window.slopsmith.audioSession.snapshot();
+    await window.feedBack.audio.applySongVolume(72);
+    const snapshot = window.feedBack.audioSession.snapshot();
     const songParticipant = snapshot.domains['audio-mix'].participants.find(p => p.participantId === 'core.song');
 
     assert.equal(audio.volume, 0.72);
@@ -43,27 +43,27 @@ test('song volume persists through html5 stems and desktop routes', async () => 
     const stemsCalls = [];
     const desktopCalls = [];
     window.localStorage.setItem('volume', '41');
-    window.slopsmith.stems = { setMasterVolume(value) { stemsCalls.push(value); return Promise.resolve(); } };
-    window.slopsmithDesktop = { audio: { setGain(name, value) { desktopCalls.push([name, value]); return Promise.resolve(); } } };
+    window.feedBack.stems = { setMasterVolume(value) { stemsCalls.push(value); return Promise.resolve(); } };
+    window.feedBackDesktop = { audio: { setGain(name, value) { desktopCalls.push([name, value]); return Promise.resolve(); } } };
 
     runBrowserScript(window, 'static/audio-mixer.js');
-    assert.equal(window.slopsmith.audio.readSongVolume(), 41);
+    assert.equal(window.feedBack.audio.readSongVolume(), 41);
 
-    await window.slopsmith.audio.applySongVolume(55);
+    await window.feedBack.audio.applySongVolume(55);
     assert.equal(audio.volume, 0.55);
     assert.equal(stemsCalls.at(-1), 0.55);
-    assert.equal(window.slopsmith.audioSession.snapshot().domains['audio-mix'].route.routeKind, 'stems');
+    assert.equal(window.feedBack.audioSession.snapshot().domains['audio-mix'].route.routeKind, 'stems');
 
     window._juceMode = true;
-    delete window.slopsmith.stems;
-    await window.slopsmith.audio.applySongVolume(66);
+    delete window.feedBack.stems;
+    await window.feedBack.audio.applySongVolume(66);
     assert.deepEqual(desktopCalls.at(-1), ['backing', 0.66]);
-    assert.equal(window.slopsmith.audioSession.snapshot().domains['audio-mix'].route.routeKind, 'juce');
+    assert.equal(window.feedBack.audioSession.snapshot().domains['audio-mix'].route.routeKind, 'juce');
 });
 
 test('stems provider ownership remains separate from audio-mix stem participation', async () => {
     const window = loadAudioSession();
-    const audioSession = window.slopsmith.audioSession;
+    const audioSession = window.feedBack.audioSession;
     audioSession.startSession({ sessionId: 'main:stems-song' });
     audioSession.registerStemOwner({ ownerId: 'stems_plugin', stemIds: ['guitar', 'bass'], availability: 'available' });
     audioSession.registerMixParticipant({
@@ -76,8 +76,8 @@ test('stems provider ownership remains separate from audio-mix stem participatio
         operations: ['fader.get-value', 'fader.set-value'],
     });
 
-    const stemsInspect = await window.slopsmith.capabilities.dispatch({ capability: 'stems', command: 'inspect', source: 'test' });
-    const mixInspect = await window.slopsmith.capabilities.dispatch({ capability: 'audio-mix', command: 'inspect', source: 'test' });
+    const stemsInspect = await window.feedBack.capabilities.dispatch({ capability: 'stems', command: 'inspect', source: 'test' });
+    const mixInspect = await window.feedBack.capabilities.dispatch({ capability: 'audio-mix', command: 'inspect', source: 'test' });
 
     assert.equal(stemsInspect.payload.owner.ownerId, 'stems_plugin');
     assert.equal(mixInspect.payload.faders.some(fader => fader.kind === 'stem' && fader.ownerPluginId === 'stems_plugin'), true);
@@ -85,8 +85,8 @@ test('stems provider ownership remains separate from audio-mix stem participatio
 
 test('audio-input selection and registered providers survive song session switches without live sessions', async () => {
     const window = loadAudioSession();
-    const api = window.slopsmith.capabilities;
-    const audioSession = window.slopsmith.audioSession;
+    const api = window.feedBack.capabilities;
+    const audioSession = window.feedBack.audioSession;
 
     audioSession.startSession({ sessionId: 'main:first-song', songKey: 'first-song.sloppak', songFormat: 'sloppak' });
     await api.dispatch({

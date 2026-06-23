@@ -1,6 +1,6 @@
 # Plugin Capability Inventory
 
-This report inventories the currently included plugins staged in `plugins/` and maps their observed behavior to Slopsmith capability domains. It is intended to inform the capability roadmap and the next migration specs now that PR1, the audio graph/session slice, playback, and audio-effects are active capability surfaces.
+This report inventories the currently included plugins staged in `plugins/` and maps their observed behavior to FeedBack capability domains. It is intended to inform the capability roadmap and the next migration specs now that PR1, the audio graph/session slice, playback, and audio-effects are active capability surfaces.
 
 ## Scope And Method
 
@@ -8,7 +8,7 @@ This report inventories the currently included plugins staged in `plugins/` and 
 - Verification pass: the original bundled-plugin scan found 25 plugins with backend `routes.py` and 14 plugins with `settings.html`. First-party plugin repos outside `plugins/` were checked separately from their current manifests and handoff docs.
 - Most bundled plugin entries below are still inferred/recommended declarations. Current first-party manifests now declare active capability intent for `diagnostics`, `pipeline`, `library`, `audio-mix`, `audio-input`, `audio-monitoring`, `stems`, `playback`, `audio-effects`, `jobs`, and privileged capability inventory surfaces where their repos have already migrated.
 - Manifest fields such as `nav`, `screen`, `settings`, `routes`, and `type: "visualization"` were treated as high-confidence evidence.
-- Code patterns such as `window.slopsmithViz_*`, `window.playSong` wrappers, `window.showScreen` wrappers, `window.registerShortcut`, `window.slopsmithTour.register`, `window.slopsmith.audio.registerFader`, `highway.setNoteStateProvider`, and route/WebSocket handlers were treated as behavior evidence.
+- Code patterns such as `window.feedBackViz_*`, `window.playSong` wrappers, `window.showScreen` wrappers, `window.registerShortcut`, `window.feedBackTour.register`, `window.feedBack.audio.registerFader`, `highway.setNoteStateProvider`, and route/WebSocket handlers were treated as behavior evidence.
 
 ## Roadmap Baseline
 
@@ -231,11 +231,11 @@ For active domains, command and operation names should follow [capability-domain
 
 ## Highway String Colors (data-plane API)
 
-User-customizable per-string highway colors (the "Highway String Colors" setting in the 3D Highway plugin's panel) are **not** a capability domain. Consistent with `capability-domains.md` keeping highway-rendering and `visualization` surfaces off the capability graph until a dedicated render-facade slice lands, they are exposed as a synchronous **data-plane** API on `window.slopsmith.highwayColors` plus a change event. Visualization/overlay plugins (custom highways, minigames, fretboard widgets) should read colors from here so their gems/strings match the user's theme.
+User-customizable per-string highway colors (the "Highway String Colors" setting in the 3D Highway plugin's panel) are **not** a capability domain. Consistent with `capability-domains.md` keeping highway-rendering and `visualization` surfaces off the capability graph until a dedicated render-facade slice lands, they are exposed as a synchronous **data-plane** API on `window.feedBack.highwayColors` plus a change event. Visualization/overlay plugins (custom highways, minigames, fretboard widgets) should read colors from here so their gems/strings match the user's theme.
 
 Colors are keyed by **named string slot**, not raw index, so a string keeps its color across arrangements (Low E stays Low E's color on a 6-string guitar, 4-string bass, or 7/8-string, where the extra low strings use the `low7`/`low8` slots). Slots: `highE`, `B`, `G`, `D`, `A`, `lowE`, `low7` (7-string Low B), `low8` (8-string Low F#).
 
-`window.slopsmith.highwayColors` (`version: 1`):
+`window.feedBack.highwayColors` (`version: 1`):
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
@@ -250,7 +250,7 @@ Colors are keyed by **named string slot**, not raw index, so a string keeps its 
 | `encodeShare(name, map)` / `decodeShare(code)` | `string` / `{name,colors}` | The `SLOPHWY2.` copy/paste share format. |
 | `onChange(fn)` / `offChange(fn)` | unsubscribe fn | `fn(resolvedMap)` fires on any color change (also on song load when the slot→index mapping shifts). |
 
-The underlying change event is `window.slopsmith.emit('highway:stringColors', …)`; `onChange` wraps it and hands back the resolved map. The raw `window.highway.getStringColors()` data-plane accessor (per-index) remains available for renderers that only need the current applied array. When a `visualization` capability slice eventually lands, this facade is the natural thing to fold into it.
+The underlying change event is `window.feedBack.emit('highway:stringColors', …)`; `onChange` wraps it and hands back the resolved map. The raw `window.highway.getStringColors()` data-plane accessor (per-index) remains available for renderers that only need the current applied array. When a `visualization` capability slice eventually lands, this facade is the natural thing to fold into it.
 
 ## Validation Notes
 

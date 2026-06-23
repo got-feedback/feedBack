@@ -1,7 +1,7 @@
 /**
  * Tailwind build config for the 3D Highway plugin's OWN stylesheet.
  *
- * Slopsmith serves Tailwind as a prebuilt stylesheet and core only scans core
+ * FeedBack serves Tailwind as a prebuilt stylesheet and core only scans core
  * source at build time (constitution Principle II — no Play CDN / runtime JIT).
  * This plugin owns its utilities so it styles correctly even when core's build
  * didn't scan it (it's excluded from core's content globs). It uses arbitrary

@@ -1,4 +1,4 @@
-# Slopsmith diagnostic sloppaks
+# FeedBack diagnostic sloppaks
 
 Generated, non-copyrighted mini-songs for technique-assessment style
 checks. Report-only — they do not change gameplay settings or detection
@@ -6,7 +6,7 @@ thresholds.
 
 ## Basic Guitar (POC)
 
-**Artifact:** `slopsmith-diagnostic-basic-guitar.sloppak`
+**Artifact:** `feedBack-diagnostic-basic-guitar.sloppak`
 
 **Contents (~55 s):**
 
@@ -23,7 +23,7 @@ for future Technique Assessment integration).
 
 ## Rebuild
 
-From the slopsmith repo root (requires `ffmpeg`; the slopsmith Docker image
+From the feedBack repo root (requires `ffmpeg`; the feedBack Docker image
 has `libvorbis`, Homebrew ffmpeg may use the built-in `vorbis` encoder):
 
 ```bash
@@ -36,14 +36,14 @@ On library scan startup (and periodic rescans), the server copies bundled
 diagnostic sloppaks into the user DLC folder when missing or when the
 bundled source is newer:
 
-`DLC_DIR/diagnostics-builtin/slopsmith-diagnostic-basic-guitar.sloppak`
+`DLC_DIR/diagnostics-builtin/feedBack-diagnostic-basic-guitar.sloppak`
 
-Source: `docs/diagnostics/slopsmith-diagnostic-basic-guitar.sloppak` (next to
+Source: `docs/diagnostics/feedBack-diagnostic-basic-guitar.sloppak` (next to
 `server.py` in dev; must be included in the desktop bundle — see
-`slopsmith-desktop/scripts/bundle-slopsmith.sh`).
+`feedBack-desktop/scripts/bundle-feedBack.sh`).
 
 Unlike `tutorials-builtin/`, `diagnostics-builtin/` **is** included in the
-library scan. Tracks appear under **Slopsmith** /
+library scan. Tracks appear under **FeedBack** /
 **Technique Assessment Diagnostics**.
 
 Existing destination files are not overwritten unless the bundled source
@@ -55,10 +55,10 @@ are never touched.
 Normally seeding is automatic once a DLC folder is configured. To test a
 custom copy or an unreleased build:
 
-1. Copy `slopsmith-diagnostic-basic-guitar.sloppak` into your Slopsmith
+1. Copy `feedBack-diagnostic-basic-guitar.sloppak` into your FeedBack
    DLC folder (e.g. `diagnostics-test/` or any scanned path).
-2. Restart Slopsmith or trigger a library rescan if the song does not appear.
-3. Load **Slopsmith Diagnostic — Basic Guitar**.
+2. Restart FeedBack or trigger a library rescan if the song does not appear.
+3. Load **FeedBack Diagnostic — Basic Guitar**.
 4. Play the **Diagnostic Guitar** arrangement.
 5. Confirm the 3D highway shows open notes and power-chord gems.
 6. Turn **Detect** on — note_detect should push the chart to the desktop

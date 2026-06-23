@@ -148,7 +148,7 @@ def upload_client(tmp_path, monkeypatch):
     config.mkdir()
     monkeypatch.setenv("DLC_DIR", str(dlc))
     monkeypatch.setenv("CONFIG_DIR", str(config))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     server.sloppak_mod._source_cache.clear()
@@ -220,7 +220,7 @@ def settings_server(tmp_path, monkeypatch):
     no DLC_DIR env or HTTP layer is needed.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SKIP_STARTUP_TASKS", "1")
+    monkeypatch.setenv("FEEDBACK_SKIP_STARTUP_TASKS", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     try:

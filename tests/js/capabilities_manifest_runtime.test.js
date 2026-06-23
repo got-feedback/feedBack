@@ -12,7 +12,7 @@ function fixture(name) {
 
 test('manifest participants are visible before runtime handlers register', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipants([fixture('valid_owner_provider.json'), fixture('valid_requester_observer.json')]);
 
     const stems = api.inspect('stems');
@@ -27,7 +27,7 @@ test('manifest participants are visible before runtime handlers register', () =>
 
 test('runtime registration refreshes an existing manifest participant without duplicating it', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     api.registerParticipants([fixture('valid_owner_provider.json')]);
     api.registerParticipant('stems', {
         capabilities: {
@@ -74,7 +74,7 @@ test('native library provider capability coordinates providers', async () => {
         }
         throw new Error(`unexpected fetch ${text}`);
     };
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const events = [];
     api.subscribe('library:source-changed', event => events.push(event));
 
@@ -101,7 +101,7 @@ test('native library provider capability coordinates providers', async () => {
     assert.equal(selected.payload.current, 'remote:frodo');
     assert.equal(events.length, 1);
     assert.equal(events[0].payload.to, 'remote:frodo');
-    assert.equal(window.slopsmith.libraryProviders.snapshot().current, 'remote:frodo');
+    assert.equal(window.feedBack.libraryProviders.snapshot().current, 'remote:frodo');
 
     const syncResult = await api.command('library', 'sync-song', {
         requester: 'test',
@@ -123,7 +123,7 @@ test('removed library providers are unregistered as library participants on refr
         if (String(url) === '/api/library/providers') return { ok: true, json: async () => ({ providers: providerSet }) };
         throw new Error(`unexpected fetch ${url}`);
     };
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     await api.command('library', 'refresh-providers', { requester: 'test' });
     let ids = api.inspect('library').participants.map(p => p.pluginId);
@@ -160,7 +160,7 @@ test('a plugin with non-provider library roles is not wiped when its provider di
         if (String(url) === '/api/library/providers') return { ok: true, json: async () => ({ providers: providerSet }) };
         throw new Error(`unexpected fetch ${url}`);
     };
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // The same plugin also declares an observer library role via its manifest —
     // legitimate participation the provider-cleanup path must not delete.
@@ -187,7 +187,7 @@ test('a plugin with non-provider library roles is not wiped when its provider di
 
 test('runtime domain library declarations appear as library participants', () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     const touched = api.registerParticipants([{
         id: 'remote-library-client',

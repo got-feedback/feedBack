@@ -35,7 +35,7 @@ function loadTuningDisplayHelpers() {
         extractBlock(src, 'function parseRawTuningOffsets('),
         extractBlock(src, 'function displayTuningName('),
     ].join('\n');
-    const sandbox = { window: { slopsmith: {} }, exports: {} };
+    const sandbox = { window: { feedBack: {} }, exports: {} };
     vm.createContext(sandbox);
     vm.runInContext(block + '\nexports.displayTuningName = displayTuningName;', sandbox);
     return sandbox.exports;
@@ -57,7 +57,7 @@ test('displayTuningName sanitizes raw offset strings to Custom Tuning', () => {
     assert.equal(displayTuningName('-3,-1,0,1,2,3'), 'Custom Tuning');
 });
 
-test('displayTuningName names a known raw offset string (slopsmith#867)', () => {
+test('displayTuningName names a known raw offset string (feedBack#867)', () => {
     // Now that the API serves raw offsets, a known tuning passed as a raw
     // string must resolve to its real name, not collapse to Custom Tuning.
     assert.equal(displayTuningName('-1 -1 -1 -1 -1 -1'), 'Eb Standard');
@@ -67,7 +67,7 @@ test('displayTuningName names a known raw offset string (slopsmith#867)', () => 
     assert.equal(displayTuningName('-2 0 0 0 -2 1'), 'Custom Tuning');
 });
 
-test('displayTuningName recognizes 4/5-string uniform standard (slopsmith#867)', () => {
+test('displayTuningName recognizes 4/5-string uniform standard (feedBack#867)', () => {
     // A normal 4-string bass [0,0,0,0] must not fall through to Custom Tuning.
     assert.equal(displayTuningName(null, [0, 0, 0, 0]), 'E Standard');
     assert.equal(displayTuningName(null, [-2, -2, -2, -2]), 'D Standard');

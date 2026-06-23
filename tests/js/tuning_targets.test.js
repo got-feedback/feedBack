@@ -16,10 +16,10 @@ const V2_HTML = path.join(__dirname, '..', '..', 'static', 'index.html');
 function loadTuningHelpers() {
     const src = fs.readFileSync(APP_JS, 'utf8');
     const start = src.indexOf('function isBassArrangement(');
-    const endMarker = 'window.slopsmith.parseRawTuningOffsets = parseRawTuningOffsets;';
+    const endMarker = 'window.feedBack.parseRawTuningOffsets = parseRawTuningOffsets;';
     const end = src.indexOf(endMarker);
     if (start === -1 || end === -1) throw new Error('tuning helper block not found in app.js');
-    const sandbox = { window: { slopsmith: {} }, exports: {} };
+    const sandbox = { window: { feedBack: {} }, exports: {} };
     vm.createContext(sandbox);
     vm.runInContext(
         src.slice(start, end + endMarker.length) + '\n'

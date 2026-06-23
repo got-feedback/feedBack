@@ -12,7 +12,7 @@
             "id": "dlc-path",
             "selector": "#dlc-path",
             "title": "Library folder",
-            "content": "Point Slopsmith at your library folder. Songs here become your library. Hit Save after changing.",
+            "content": "Point FeedBack at your library folder. Songs here become your library. Hit Save after changing.",
             "shape": "spotlight",
             "position": "bottom"
         },
@@ -69,7 +69,7 @@
             "id": "about",
             "selector": "#app-version-about",
             "title": "About",
-            "content": "Version, source code, and license. Slopsmith is AGPL-3.0 — if you fork it, the source has to stay open.",
+            "content": "Version, source code, and license. FeedBack is AGPL-3.0 — if you fork it, the source has to stay open.",
             "shape": "spotlight",
             "position": "top"
         },

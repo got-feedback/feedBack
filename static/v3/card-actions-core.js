@@ -11,12 +11,12 @@
  */
 (function () {
     'use strict';
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     if (!sm || !sm.libraryCardActions) return;
 
     const STD_RETUNABLE = ['Eb Standard', 'D Standard', 'C# Standard', 'C Standard'];
     const reg = sm.libraryCardActions;
-    const hooks = window.__slopsmithV3CoreCardActions || (window.__slopsmithV3CoreCardActions = {});
+    const hooks = window.__feedBackV3CoreCardActions || (window.__feedBackV3CoreCardActions = {});
     if (hooks.installed) return;
     hooks.installed = true;
 

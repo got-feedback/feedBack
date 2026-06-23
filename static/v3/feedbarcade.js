@@ -3,14 +3,14 @@
  *
  * A vanilla-JS reskin of the bundled `minigames` plugin's screen into the fb-*
  * design (constitution P-II). It REUSES the minigames backend + the
- * window.slopsmithMinigames SDK — it does not fork scoring/run logic and adds
+ * window.feedBackMinigames SDK — it does not fork scoring/run logic and adds
  * no second XP curve. XP stays unified through the core store (P15): the header
  * reads /api/profile/progress (the same data the topbar profile badge shows),
  * while per-game bests + cross-game unlocks come from the minigames /profile.
  *
  * UI placement is a DEFERRED capability domain (design/05): we use the legacy
  * plugin loader + /api/plugins/minigames/* routes, NOT capability dispatch.
- * Launch delegates to slopsmithMinigames.start(gameId), which mounts the
+ * Launch delegates to feedBackMinigames.start(gameId), which mounts the
  * plugin's own #mg-stage overlay (eagerly injected at boot) — so this screen
  * never needs to visit the legacy #plugin-minigames hub.
  */
@@ -18,7 +18,7 @@
     'use strict';
 
     const SCREEN_ID = 'v3-feedbarcade';
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const enc = encodeURIComponent;
@@ -32,7 +32,7 @@
     let _stageWasVisible = false;
     let _refreshTimer = null;
 
-    function sdk() { return window.slopsmithMinigames || null; }
+    function sdk() { return window.feedBackMinigames || null; }
     function registeredList() {
         const s = sdk();
         try { return (s && typeof s.listRegistered === 'function') ? s.listRegistered() : []; }
@@ -271,7 +271,7 @@
         // The minigames plugin publishes its SDK + injects #mg-stage at boot and
         // fires this once ready; re-render so late-registered specs appear and
         // the stage observer attaches.
-        window.addEventListener('slopsmith-minigames-ready', () => { ensureStageObserver(); refresh(); });
+        window.addEventListener('feedBack-minigames-ready', () => { ensureStageObserver(); refresh(); });
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot, { once: true });

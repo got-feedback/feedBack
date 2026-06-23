@@ -1,9 +1,9 @@
 """Regenerate ``static/tailwind.min.css`` over the full installed-plugin set.
 
 Core's committed (and image-baked) stylesheet is built scanning only the
-in-tree plugins. A plugin installed at runtime — into ``SLOPSMITH_PLUGINS_DIR``
+in-tree plugins. A plugin installed at runtime — into ``FEEDBACK_PLUGINS_DIR``
 — ships Tailwind classes the sheet never saw, so it renders unstyled. The
-Play CDN's runtime JIT that used to cover this was removed (slopsmith#411),
+Play CDN's runtime JIT that used to cover this was removed (feedBack#411),
 so we rebuild the sheet ourselves with node + the pinned ``tailwindcss``,
 scanning the baked-in plugins *and* the user plugins dir.
 
@@ -24,7 +24,9 @@ import tempfile
 import threading
 from pathlib import Path
 
-log = logging.getLogger("slopsmith.tailwind")
+from env_compat import getenv_compat
+
+log = logging.getLogger("feedBack.tailwind")
 
 # Pin matches scripts/build-tailwind.sh and the Dockerfile build stage so every
 # sheet — committed, image-baked, and runtime-regenerated — comes from the same
@@ -45,7 +47,7 @@ APP_DIR = Path(__file__).resolve().parent.parent
 
 
 def _user_plugins_dir() -> Path | None:
-    raw = os.environ.get("SLOPSMITH_PLUGINS_DIR", "").strip()
+    raw = (getenv_compat("FEEDBACK_PLUGINS_DIR", "") or "").strip()
     if not raw:
         return None
     p = Path(raw)

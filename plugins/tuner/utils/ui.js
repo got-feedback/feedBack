@@ -149,7 +149,7 @@ window._tunerUI = function(state, actions) {
                 if (state.tuningSelect) state.tuningSelect.value = name;
                 renderStringNotes();
                 actions.saveConfig();
-                window.slopsmith?.emit('tunings:updated');
+                window.feedBack?.emit('tunings:updated');
             } catch (e) {
                 console.error('Tuner: Failed to save custom tuning', e);
             }
@@ -204,18 +204,18 @@ window._tunerUI = function(state, actions) {
         if (isPlayer && typeof window.highway?.getSongInfo === 'function') {
             const info = window.highway.getSongInfo();
             if (info && info.tuning) {
-                const ctx = (typeof window.slopsmith?.songTuningContext === 'function')
-                    ? window.slopsmith.songTuningContext(info)
+                const ctx = (typeof window.feedBack?.songTuningContext === 'function')
+                    ? window.feedBack.songTuningContext(info)
                     : {
                         stringCount: info.stringCount,
                         arrangement: info.arrangement,
                         arrangement_smart_name: info.arrangement_smart_name,
                     };
-                const isBass = (typeof window.slopsmith?.isBassArrangement === 'function')
-                    ? window.slopsmith.isBassArrangement(ctx)
+                const isBass = (typeof window.feedBack?.isBassArrangement === 'function')
+                    ? window.feedBack.isBassArrangement(ctx)
                     : (info.arrangement || '').toLowerCase().includes('bass');
-                const sc = (typeof window.slopsmith?.effectiveStringCount === 'function')
-                    ? window.slopsmith.effectiveStringCount(info.tuning, ctx)
+                const sc = (typeof window.feedBack?.effectiveStringCount === 'function')
+                    ? window.feedBack.effectiveStringCount(info.tuning, ctx)
                     : (info.stringCount || info.tuning.length);
                 const sliced = info.tuning.slice(0, sc);
                 const freqs = window._tunerUtils.offsetsToFreqs(sliced, isBass);
@@ -340,8 +340,8 @@ window._tunerUI = function(state, actions) {
             _lastAutoTargetFreq = null;
             if (state.activeViz) state.activeViz.update(null, 0, 0, vizMode, null, referencePitch);
             _syncStringHighlight(state.manualTargetFreq);
-            if (window.slopsmith && window.slopsmith.emit) {
-                window.slopsmith.emit('tuner:frame', { note: null, cents: 0, freq: 0, hasSignal: false });
+            if (window.feedBack && window.feedBack.emit) {
+                window.feedBack.emit('tuner:frame', { note: null, cents: 0, freq: 0, hasSignal: false });
             }
             return;
         }
@@ -384,8 +384,8 @@ window._tunerUI = function(state, actions) {
         if (state.activeViz) state.activeViz.update(note, cents, displayFreq, vizMode, targetFreq, referencePitch, state.useFlats);
         if (state.freeTune) _syncStringHighlight(null);
         else _syncActiveStringFromFreq(targetFreq, isManual);
-        if (window.slopsmith && window.slopsmith.emit) {
-            window.slopsmith.emit('tuner:frame', { note, cents, freq: displayFreq, hasSignal: true });
+        if (window.feedBack && window.feedBack.emit) {
+            window.feedBack.emit('tuner:frame', { note, cents, freq: displayFreq, hasSignal: true });
         }
     }
 
@@ -393,7 +393,7 @@ window._tunerUI = function(state, actions) {
         const btn = document.getElementById('tuner-toggle-btn');
         if (!btn) return;
         const isPlayer = document.querySelector('.screen.active')?.id === 'player';
-        if (!state.showFloatingButton || isPlayer || window.slopsmith?.isPlaying) {
+        if (!state.showFloatingButton || isPlayer || window.feedBack?.isPlaying) {
             btn.classList.add('hidden');
         } else {
             btn.classList.remove('hidden');
@@ -687,16 +687,16 @@ window._tunerUI = function(state, actions) {
         };
         const handleStop = () => updateFloatingButtonVisibility();
 
-        if (window.slopsmith) {
-            window.slopsmith.on('song:play', handlePlay);
-            window.slopsmith.on('song:pause', handleStop);
-            window.slopsmith.on('song:ended', handleStop);
-            window.slopsmith.on('screen:changed', (e) => {
+        if (window.feedBack) {
+            window.feedBack.on('song:play', handlePlay);
+            window.feedBack.on('song:pause', handleStop);
+            window.feedBack.on('song:ended', handleStop);
+            window.feedBack.on('screen:changed', (e) => {
                 if (e.detail.id === 'player') { handlePlay(); injectPlayerButton(); }
                 else handleStop();
             });
 
-            if (window.slopsmith.isPlaying || document.querySelector('.screen.active')?.id === 'player') {
+            if (window.feedBack.isPlaying || document.querySelector('.screen.active')?.id === 'player') {
                 handlePlay();
                 if (document.querySelector('.screen.active')?.id === 'player') injectPlayerButton();
             } else {
@@ -710,10 +710,10 @@ window._tunerUI = function(state, actions) {
         // popover). The legacy `button:last-child` anchor resolves to a NESTED
         // transport button in v3 and would throw on insertBefore; the slot is
         // always present in v3, so that anchor is only used in the classic UI.
-        const isV3 = !!(window.slopsmith && window.slopsmith.uiVersion === 'v3');
+        const isV3 = !!(window.feedBack && window.feedBack.uiVersion === 'v3');
         let slot = null;
-        if (isV3 && window.slopsmith.ui && typeof window.slopsmith.ui.playerControlSlot === 'function') {
-            try { const _s = window.slopsmith.ui.playerControlSlot(); if (_s instanceof Element) slot = _s; }
+        if (isV3 && window.feedBack.ui && typeof window.feedBack.ui.playerControlSlot === 'function') {
+            try { const _s = window.feedBack.ui.playerControlSlot(); if (_s instanceof Element) slot = _s; }
             catch (_e) { /* host slot API failure → fall back to legacy container */ }
         }
         const controls = slot || document.getElementById('player-controls');

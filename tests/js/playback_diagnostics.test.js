@@ -4,7 +4,7 @@ const { loadPlayback, captureEvents, dispatch, diagnosticsSnapshot, makeTarget, 
 
 test('exported diagnostics pseudonymize targets while local inspector may show display names', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
     await dispatch(window, 'start', {
         authorization: 'user-action',
         requesterId: 'core.player.controls',
@@ -33,7 +33,7 @@ test('exported diagnostics pseudonymize targets while local inspector may show d
 
 test('diagnostic history is bounded for current and stopped sessions', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
 
     for (let index = 0; index < 7; index += 1) {
         await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget({ filename: `song-${index}.archive`, title: `Song ${index}` }) });
@@ -55,11 +55,11 @@ test('diagnostic history is bounded for current and stopped sessions', async () 
 
 test('diagnostics contribution is exported under playback schema', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
 
-    const contribution = window.slopsmith.diagnostics.snapshotContributions().playback;
-    assert.equal(contribution.schema, 'slopsmith.playback.diagnostics.v1');
+    const contribution = window.feedBack.diagnostics.snapshotContributions().playback;
+    assert.equal(contribution.schema, 'feedBack.playback.diagnostics.v1');
     assert.equal(contribution.domain, 'playback');
     assert.equal(contribution.exportMode, 'exported');
     assert.match(contribution.state.target.settingsKey, /^settings-v1-[a-z0-9]{7}$/);
@@ -68,11 +68,11 @@ test('diagnostics contribution is exported under playback schema', async () => {
 
 test('diagnostics redact caller-supplied route and stale session ids', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
     await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget() });
 
     await dispatch(window, 'pause', { sessionId: '/Users/example/private-session?token=secret' }, 'plugin.remote');
-    window.slopsmith.playback.recordRouteChange({ routeId: '/Users/example/native-route?token=secret', routeKind: 'desktop-native', state: 'active', safeReason: 'ok' });
+    window.feedBack.playback.recordRouteChange({ routeId: '/Users/example/native-route?token=secret', routeKind: 'desktop-native', state: 'active', safeReason: 'ok' });
 
     const snapshot = diagnosticsSnapshot(window);
     const encoded = JSON.stringify(snapshot);
@@ -87,11 +87,11 @@ test('diagnostics redact caller-supplied route and stale session ids', async () 
 
 test('diagnostics redact requester ids and raw camel-case payload keys', async () => {
     const window = loadPlayback();
-    window.slopsmith.playback.registerTransportAdapter(makeAdapter());
+    window.feedBack.playback.registerTransportAdapter(makeAdapter());
     await dispatch(window, 'start', { authorization: 'user-action', target: makeTarget() }, '/Users/example/plugin token=secret');
 
     const degradedEvents = captureEvents(window, 'playback:degraded');
-    window.slopsmith.playback.transportEvent('degraded', {
+    window.feedBack.playback.transportEvent('degraded', {
         requesterId: '/Users/example/transport token=secret',
         accessToken: 'plain-secret-token',
         nativeHandleRef: 'native-secret-handle',
@@ -99,7 +99,7 @@ test('diagnostics redact requester ids and raw camel-case payload keys', async (
         reason: '/Users/example/private song.archive token=secret',
         safeDetail: 'safe value',
     });
-    window.slopsmith.playback.recordBridgeHit({
+    window.feedBack.playback.recordBridgeHit({
         bridgeId: '/Users/example/bridge token=secret',
         legacySurface: 'window.playSong',
         source: '/Users/example/source token=secret',

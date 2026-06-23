@@ -662,7 +662,7 @@ def _warning_messages(mock_log) -> list[str]:
     """Format every `log.warning(fmt, *args)` call into its rendered message.
 
     We patch the module-level logger rather than using pytest's caplog because
-    slopsmith's conftest installs a structlog processor chain that intercepts
+    feedBack's conftest installs a structlog processor chain that intercepts
     logging records before caplog can see them — fine in production, but it
     leaves caplog silent in CI even though the warning is emitted.
     """

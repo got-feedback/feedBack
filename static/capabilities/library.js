@@ -2,12 +2,12 @@
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    const capabilities = window.slopsmith.capabilities;
+    window.feedBack = window.feedBack || {};
+    const capabilities = window.feedBack.capabilities;
     if (!capabilities || capabilities.version !== 1) return;
-    if (window.slopsmith.libraryProviders && window.slopsmith.libraryProviders.version === 1) return;
+    if (window.feedBack.libraryProviders && window.feedBack.libraryProviders.version === 1) return;
 
-    const PROVIDER_KEY = 'slopsmith.libProvider';
+    const PROVIDER_KEY = 'feedBack.libProvider';
     const LOCAL_PROVIDER = Object.freeze({
         id: 'local',
         label: 'My Library',
@@ -302,17 +302,17 @@
     };
 
     function _contributeDiagnostics() {
-        const diagnostics = window.slopsmith && window.slopsmith.diagnostics;
+        const diagnostics = window.feedBack && window.feedBack.diagnostics;
         if (diagnostics && typeof diagnostics.contribute === 'function') {
             try {
                 diagnostics.contribute('library-capability', {
-                    schema: 'slopsmith.library_capability.v1',
+                    schema: 'feedBack.library_capability.v1',
                     ..._snapshot(),
                 });
             } catch (_) { /* diagnostics must not break the library */ }
         }
     }
 
-    window.slopsmith.libraryProviders = providerApi;
+    window.feedBack.libraryProviders = providerApi;
     _contributeDiagnostics();
 })();

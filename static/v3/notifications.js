@@ -12,7 +12,7 @@
  *
  * Vanilla JS, no framework (constitution P-II). Animation + accent colors are
  * inline styles so the prebuilt Tailwind stylesheet needs no new utilities.
- * Self-contained: it subscribes through window.slopsmith.on, degrading to a
+ * Self-contained: it subscribes through window.feedBack.on, degrading to a
  * no-op when the bus or DOM isn't present (SSR/headless safety, P15).
  */
 (function () {
@@ -95,7 +95,7 @@
     window.fbNotify = { show: show, clear: clear };
 
     // ── Progression wiring ────────────────────────────────────────────────────
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     if (!sm || typeof sm.on !== 'function') return;   // no bus → toasts API still usable
 
     const periodLabel = (p) => (p === 'weekly' ? 'Weekly Quest' : p === 'daily' ? 'Daily Quest' : 'Quest');
@@ -106,7 +106,7 @@
     };
 
     // The bus delivers a CustomEvent; the progression payload is e.detail
-    // (matches every other window.slopsmith.on consumer, e.g. progress.js).
+    // (matches every other window.feedBack.on consumer, e.g. progress.js).
     sm.on('progression:quest-progressed', (e) => {
         const q = e && e.detail;
         if (!q) return;

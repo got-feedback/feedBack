@@ -1,4 +1,4 @@
-// Pins 3D Highway left-handed fret ordering (slopsmith#321).
+// Pins 3D Highway left-handed fret ordering (feedBack#321).
 // Source-level only, matching the other tests/js/ regression guards: the
 // runtime path is browser/WebGL-heavy, so these tests preserve the exact
 // contracts that keep the lefty geometry coherent.

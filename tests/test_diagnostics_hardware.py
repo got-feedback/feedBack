@@ -12,14 +12,14 @@ def test_collect_has_required_top_level_keys():
 
 
 def test_runtime_detect_env_override(monkeypatch):
-    monkeypatch.setenv("SLOPSMITH_RUNTIME", "electron")
+    monkeypatch.setenv("FEEDBACK_RUNTIME", "electron")
     monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
     out = dh.detect_runtime()
     assert out["kind"] == "electron"
 
 
 def test_runtime_detect_kubernetes(monkeypatch):
-    monkeypatch.delenv("SLOPSMITH_RUNTIME", raising=False)
+    monkeypatch.delenv("FEEDBACK_RUNTIME", raising=False)
     monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
     out = dh.detect_runtime()
     assert out["in_kubernetes"] is True

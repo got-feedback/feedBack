@@ -31,7 +31,7 @@ from tunings import tuning_name
 import sloppak as sloppak_mod
 import loosefolder as loosefolder_mod
 
-log = logging.getLogger("slopsmith.scan_worker")
+log = logging.getLogger("feedBack.scan_worker")
 
 
 def _relpath(f: Path, dlc: Path) -> str:
@@ -53,7 +53,7 @@ def _extract_meta_sloppak(path: Path) -> dict:
     meta["tuning_sort_key"] = sum(offsets)
     meta["tuning_offsets"] = " ".join(str(o) for o in offsets)
     meta["format"] = "sloppak"
-    # `extract_meta` already populates `stem_ids` (slopsmith#129);
+    # `extract_meta` already populates `stem_ids` (feedBack#129);
     # default to empty for older callers / mocks.
     meta.setdefault("stem_ids", [])
     # Compute smart names for sloppak arrangements using name-based fallback
@@ -109,7 +109,7 @@ def _extract_meta_for_file(path: Path, dlc_root=None) -> dict:
     the root it already resolved; in-process callers can pass the resolver
     itself (e.g. `_get_dlc_dir`) to keep the lookup lazy.
 
-    Slopsmith reads only its own `.sloppak` format and loose-folder XML
+    FeedBack reads only its own `.sloppak` format and loose-folder XML
     songs. Encrypted/proprietary archive formats are not supported and are
     silently ignored (empty metadata) rather than decrypted.
     """
@@ -121,7 +121,7 @@ def _extract_meta_for_file(path: Path, dlc_root=None) -> dict:
     if loosefolder_mod.is_loose_song(path):
         root = dlc_root() if callable(dlc_root) else dlc_root
         return _extract_meta_loosefolder(path, root)
-    # Unknown/unsupported shape — return empty metadata. Slopsmith never
+    # Unknown/unsupported shape — return empty metadata. FeedBack never
     # reads encrypted archive formats.
     return {
         "title": "", "artist": "", "album": "", "year": "",

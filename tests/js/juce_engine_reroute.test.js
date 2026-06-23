@@ -90,8 +90,8 @@ function makeSandbox({ isAudioRunning, loadBackingTrack }) {
     };
     sandbox.window = sandbox;
     sandbox.window.jucePlayer = jucePlayer;
-    sandbox.window.slopsmithDesktop = { audio: juceApi };
-    sandbox.window.slopsmith = { audio: {} };
+    sandbox.window.feedBackDesktop = { audio: juceApi };
+    sandbox.window.feedBack = { audio: {} };
 
     const src = fs.readFileSync(APP_JS, 'utf8');
     const iife = extractWatcherIIFE(src);
@@ -217,7 +217,7 @@ test('stale-abort during a swap-then-restore is NOT memoised as a JUCE reject', 
     sb.window._currentSongAudio = snapA;
 
     let firstLoad = true;
-    sb.window.slopsmithDesktop.audio.loadBackingTrack = (p) => {
+    sb.window.feedBackDesktop.audio.loadBackingTrack = (p) => {
         sb.__calls.loadBackingTrack.push(p);
         if (firstLoad) {
             firstLoad = false;
@@ -353,7 +353,7 @@ test('song change mid-flight aborts the switch without mutating routing', async 
     sb.window._currentSongAudio = original;
     // Swap the current song the moment loadBackingTrack is consulted, so the
     // post-await staleness check sees a different _currentSongAudio identity.
-    sb.window.slopsmithDesktop.audio.loadBackingTrack = () => {
+    sb.window.feedBackDesktop.audio.loadBackingTrack = () => {
         sb.window._currentSongAudio = { url: '/audio/song-b.ogg', juceEligible: true };
         return Promise.resolve(true);
     };

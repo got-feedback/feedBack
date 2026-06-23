@@ -64,8 +64,8 @@ def server(tmp_path, monkeypatch, isolate_logging):
     content_dir = tmp_path / "progression-content"
     _write_fixture_content(content_dir)
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("SLOPSMITH_PROGRESSION_DATA", str(content_dir))
-    monkeypatch.setenv("SLOPSMITH_SKIP_STARTUP_TASKS", "1")
+    monkeypatch.setenv("FEEDBACK_PROGRESSION_DATA", str(content_dir))
+    monkeypatch.setenv("FEEDBACK_SKIP_STARTUP_TASKS", "1")
     sys.modules.pop("server", None)
     srv = importlib.import_module("server")
     try:

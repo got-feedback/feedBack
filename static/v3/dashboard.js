@@ -9,7 +9,7 @@
  */
 (function () {
     'use strict';
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const enc = encodeURIComponent;
@@ -106,7 +106,7 @@
 
         const name = (profile && profile.display_name) || 'there';
         const ver = (version && version.version) || '';
-        const changelogUrl = ((version && version.source_url) || 'https://github.com/got-feedback/feedback') + '/blob/main/CHANGELOG.md';
+        const changelogUrl = ((version && version.source_url) || 'https://github.com/got-feedback/feedBack') + '/blob/main/CHANGELOG.md';
         const songCount = (libStats && (libStats.total_songs ?? libStats.total)) || 0;
         const pluginCount = Array.isArray(plugins)
             ? plugins.filter((p) => (p && (p.status || 'ready') === 'ready')).length : 0;

@@ -4,7 +4,7 @@ A `.sloppak` is just a zip of plain files: some YAML, some JSON, some OGG audio,
 
 This guide walks through the most common edits, aimed at musicians who are comfortable with a text editor and Audacity but don't live on the command line.
 
-> For the format **schema** (what every field means, how the wire format works, how to extend the format with new data types), see the authoritative [feedpak spec](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md) (the local [sloppak-spec.md](sloppak-spec.md) is now a pointer to it). This document is the **how-do-I-actually-edit-mine** companion.
+> For the format **schema** (what every field means, how the wire format works, how to extend the format with new data types), see the authoritative [feedpak spec](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md) (the local [sloppak-spec.md](sloppak-spec.md) is now a pointer to it). This document is the **how-do-I-actually-edit-mine** companion.
 
 ---
 
@@ -17,27 +17,27 @@ A sloppak exists in two interchangeable forms:
 | **Directory** | A folder named `something.sloppak/` with the files loose inside | **Authoring** — easy to edit, no zip/unzip cycle |
 | **Zip** | A `something.sloppak` file (zip with the same files inside) | **Distributing** — single file to share |
 
-Slopsmith reads both. You can drop either one straight into your DLC folder and it'll show up in the library.
+FeedBack reads both. You can drop either one straight into your DLC folder and it'll show up in the library.
 
 ### Unzipping for editing
 
-Slopsmith's converter ships sloppaks in zip form. To edit one, unzip it:
+FeedBack's converter ships sloppaks in zip form. To edit one, unzip it:
 
 - **Windows:** rename `mysong.sloppak` → `mysong.zip`, right-click → Extract All. Then rename the resulting folder back to `mysong.sloppak/` (with the trailing slash / folder form). Or use [7-Zip](https://www.7-zip.org/) and unzip without renaming.
 - **macOS:** rename `.sloppak` → `.zip`, double-click. Or use The Unarchiver.
 - **Linux:** `unzip mysong.sloppak -d mysong.sloppak/`.
 
-Once you have the directory form, you can edit any file inside and Slopsmith will pick it up — no re-zipping required for your own use.
+Once you have the directory form, you can edit any file inside and FeedBack will pick it up — no re-zipping required for your own use.
 
 ### Cache: when changes don't appear
 
-The first time Slopsmith opens a zip-form sloppak, it extracts a working copy into its config directory's cache: `${CONFIG_DIR}/sloppak_cache/<safe-id>` (in the standard Docker setup that's inside the `slopsmith-config` volume, mounted at `/config` in the container). The `<safe-id>` is the sloppak filename with each path separator (`/` or `\`) replaced by `__` and each space replaced by `_`. So `My-Song.sloppak` stays `My-Song.sloppak`, and `Artist/My Song.sloppak` becomes `Artist__My_Song.sloppak`.
+The first time FeedBack opens a zip-form sloppak, it extracts a working copy into its config directory's cache: `${CONFIG_DIR}/sloppak_cache/<safe-id>` (in the standard Docker setup that's inside the `feedBack-config` volume, mounted at `/config` in the container). The `<safe-id>` is the sloppak filename with each path separator (`/` or `\`) replaced by `__` and each space replaced by `_`. So `My-Song.sloppak` stays `My-Song.sloppak`, and `Artist/My Song.sloppak` becomes `Artist__My_Song.sloppak`.
 
-You almost never need to touch this cache directly. If you edit the **original zip** in your DLC folder, Slopsmith re-extracts automatically when the zip's modification time or size changes — just save your edits and reload.
+You almost never need to touch this cache directly. If you edit the **original zip** in your DLC folder, FeedBack re-extracts automatically when the zip's modification time or size changes — just save your edits and reload.
 
-If a change still isn't appearing, the simplest reset is to remove the matching cache folder so Slopsmith rebuilds it on the next song load. In a default Docker install that's `docker exec <container> rm -rf /config/sloppak_cache/<safe-id>` (or the equivalent for your setup).
+If a change still isn't appearing, the simplest reset is to remove the matching cache folder so FeedBack rebuilds it on the next song load. In a default Docker install that's `docker exec <container> rm -rf /config/sloppak_cache/<safe-id>` (or the equivalent for your setup).
 
-If you'd rather skip the cache layer entirely, **drop the directory form straight into your DLC folder** — Slopsmith uses it in place and there's nothing to invalidate.
+If you'd rather skip the cache layer entirely, **drop the directory form straight into your DLC folder** — FeedBack uses it in place and there's nothing to invalidate.
 
 ---
 
@@ -72,8 +72,8 @@ The use case: the converted rhythm guitar sounds muddy (Demucs has a tough time 
 1. Copy `rhythm_custom.ogg` into the sloppak's `stems/` folder.
 2. Open `manifest.yaml` in any text editor (Notepad++, VS Code, BBEdit, gedit — all fine; just **don't use Word**).
 3. Find the `stems:` block. Two things matter here:
-   - **Order:** Slopsmith's base `<audio>` element always plays the **first** stem listed in `stems[]`, regardless of `default:` flags. So if you want your custom stem to be what the player plays out-of-the-box (and what users without the Stems plugin will hear), put it **first**.
-   - **`default:` flags:** consulted by the [Stems plugin](https://github.com/topkoa/slopsmith-plugin-stems) to decide which faders start un-muted. They do **not** affect what the base `<audio>` element plays — that's purely the first-stem rule above.
+   - **Order:** FeedBack's base `<audio>` element always plays the **first** stem listed in `stems[]`, regardless of `default:` flags. So if you want your custom stem to be what the player plays out-of-the-box (and what users without the Stems plugin will hear), put it **first**.
+   - **`default:` flags:** consulted by the [Stems plugin](https://github.com/topkoa/feedBack-plugin-stems) to decide which faders start un-muted. They do **not** affect what the base `<audio>` element plays — that's purely the first-stem rule above.
 
    Example for a Demucs-split sloppak where you re-recorded the rhythm guitar:
 
@@ -110,14 +110,14 @@ The use case: the converted rhythm guitar sounds muddy (Demucs has a tough time 
 
 ### Step 5 — Reload and verify
 
-Reload the song in Slopsmith. The [Stems plugin](https://github.com/topkoa/slopsmith-plugin-stems) will show a fader for `rhythm_custom` next to the others. If you don't see it, check the cache notes in §1.
+Reload the song in FeedBack. The [Stems plugin](https://github.com/topkoa/feedBack-plugin-stems) will show a fader for `rhythm_custom` next to the others. If you don't see it, check the cache notes in §1.
 
 ### Common gotchas
 
 - **Sample-rate mismatch** → choppy/pitched-wrong playback. Re-export from Audacity at exactly the rate the other stems use.
 - **Mono vs stereo mismatch** is fine for playback but levels can feel different — match what the other stems use if you want consistent behavior in the mixer.
 - **Silence padding at the start** of your recording → your stem will play late. Trim it tight in Audacity before exporting.
-- **Tabs in `manifest.yaml`** → Slopsmith will refuse to load the song. Use two spaces.
+- **Tabs in `manifest.yaml`** → FeedBack will refuse to load the song. Use two spaces.
 
 ---
 
@@ -242,7 +242,7 @@ For 4-string bass, only indices 0–3 are meaningful; leave 4 and 5 at `0`.
 
 ### What *not* to put in `manifest.yaml`
 
-Don't add per-machine settings (audio device picks, MIDI port IDs), UI state, or your own play counts. The sloppak holds the song's authored data — anything that varies by user or machine lives in Slopsmith's config dir or the metadata DB. See [feedpak spec §9.5](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md#95-what-does-not-belong-in-a-feedpak) for the full list.
+Don't add per-machine settings (audio device picks, MIDI port IDs), UI state, or your own play counts. The sloppak holds the song's authored data — anything that varies by user or machine lives in FeedBack's config dir or the metadata DB. See [feedpak spec §9.5](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md#95-what-does-not-belong-in-a-feedpak) for the full list.
 
 ---
 
@@ -252,15 +252,15 @@ If you want to share your modified sloppak with someone else, re-zip it:
 
 1. Open the `mysong.sloppak/` directory.
 2. Select **everything inside** — `manifest.yaml`, `arrangements/`, `stems/`, `lyrics.json`, `cover.jpg`.
-3. Zip the **contents**, not the parent folder. (If you zip the folder, the zip will have a top-level `mysong.sloppak/` directory inside, which Slopsmith won't parse — the manifest must be at the zip root.)
+3. Zip the **contents**, not the parent folder. (If you zip the folder, the zip will have a top-level `mysong.sloppak/` directory inside, which FeedBack won't parse — the manifest must be at the zip root.)
 4. Rename `mysong.zip` → `mysong.sloppak`.
 
-For your own use, you can skip this entirely — Slopsmith reads the directory form straight from your DLC folder.
+For your own use, you can skip this entirely — FeedBack reads the directory form straight from your DLC folder.
 
 ---
 
 ## Out of scope (for now)
 
-- **Authoring a sloppak from scratch** (no Guitar Pro / MusicXML source file) — that's a developer task. Start at [feedpak spec §8 (Reading and writing)](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md#8-reading-and-writing).
-- **Editing notes / chords in `arrangements/*.json`** — technically possible but extremely tedious by hand: hundreds of objects with short field names per song. The fields are documented in [feedpak spec §6 (Arrangement JSON)](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md#6-arrangement-json), but for any real chart edit you want the [Arrangement Editor plugin](https://github.com/got-feedback/feedback-plugin-editor).
+- **Authoring a sloppak from scratch** (no Guitar Pro / MusicXML source file) — that's a developer task. Start at [feedpak spec §8 (Reading and writing)](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md#8-reading-and-writing).
+- **Editing notes / chords in `arrangements/*.json`** — technically possible but extremely tedious by hand: hundreds of objects with short field names per song. The fields are documented in [feedpak spec §6 (Arrangement JSON)](https://github.com/got-feedback/feedpak-spec/blob/main/spec/feedpak-v1.md#6-arrangement-json), but for any real chart edit you want the [Arrangement Editor plugin](https://github.com/got-feedback/feedBack-plugin-editor).
 - **Loudness normalization / advanced stem processing** — out of scope here; standard Audacity or ffmpeg workflows apply to any OGG file before you drop it into `stems/`.

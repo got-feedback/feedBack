@@ -28,10 +28,10 @@ function extractBlock(src, startMarker) {
 function loadTuningHelpers() {
     const src = fs.readFileSync(APP_JS, 'utf8');
     const start = src.indexOf('function _looksLikeRawTuningOffsets(');
-    const endMarker = 'window.slopsmith.parseRawTuningOffsets = parseRawTuningOffsets;';
+    const endMarker = 'window.feedBack.parseRawTuningOffsets = parseRawTuningOffsets;';
     const end = src.indexOf(endMarker);
     if (start === -1 || end === -1) throw new Error('tuning helpers not found');
-    const sandbox = { window: { slopsmith: {} }, exports: {} };
+    const sandbox = { window: { feedBack: {} }, exports: {} };
     vm.createContext(sandbox);
     vm.runInContext(
         src.slice(start, end + endMarker.length) + '\n'

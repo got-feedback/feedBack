@@ -22,12 +22,12 @@
 (function () {
     'use strict';
 
-    window.slopsmith = window.slopsmith || {};
-    const capabilities = window.slopsmith.capabilities;
+    window.feedBack = window.feedBack || {};
+    const capabilities = window.feedBack.capabilities;
     if (!capabilities || capabilities.version !== 1) return;
-    if (window.slopsmith.midiInput && window.slopsmith.midiInput.version === 1) return;
+    if (window.feedBack.midiInput && window.feedBack.midiInput.version === 1) return;
 
-    const STORAGE_KEY = 'slopsmith.midiInput.selectedLogicalSourceKey';
+    const STORAGE_KEY = 'feedBack.midiInput.selectedLogicalSourceKey';
 
     // providerId → { id, label, participantId, handlers:{ enumerate, open, close } }
     // handlers are LIVE functions supplied in-page via the public global; they
@@ -101,7 +101,7 @@
     }
 
     function _contributeDiagnostics() {
-        const diagnostics = window.slopsmith && window.slopsmith.diagnostics;
+        const diagnostics = window.feedBack && window.feedBack.diagnostics;
         if (!diagnostics || typeof diagnostics.contribute !== 'function') return;
         try {
             const snap = _snapshot();
@@ -113,7 +113,7 @@
                 sources: snap.sources.map(({ label: _l, ...safe }) => safe),
             };
             diagnostics.contribute('midi-input-capability', {
-                schema: 'slopsmith.midi_input.diagnostics.v1',
+                schema: 'feedBack.midi_input.diagnostics.v1',
                 ...redacted,
             });
         } catch (_) { /* diagnostics must not break input */ }
@@ -358,7 +358,7 @@
     // ── public global (live surface for in-page consumers) ──────────────────
     // Providers register live handlers here; consumers (input_setup, piano,
     // drums) get a live session handle for the "play a note" check.
-    window.slopsmith.midiInput = {
+    window.feedBack.midiInput = {
         version: 1,
         snapshot: _snapshot,
         listSources: () => _sourceListShape(),

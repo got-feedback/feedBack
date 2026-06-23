@@ -1,5 +1,5 @@
 // Verify the plugin-facing loop API: setLoop / clearLoop / getLoop on
-// window.slopsmith, the input validation in setLoop, and the
+// window.feedBack, the input validation in setLoop, and the
 // loadSavedLoop refactor that funnels through setLoop.
 //
 // Same isolation strategy as loop_restart.test.js — extract relevant
@@ -82,7 +82,7 @@ function buildSandbox() {
         // assert on the label text in these tests, so a stub is enough.
         formatTime: (s) => String(s),
         window: {
-            slopsmith: {
+            feedBack: {
                 playback: {
                     transportEvent: (...args) => transportEvents.push(args),
                 },
@@ -236,18 +236,18 @@ test('loop helpers emit transport snapshots by default and can suppress adapter 
     assert.equal(sandbox.transportEvents.length, 0);
 });
 
-test('window.slopsmith API surface declares setLoop/clearLoop/getLoop', () => {
+test('window.feedBack API surface declares setLoop/clearLoop/getLoop', () => {
     // Source-level assertion: the plugin-facing namespace must expose
     // these three methods. Catches a future contributor moving them or
     // renaming silently.
     const src = fs.readFileSync(APP_JS, 'utf8');
-    // Find the slopsmith Object.assign block and check method presence.
-    const m = src.match(/window\.slopsmith\s*=\s*Object\.assign\(_slopsmithBus,\s*\{([\s\S]*?)\}\);\s*if \(_slopsmithExisting/);
-    assert.ok(m, 'slopsmith Object.assign block not found');
+    // Find the feedBack Object.assign block and check method presence.
+    const m = src.match(/window\.feedBack\s*=\s*Object\.assign\(_feedBackBus,\s*\{([\s\S]*?)\}\);\s*if \(_feedBackExisting/);
+    assert.ok(m, 'feedBack Object.assign block not found');
     const block = m[1];
-    assert.match(block, /setLoop\s*\(/, 'setLoop method missing from slopsmith API');
-    assert.match(block, /clearLoop\s*\(/, 'clearLoop method missing from slopsmith API');
-    assert.match(block, /getLoop\s*\(/, 'getLoop method missing from slopsmith API');
+    assert.match(block, /setLoop\s*\(/, 'setLoop method missing from feedBack API');
+    assert.match(block, /clearLoop\s*\(/, 'clearLoop method missing from feedBack API');
+    assert.match(block, /getLoop\s*\(/, 'getLoop method missing from feedBack API');
 });
 
 test('loadSavedLoop funnels through setLoop (no duplicated UI mutation)', () => {

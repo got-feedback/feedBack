@@ -51,7 +51,7 @@ function runOverlay(nodes) {
 function runResolve({ override = null, screens = [], active = null } = {}) {
     const fnSrc = extractFunction(SRC, 'function _resolvePlayerOrigin(');
     const sandbox = {
-        window: { slopsmith: { _nextReturnScreen: override } },
+        window: { feedBack: { _nextReturnScreen: override } },
         document: {
             getElementById: (id) => (screens.includes(id) ? { id } : null),
             querySelector: () => (active ? { id: active } : null),
@@ -59,16 +59,16 @@ function runResolve({ override = null, screens = [], active = null } = {}) {
     };
     vm.createContext(sandbox);
     vm.runInContext(fnSrc + '\nglobalThis.__r = _resolvePlayerOrigin();', sandbox);
-    return { result: sandbox.__r, override: sandbox.window.slopsmith._nextReturnScreen };
+    return { result: sandbox.__r, override: sandbox.window.feedBack._nextReturnScreen };
 }
 
 // holdAutoExit() + _clearAutoExit() share module state; assemble them in one
 // sandbox to exercise the generation guard on the returned release handle.
 function buildHoldSandbox() {
     const clearSrc = extractFunction(SRC, 'function _clearAutoExit(');
-    const holdSrc = extractFunction(SRC, 'window.slopsmith.holdAutoExit = function ()');
+    const holdSrc = extractFunction(SRC, 'window.feedBack.holdAutoExit = function ()');
     const sandbox = { __closeCount: 0 };
-    sandbox.window = { slopsmith: {}, closeCurrentSong: () => { sandbox.__closeCount++; } };
+    sandbox.window = { feedBack: {}, closeCurrentSong: () => { sandbox.__closeCount++; } };
     vm.createContext(sandbox);
     vm.runInContext(`
         var _autoExitTimer = null;
@@ -78,7 +78,7 @@ function buildHoldSandbox() {
         ${clearSrc}
         ${holdSrc}
         globalThis.__clearAutoExit = _clearAutoExit;
-        globalThis.__hold = window.slopsmith.holdAutoExit;
+        globalThis.__hold = window.feedBack.holdAutoExit;
     `, sandbox);
     return sandbox;
 }

@@ -1,9 +1,9 @@
-"""Tests for SLOPSMITH_DEMO_MODE middleware.
+"""Tests for FEEDBACK_DEMO_MODE middleware.
 
 Covers:
 - Demo mode off: write routes pass through (middleware is a no-op).
 - Demo mode on: selected entries from _DEMO_BLOCKED return 403 {"error": "demo mode: read-only"}.
-- Demo mode on: first GET / sets the slopsmith_demo_session cookie.
+- Demo mode on: first GET / sets the feedBack_demo_session cookie.
 - Demo mode on: subsequent GET / (cookie already present) does not re-set it.
 - Cookie secure flag: set when X-Forwarded-Proto indicates https, including comma-separated values.
 - register_demo_janitor_hook: registered hooks are called by the janitor sweep.
@@ -26,17 +26,17 @@ def _make_client(tmp_path, monkeypatch, *, demo: bool = False):
     The TestClient is returned open; caller is responsible for closing it.
     raise_server_exceptions defaults to True so unexpected server errors
     surface as test failures rather than silently passing status checks.
-    SLOPSMITH_SYNC_STARTUP=1 makes the plugin-loader run inline (no background
+    FEEDBACK_SYNC_STARTUP=1 makes the plugin-loader run inline (no background
     thread spawned), consistent with tests/test_startup_status.py.  startup_scan
     and load_plugins are also stubbed to no-ops so background file-scan and
     plugin I/O are suppressed.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     if demo:
-        monkeypatch.setenv("SLOPSMITH_DEMO_MODE", "1")
+        monkeypatch.setenv("FEEDBACK_DEMO_MODE", "1")
     else:
-        monkeypatch.delenv("SLOPSMITH_DEMO_MODE", raising=False)
+        monkeypatch.delenv("FEEDBACK_DEMO_MODE", raising=False)
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     # Stub out background threads to keep tests fast and non-flaky.
@@ -118,7 +118,7 @@ def test_demo_cookie_set_on_first_get_root(tmp_path, monkeypatch):
     server, client = _make_client(tmp_path, monkeypatch, demo=True)
     try:
         r = client.get("/")
-        assert "slopsmith_demo_session" in r.cookies
+        assert "feedBack_demo_session" in r.cookies
     finally:
         _cleanup(server, client)
 
@@ -128,14 +128,14 @@ def test_demo_cookie_not_reset_when_already_present(tmp_path, monkeypatch):
     try:
         # First request sets the cookie.
         r1 = client.get("/")
-        session_id = r1.cookies.get("slopsmith_demo_session")
+        session_id = r1.cookies.get("feedBack_demo_session")
         assert session_id is not None
 
         # Second request (cookie already in jar) must not overwrite it.
-        r2 = client.get("/", cookies={"slopsmith_demo_session": session_id})
+        r2 = client.get("/", cookies={"feedBack_demo_session": session_id})
         # The Set-Cookie header for our cookie must be absent.
         set_cookie = r2.headers.get("set-cookie", "")
-        assert "slopsmith_demo_session" not in set_cookie
+        assert "feedBack_demo_session" not in set_cookie
     finally:
         _cleanup(server, client)
 
@@ -144,7 +144,7 @@ def test_demo_cookie_not_set_in_non_demo_mode(tmp_path, monkeypatch):
     server, client = _make_client(tmp_path, monkeypatch, demo=False)
     try:
         r = client.get("/")
-        assert "slopsmith_demo_session" not in r.cookies
+        assert "feedBack_demo_session" not in r.cookies
     finally:
         _cleanup(server, client)
 
@@ -157,7 +157,7 @@ def test_demo_cookie_not_secure_over_http(tmp_path, monkeypatch):
         r = client.get("/")
         set_cookie = r.headers.get("set-cookie", "")
         # The cookie must be present but without the Secure attribute.
-        assert "slopsmith_demo_session" in set_cookie
+        assert "feedBack_demo_session" in set_cookie
         assert "secure" not in set_cookie.lower()
     finally:
         _cleanup(server, client)
@@ -168,7 +168,7 @@ def test_demo_cookie_secure_over_https_via_forwarded_proto(tmp_path, monkeypatch
     try:
         r = client.get("/", headers={"x-forwarded-proto": "https"})
         set_cookie = r.headers.get("set-cookie", "")
-        assert "slopsmith_demo_session" in set_cookie
+        assert "feedBack_demo_session" in set_cookie
         assert "secure" in set_cookie.lower()
     finally:
         _cleanup(server, client)
@@ -180,7 +180,7 @@ def test_demo_cookie_secure_with_comma_separated_forwarded_proto(tmp_path, monke
     try:
         r = client.get("/", headers={"x-forwarded-proto": "https,http"})
         set_cookie = r.headers.get("set-cookie", "")
-        assert "slopsmith_demo_session" in set_cookie
+        assert "feedBack_demo_session" in set_cookie
         assert "secure" in set_cookie.lower()
     finally:
         _cleanup(server, client)
@@ -192,7 +192,7 @@ def test_demo_cookie_not_secure_when_forwarded_proto_is_http(tmp_path, monkeypat
     try:
         r = client.get("/", headers={"x-forwarded-proto": "http"})
         set_cookie = r.headers.get("set-cookie", "")
-        assert "slopsmith_demo_session" in set_cookie
+        assert "feedBack_demo_session" in set_cookie
         assert "secure" not in set_cookie.lower()
     finally:
         _cleanup(server, client)
@@ -271,8 +271,8 @@ def test_register_demo_janitor_hook_in_plugin_context(tmp_path, monkeypatch):
     """register_demo_janitor_hook must be surfaced in the plugin context dict
     passed to load_plugins(), not just on the server module."""
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_DEMO_MODE", "1")
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_DEMO_MODE", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
 

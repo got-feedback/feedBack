@@ -4,7 +4,7 @@ const { loadCapabilities } = require('./capabilities_test_harness');
 
 test('multi-provider participants use deterministic order without duplicate-owner conflict', async () => {
     const window = loadCapabilities();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const calls = [];
     api.registerParticipant('provider_b', { 'shared-viz': { roles: ['owner', 'provider'], ownership: 'multi-provider', commands: ['register-provider'], order: { after: ['provider_a'] }, handlers: { 'register-provider': () => { calls.push('b'); return { outcome: 'passed' }; } }, runtime: true } });
     api.registerParticipant('provider_a', { 'shared-viz': { roles: ['owner', 'provider'], ownership: 'multi-provider', commands: ['register-provider'], handlers: { 'register-provider': () => { calls.push('a'); return { outcome: 'handled' }; } }, runtime: true } });

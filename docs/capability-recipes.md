@@ -1,6 +1,6 @@
 # Capability Authoring Recipes
 
-Use these examples as small manifest fragments when migrating plugin-facing integrations to capability pipelines. The capability model is system-wide; these recipes focus on plugin manifests because core-owned domains are registered by Slopsmith itself. Each example is intentionally complete enough to pass the loader contract in [plugin-manifest.schema.json](plugin-manifest.schema.json).
+Use these examples as small manifest fragments when migrating plugin-facing integrations to capability pipelines. The capability model is system-wide; these recipes focus on plugin manifests because core-owned domains are registered by FeedBack itself. Each example is intentionally complete enough to pass the loader contract in [plugin-manifest.schema.json](plugin-manifest.schema.json).
 
 > **Self-hosted CSS?** If your plugin uses Tailwind classes core doesn't ship (notably arbitrary values like `text-[11px]`), declare a `styles` key and bundle your own preflight-off stylesheet — see [plugin-styles.md](plugin-styles.md). That is separate from the capability-pipeline recipes below.
 
@@ -124,7 +124,7 @@ A route-only wrapper that uses the library capability without registering a brow
 
 ## Audio Mix Fader Provider
 
-Existing plugins can keep using `window.slopsmith.audio.registerFader(spec)` while migrating. The compatibility bridge records the fader as an `audio-mix` participant. New bundled code should prefer a native participant declaration plus the audio-session helper once available in its integration point.
+Existing plugins can keep using `window.feedBack.audio.registerFader(spec)` while migrating. The compatibility bridge records the fader as an `audio-mix` participant. New bundled code should prefer a native participant declaration plus the audio-session helper once available in its integration point.
 
 ```json
 {
@@ -147,11 +147,11 @@ Existing plugins can keep using `window.slopsmith.audio.registerFader(spec)` whi
 
 Native audio-mix fader providers should register a stable participant id and fader id, return the committed value from every set operation, and settle get/set operations within two seconds. The player mixer displays the committed value rather than the raw requested value. If the fader is temporarily unavailable, keep the participant registered with unavailable/disabled state so the mixer can render a disabled control and diagnostics can explain why it cannot be changed.
 
-During migration, a plugin may still call `window.slopsmith.audio.registerFader(spec)`. Core maps that legacy fader into a compatibility-backed audio-mix participant and records bridge hits. If a native participant and a legacy fader represent the same logical source, the native participant owns the visible control and the legacy path is reported as compatibility-backed/overshadowed.
+During migration, a plugin may still call `window.feedBack.audio.registerFader(spec)`. Core maps that legacy fader into a compatibility-backed audio-mix participant and records bridge hits. If a native participant and a legacy fader represent the same logical source, the native participant owns the visible control and the legacy path is reported as compatibility-backed/overshadowed.
 
 ## Audio Effects Provider
 
-Plugins that can provide guitar/bass processing chains should declare `audio-effects` as a provider and register at runtime with `window.slopsmith.audioEffects.registerProvider(...)`. The provider returns opaque chain plans; it must not expose local filenames, URLs, native preset JSON, VST state blobs, or raw handles through diagnostics or public route state.
+Plugins that can provide guitar/bass processing chains should declare `audio-effects` as a provider and register at runtime with `window.feedBack.audioEffects.registerProvider(...)`. The provider returns opaque chain plans; it must not expose local filenames, URLs, native preset JSON, VST state blobs, or raw handles through diagnostics or public route state.
 
 ```json
 {
@@ -173,7 +173,7 @@ Plugins that can provide guitar/bass processing chains should declare `audio-eff
 ```
 
 ```js
-const effects = window.slopsmith && window.slopsmith.audioEffects;
+const effects = window.feedBack && window.feedBack.audioEffects;
 effects.registerProvider({
   providerId: 'rig-builder',
   pluginId: 'rig_builder',
@@ -184,7 +184,7 @@ effects.registerProvider({
     'chain.resolve': request => ({
       outcome: 'handled',
       plan: {
-        schema: 'slopsmith.audio_effects.chain_plan.v1',
+        schema: 'feedBack.audio_effects.chain_plan.v1',
         planId: 'song-tone-plan',
         routeKey: request.routeKey,
         providerId: 'rig-builder',
@@ -203,14 +203,14 @@ effects.registerProvider({
 User-facing controls should dispatch through the domain instead of mutating another plugin's private state:
 
 ```js
-await window.slopsmith.capabilities.dispatch({
+await window.feedBack.capabilities.dispatch({
   capability: 'audio-effects',
   command: 'select-chain',
   source: 'rig_builder',
   payload: { routeKey: 'desktop-main', providerId: 'rig-builder', authorization: 'user-action' }
 });
 
-const resolved = await window.slopsmith.capabilities.dispatch({
+const resolved = await window.feedBack.capabilities.dispatch({
   capability: 'audio-effects',
   command: 'resolve-plan',
   source: 'nam_tone',
@@ -221,7 +221,7 @@ const resolved = await window.slopsmith.capabilities.dispatch({
 Providers should store public song/tone routing through the host-owned mapping index and keep their own preset or chain rows private. The mapping's `provider_ref` is opaque to core: NAM Tone can use a preset id, Rig Builder can use a chain/preset id, and each provider resolves that reference in `chain.resolve`.
 
 ```js
-await window.slopsmith.audioEffects.upsertMapping({
+await window.feedBack.audioEffects.upsertMapping({
   song_key: playbackTarget.settingsKey,
   filename: playbackTarget.filename, // optional migration/debug context
   tone_key: 'Dist',
@@ -232,7 +232,7 @@ await window.slopsmith.audioEffects.upsertMapping({
   active: true
 });
 
-const mappings = await window.slopsmith.audioEffects.listMappings({
+const mappings = await window.feedBack.audioEffects.listMappings({
   song_key: playbackTarget.settingsKey,
   tone_key: 'Dist'
 });
@@ -243,7 +243,7 @@ Only one mapping is active for a `song_key + tone_key` at a time, but multiple p
 Browser or native executors should declare both provider scope and plan scope. A NAM-only browser executor should not claim Rig Builder plans just because it can load NAM files:
 
 ```js
-window.slopsmith.audioEffects.registerExecutor({
+window.feedBack.audioEffects.registerExecutor({
   executorId: 'nam-tone-browser-wasm',
   pluginId: 'nam_tone',
   routeKey: 'desktop-main',
@@ -296,7 +296,7 @@ Plugins that need live instrument input should declare requester/observer intent
 Requesters should list or inspect sources before opening them. `inspect`, `list-sources`, and `select-source` are prompt-free and must not call provider enumeration or open live input. When a requester needs audio, it dispatches `open-source` with a purpose and required channel shape. The requester identity is taken from the dispatch `source` (the authenticated caller) — a payload-supplied `requesterId` is ignored, so a requester cannot spoof another's identity or release a shared session it does not own. Compatible requesters share one open session; each requester later dispatches `close-source`, and the provider is closed only after the last requester releases it.
 
 ```js
-const api = window.slopsmith.capabilities;
+const api = window.feedBack.capabilities;
 await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'browser:instrument:primary' } });
 const opened = await api.dispatch({
   capability: 'audio-input',
@@ -436,7 +436,7 @@ Plugins that need to inspect or coordinate song transport should declare `playba
 Fresh audible starts require a user action. Background plugins should call `inspect` first and attach to an existing compatible session; if a plugin needs to offer a play/start action, wire it to a visible user gesture and pass `authorization: "user-action"`.
 
 ```js
-const api = window.slopsmith.capabilities;
+const api = window.feedBack.capabilities;
 
 const state = await api.dispatch({
   capability: 'playback',
@@ -455,7 +455,7 @@ if (state.status !== 'idle') {
 }
 ```
 
-During migration, legacy uses of `window.playSong`, `song:*` events, `window.slopsmith.seek`, and loop helpers remain available and are recorded as playback bridge hits. Treat bridge hits as migration telemetry: native capability requests should eventually cover normal plugin workflows so unexpected legacy hits disappear from diagnostics.
+During migration, legacy uses of `window.playSong`, `song:*` events, `window.feedBack.seek`, and loop helpers remain available and are recorded as playback bridge hits. Treat bridge hits as migration telemetry: native capability requests should eventually cover normal plugin workflows so unexpected legacy hits disappear from diagnostics.
 
 ## Progression Requester And Observer
 
@@ -484,7 +484,7 @@ Plugins that report gameplay outcomes or react to player progression (spec 010) 
 `buy-item` and `equip-item` require a visible user gesture (`authorization: "user-action"`). Decibels are play-earned only; plugins must not present any purchase path.
 
 ```js
-const api = window.slopsmith.capabilities;
+const api = window.feedBack.capabilities;
 
 const result = await api.dispatch({
   capability: 'progression',
@@ -494,14 +494,14 @@ const result = await api.dispatch({
 });
 // result.payload lists challenges/quests completed by this event (toast UX).
 
-window.slopsmith.on('progression:quest-completed', (e) => {
+window.feedBack.on('progression:quest-completed', (e) => {
   console.log('quest done:', e.detail.title, '+' + e.detail.reward_db + ' dB');
 });
 ```
 
 ## Future Expansion Domains
 
-Some domain names are reserved for expected future contracts, but they are not registered in the runtime graph yet. For example, `ui.player-panels` is documented as a likely panel-host surface, but Slopsmith does not currently expose a capability command for panel contributions. See [capability-roadmap.md](capability-roadmap.md) for the PR1 domain set and deferred-domain checklist.
+Some domain names are reserved for expected future contracts, but they are not registered in the runtime graph yet. For example, `ui.player-panels` is documented as a likely panel-host surface, but FeedBack does not currently expose a capability command for panel contributions. See [capability-roadmap.md](capability-roadmap.md) for the PR1 domain set and deferred-domain checklist.
 
 Plugins should not declare future expansion domains until the corresponding host workflow ships. For current integrations, prefer active domains such as `library`, `playback`, `audio-mix`, `audio-input`, `audio-monitoring`, or `stems` intent matching the recipes above.
 
@@ -537,7 +537,7 @@ the owner is visible in the Capability Inspector.
 Register the action from the plugin's `screen.js`:
 
 ```js
-window.slopsmith.libraryCardActions.register({
+window.feedBack.libraryCardActions.register({
   id: 'my_card_action.run',
   pluginId: 'my_card_action',
   label: 'Do the thing',

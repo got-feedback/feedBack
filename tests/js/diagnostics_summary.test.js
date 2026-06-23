@@ -7,9 +7,9 @@ const { createWindow, ROOT } = require('./capabilities_test_harness');
 
 function loadDiagnostics() {
     const window = createWindow();
-    // diagnostics.js short-circuits if window.slopsmith.diagnostics already
+    // diagnostics.js short-circuits if window.feedBack.diagnostics already
     // exists (idempotent guard); the harness stubs it, so clear it first.
-    window.slopsmith.diagnostics = undefined;
+    window.feedBack.diagnostics = undefined;
     window.navigator = { userAgent: 'test' };
     const context = vm.createContext(window);
     const source = fs.readFileSync(path.join(ROOT, 'static', 'diagnostics.js'), 'utf8');
@@ -18,7 +18,7 @@ function loadDiagnostics() {
 }
 
 test('summarizeRuntimeDomains counts actual UI contributions, not the {declared,legacy} wrapper keys', () => {
-    const { summarizeRuntimeDomains } = loadDiagnostics().slopsmith.diagnostics;
+    const { summarizeRuntimeDomains } = loadDiagnostics().feedBack.diagnostics;
     const snapshot = {
         plugins: [
             {
@@ -49,7 +49,7 @@ test('summarizeRuntimeDomains counts actual UI contributions, not the {declared,
 });
 
 test('summarizeRuntimeDomains tolerates a flat region→contributions map', () => {
-    const { summarizeRuntimeDomains } = loadDiagnostics().slopsmith.diagnostics;
+    const { summarizeRuntimeDomains } = loadDiagnostics().feedBack.diagnostics;
     const summary = summarizeRuntimeDomains({
         plugins: [{ ui_contributions: { 'ui.navigation': [{ id: 'a' }, { id: 'b' }] } }],
     });
@@ -57,7 +57,7 @@ test('summarizeRuntimeDomains tolerates a flat region→contributions map', () =
 });
 
 test('summarizeRuntimeDomains counts only array region values (malformed values are ignored)', () => {
-    const { summarizeRuntimeDomains } = loadDiagnostics().slopsmith.diagnostics;
+    const { summarizeRuntimeDomains } = loadDiagnostics().feedBack.diagnostics;
     // Non-array region values (a stray object/string from a malformed payload)
     // must not inflate the count — only the two real array entries count.
     const declaredSummary = summarizeRuntimeDomains({

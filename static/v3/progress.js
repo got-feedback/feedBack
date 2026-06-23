@@ -11,7 +11,7 @@
  */
 (function () {
     'use strict';
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     const SCREEN_ID = 'v3-progress';
 
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (

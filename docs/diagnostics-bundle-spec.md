@@ -1,7 +1,7 @@
-# Slopsmith Diagnostics Bundle — Format Specification
+# FeedBack Diagnostics Bundle — Format Specification
 
-This document is the authoritative reference for the `slopsmith-diag-*.zip`
-file produced by Settings → Export Diagnostics (slopsmith#166).
+This document is the authoritative reference for the `feedBack-diag-*.zip`
+file produced by Settings → Export Diagnostics (feedBack#166).
 
 The bundle is consumed by humans (maintainers reading bug reports) **and**
 AI agents (auto-triage, code-aware assistants). Every JSON file inside
@@ -15,17 +15,17 @@ version without guessing.
 A diagnostic bundle is a plain ZIP archive. The default filename is:
 
 ```
-slopsmith-diag-<slopsmith-version>-<YYYYMMDD-HHMMSS>.zip
+feedBack-diag-<feedBack-version>-<YYYYMMDD-HHMMSS>.zip
 ```
 
 Top-level layout:
 
 ```
-slopsmith-diag-0.2.4-20260503-143022.zip
+feedBack-diag-0.2.4-20260503-143022.zip
 ├── manifest.json          AI-friendly index, schema 1
 ├── README.txt             Human-friendly: what's in here, how to read
 ├── system/
-│   ├── version.json       slopsmith + python + OS
+│   ├── version.json       feedBack + python + OS
 │   ├── env.json           allowlisted env vars only (no secrets)
 │   ├── hardware.json      backend hardware (container-limited if Docker)
 │   └── plugins.json       loaded + orphan plugins, with git info
@@ -53,7 +53,7 @@ logs, console, plugins). Missing sections are not represented in
 {
   "schema": 1,                          // bundle schema; bump = breaking change
   "exported_at": "2026-05-03T14:30:22Z",
-  "slopsmith_version": "0.2.4",
+  "feedBack_version": "0.2.4",
   "runtime": "docker",                  // "docker" | "electron" | "bare"
   "redacted": true,                     // were redactions applied?
   "files": [
@@ -94,7 +94,7 @@ Field semantics:
 ```jsonc
 {
   "schema": "system.version.v1",
-  "slopsmith_version": "0.2.4",
+  "feedBack_version": "0.2.4",
   "python":   { "version": "3.12.4", "implementation": "CPython", "executable": "/usr/bin/python" },
   "os":       { "system": "Linux", "release": "6.5.0", "machine": "x86_64" },
   "exported_at": "2026-05-03T14:30:22Z"
@@ -109,13 +109,13 @@ Field semantics:
   "vars": {
     "LOG_LEVEL": "INFO",
     "LOG_FORMAT": "json",
-    "SLOPSMITH_RUNTIME": "electron"
+    "FEEDBACK_RUNTIME": "electron"
   }
 }
 ```
 
 Allowlisted env var keys only (see `ENV_ALLOWLIST` in `lib/diagnostics_bundle.py`):
-`LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `SLOPSMITH_RUNTIME`, `PORT`, `HOST`,
+`LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `FEEDBACK_RUNTIME`, `PORT`, `HOST`,
 `TZ`, `PYTHONUNBUFFERED`, `DEMUCS_SERVER_URL`. New entries require an
 allowlist edit; secrets must never be added.
 
@@ -177,7 +177,7 @@ entry explaining why.
       "capability_validation_warnings": [],
       "capability_unsupported_versions": [],
       "compatibility_shims": [],
-      "git": { "sha": "abc123d", "remote": "https://github.com/topkoa/slopsmith-plugin-stems.git" }
+      "git": { "sha": "abc123d", "remote": "https://github.com/topkoa/feedBack-plugin-stems.git" }
     }
   ],
   "orphans": [
@@ -187,7 +187,7 @@ entry explaining why.
       "version": "0.1.0",
       "loaded": false,
       "dir": "broken",
-      "path": "/home/user/.config/slopsmith/plugins/broken"
+      "path": "/home/user/.config/feedBack/plugins/broken"
     }
   ]
 }
@@ -223,7 +223,7 @@ appear in `capability_unsupported_versions` and should be treated as
 non-executable runtime intent.
 
 Client-side capability snapshots contributed under `plugins/capabilities/client.json`
-use schema `slopsmith.capabilities.diagnostics.v1`. They include current
+use schema `feedBack.capabilities.diagnostics.v1`. They include current
 pipelines, participants, conflicts, missing providers, user overrides, active
 or orphaned claims, claim lifecycle records, compatibility shim hit counts,
 unsupported-version reports, and recent decisions. The runtime caps this
@@ -235,7 +235,7 @@ current graph state.
 ```jsonc
 {
   "schema": "logs.server.v1",
-  "log_file": "/data/log/slopsmith.log",
+  "log_file": "/data/log/feedBack.log",
   "exists": true,
   "size_bytes": 8388608,
   "tail_bytes": 5242880,
@@ -341,7 +341,7 @@ serialized as `"[circular]"`.
 `runtime.kind` rules:
 
 - `"electron"` if `navigator.userAgent` contains `Electron/`. Versions
-  populated when the desktop launcher exposes `window.slopsmithElectron`
+  populated when the desktop launcher exposes `window.feedBackElectron`
   via a preload `contextBridge`.
 - `"browser"` otherwise.
 
@@ -367,7 +367,7 @@ typically prefix their keys with their `plugin_id`.
 {
   "schema": "client.ua.v1",
   "userAgent": "...",
-  "url": "https://slopsmith.local/",
+  "url": "https://feedBack.local/",
   "screen": { ... }
 }
 ```
@@ -406,10 +406,10 @@ dispatch by plugin schema.
 
 Detection precedence (backend):
 
-1. `SLOPSMITH_RUNTIME` env var (`"electron"`/`"docker"`/`"bare"`)
+1. `FEEDBACK_RUNTIME` env var (`"electron"`/`"docker"`/`"bare"`)
 2. `/.dockerenv` exists OR `/proc/1/cgroup` mentions `docker`/
    `containerd`/`kubepods` → `docker`
-3. Parent process name matches `electron` or `Slopsmith` → `electron`
+3. Parent process name matches `electron` or `FeedBack` → `electron`
 4. Default: `bare`
 
 Detection (frontend): `Electron/` in user agent → `electron`, else
@@ -430,7 +430,7 @@ between bundles):
 |--------------------|-----------------------------------------------------|
 | `<DLC_DIR>`        | configured DLC root path                             |
 | `<HOME>`           | user's home directory                                |
-| `<CONFIG_DIR>`     | slopsmith config directory                           |
+| `<CONFIG_DIR>`     | feedBack config directory                           |
 | `<song:HASH8>`     | song filename / basename (8-char salted SHA-256)    |
 | `<ip:HASH6>`       | IPv4 / IPv6 address                                  |
 | `<redacted>`       | bearer token, `key=`/`token=`/`api_key=` query strings |
@@ -508,7 +508,7 @@ machine.
 ```
 
 Frontend plugins push diagnostics by calling
-`window.slopsmith.diagnostics.contribute(plugin_id, payload)` before the
+`window.feedBack.diagnostics.contribute(plugin_id, payload)` before the
 user clicks Export. The payload is written to `plugins/<id>/client.json`
 (gated on the same "Plugin diagnostics" toggle as backend plugin files).
 

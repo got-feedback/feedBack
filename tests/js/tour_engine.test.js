@@ -1,5 +1,5 @@
-// Source-level guards for the consolidated tour menu (slopsmith#272).
-// The engine lives in a DOMContentLoaded handler that wires window.slopsmith,
+// Source-level guards for the consolidated tour menu (feedBack#272).
+// The engine lives in a DOMContentLoaded handler that wires window.feedBack,
 // localStorage, and Shepherd — too much browser surface to reproduce cleanly
 // in a vm sandbox. These checks lock in the contract (viz relevance gating,
 // complete-vs-cancel semantics, waitFor validation, focus management,
@@ -115,9 +115,9 @@ test('_updateMenuVisibility dismisses orphan toast when relevance drops to zero'
 
 test('popover has role=dialog with aria-controls wired from the trigger', () => {
     const fn = extractBlock(SRC, 'function _ensureMenu()');
-    assert.match(fn, /setAttribute\(\s*['"]aria-controls['"]\s*,\s*['"]slopsmith-tour-menu-popover['"]/,
+    assert.match(fn, /setAttribute\(\s*['"]aria-controls['"]\s*,\s*['"]feedBack-tour-menu-popover['"]/,
         'trigger must wire aria-controls to the popover id');
-    assert.match(fn, /_menuPopover\.id\s*=\s*['"]slopsmith-tour-menu-popover['"]/,
+    assert.match(fn, /_menuPopover\.id\s*=\s*['"]feedBack-tour-menu-popover['"]/,
         'popover must carry the matching id');
     assert.match(fn, /setAttribute\(\s*['"]role['"]\s*,\s*['"]dialog['"]/,
         'popover must use role=dialog (not the menu role we don\'t implement)');

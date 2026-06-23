@@ -8,7 +8,7 @@ different salts so tokens cannot be cross-correlated between exports.
 Stable token grammar (see docs/diagnostics-bundle-spec.md):
     <DLC_DIR>          — DLC root path
     <HOME>             — user's home directory
-    <CONFIG_DIR>       — slopsmith config dir
+    <CONFIG_DIR>       — feedBack config dir
     <song:hash8>       — song filename / basename (8 hex chars)
     <ip:hash6>          — IPv4 / IPv6 address (6 hex chars)
     <redacted>          — bearer tokens, key=/token= query strings

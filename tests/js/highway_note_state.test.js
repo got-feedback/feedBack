@@ -1,4 +1,4 @@
-// Source-level guards for the per-note judgment hook (slopsmith#254):
+// Source-level guards for the per-note judgment hook (feedBack#254):
 // highway.setNoteStateProvider / getNoteStateProvider / getNoteState,
 // bundle.getNoteState, isDefaultRenderer, and the _noteState
 // normalization rules. The createHighway closure owns canvas + WebGL
@@ -54,7 +54,7 @@ test('_makeBundle exposes getNoteState (stable reference, no per-frame alloc)', 
     assert.match(fn, /getNoteState:\s*_noteState\b/, 'bundle.getNoteState must be the stable _noteState reference');
 });
 
-test('_makeBundle exposes getNoteStateProvider as a stable reference (slopsmith#254)', () => {
+test('_makeBundle exposes getNoteStateProvider as a stable reference (feedBack#254)', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     const fn = extractBlock(src, 'function _makeBundle()');
     // Same allocation discipline as getNoteState: highway_3d uses this
@@ -106,7 +106,7 @@ test('3D highway captures bundle.getNoteState and overrides legacy hit/miss with
     assert.match(src, /const\s+_showHit\s*=\s*\(\s*_ndState\s*===\s*['"]miss['"]\s*\)\s*\?\s*false\s*:\s*\(\s*_ndState\s*\?\s*_ndGood\s*:\s*\(\s*hit\s*\|\|\s*\(\s*n\.f\s*>\s*0\s*&&\s*inGhostWin\s*\)\s*\)\s*\)/, '_showHit must honor a provider "miss" and fall back to the hit/ghost heuristic only with no verdict');
 });
 
-test('3D highway captures _ndHasProvider via bundle.getNoteStateProvider (slopsmith#254)', () => {
+test('3D highway captures _ndHasProvider via bundle.getNoteStateProvider (feedBack#254)', () => {
     const src = fs.readFileSync(highway3dJs, 'utf8');
     // Detect-mode behavior — verdict-window cull extension, chord-frame
     // hold floor, and the smart drawNote cull — must be gated on a real

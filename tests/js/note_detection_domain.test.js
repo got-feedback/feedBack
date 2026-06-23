@@ -34,19 +34,19 @@ async function registerMidiProvider(api) {
 
 test('note-detection domain registers an active sensitive provider-coordinator', () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const pipeline = api.inspect('note-detection');
     assert.ok(pipeline, 'note-detection pipeline exists');
     const owner = (pipeline.participants || []).find(p => p.pluginId === 'core.note-detection');
     assert.ok(owner, 'core.note-detection owner registered');
     assert.equal(owner.safety, 'sensitive');
     assert.ok(owner.commands.includes('open-binding'));
-    assert.equal(window.slopsmith.noteDetection.version, 1);
+    assert.equal(window.feedBack.noteDetection.version, 1);
 });
 
 test('open-binding without a provider reports unavailable, never a silent verdict', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const result = await api.dispatch({
         capability: 'note-detection', command: 'open-binding',
         source: 'keys_highway_3d', payload: { context: { arrangement: 'keys' } },
@@ -57,7 +57,7 @@ test('open-binding without a provider reports unavailable, never a silent verdic
 
 test('provider registration + binding lifecycle with per-binding context', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const events = captureEvents(api, [
         'note-detection:provider-registered',
         'note-detection:binding-opened',
@@ -104,7 +104,7 @@ test('provider registration + binding lifecycle with per-binding context', async
 
 test('concurrent bindings keep independent contexts (FR-003)', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerMidiProvider(api);
     const a = await api.dispatch({
         capability: 'note-detection', command: 'open-binding',
@@ -114,7 +114,7 @@ test('concurrent bindings keep independent contexts (FR-003)', async () => {
         capability: 'note-detection', command: 'open-binding',
         source: 'slopscale', payload: { context: { arrangement: 'bass', stringCount: 4, capo: 0 } },
     });
-    const snapshot = window.slopsmith.noteDetection.snapshot();
+    const snapshot = window.feedBack.noteDetection.snapshot();
     const ctxA = snapshot.bindings.find(x => x.id === a.payload.bindingId).context;
     const ctxB = snapshot.bindings.find(x => x.id === b.payload.bindingId).context;
     assert.equal(ctxA.arrangement, 'guitar');
@@ -125,18 +125,18 @@ test('concurrent bindings keep independent contexts (FR-003)', async () => {
 
 test('unregistering a provider closes its bindings and flips availability', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const events = captureEvents(api, ['note-detection:availability-changed', 'note-detection:binding-closed']);
     await registerMidiProvider(api);
     const openResult = await api.dispatch({ capability: 'note-detection', command: 'open-binding', source: 'keys_highway_3d', payload: {} });
     assert.equal(openResult.outcome, 'handled');
-    assert.equal(window.slopsmith.noteDetection.snapshot().bindings.length, 1);
+    assert.equal(window.feedBack.noteDetection.snapshot().bindings.length, 1);
     const result = await api.dispatch({
         capability: 'note-detection', command: 'unregister-provider',
         source: 'keys_highway_3d', payload: { providerId: 'keys-midi' },
     });
     assert.equal(result.outcome, 'handled');
-    assert.equal(window.slopsmith.noteDetection.snapshot().bindings.length, 0);
+    assert.equal(window.feedBack.noteDetection.snapshot().bindings.length, 0);
     const availability = events.filter(e => e.event === 'availability-changed').map(e => e.payload.available);
     assert.deepEqual(JSON.parse(JSON.stringify(availability)), [true, false]);
     assert.ok(events.some(e => e.event === 'binding-closed' && e.payload.reason === 'provider-unregistered'));
@@ -149,10 +149,10 @@ test('unregistering a provider closes its bindings and flips availability', asyn
 
 test('hit/miss reports flow as observability events with bounded fields', () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const events = captureEvents(api, ['note-detection:hit', 'note-detection:miss']);
-    window.slopsmith.noteDetection.reportHit({ bindingId: 'ndb-1', providerId: 'keys-midi', midi: 64, hit: true, secretDevice: 'Yamaha P-125' });
-    window.slopsmith.noteDetection.reportMiss({ bindingId: 'ndb-1', providerId: 'keys-midi', midi: 65, hit: false });
+    window.feedBack.noteDetection.reportHit({ bindingId: 'ndb-1', providerId: 'keys-midi', midi: 64, hit: true, secretDevice: 'Yamaha P-125' });
+    window.feedBack.noteDetection.reportMiss({ bindingId: 'ndb-1', providerId: 'keys-midi', midi: 65, hit: false });
     assert.equal(events.length, 2);
     assert.equal(events[0].payload.midi, 64);
     // Unknown fields are dropped — payloads stay bounded and device-label free.
@@ -162,27 +162,27 @@ test('hit/miss reports flow as observability events with bounded fields', () => 
 
 test('diagnostics contribution is redaction-safe', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerMidiProvider(api);
     await api.dispatch({
         capability: 'note-detection', command: 'open-binding',
         source: 'keys_highway_3d', payload: { context: { arrangement: 'keys', deviceLabel: 'Yamaha P-125' } },
     });
-    window.slopsmith.noteDetection.reportHit({ bindingId: 'ndb-1', midi: 60, hit: true });
+    window.feedBack.noteDetection.reportHit({ bindingId: 'ndb-1', midi: 60, hit: true });
     const contribution = window.__diagnosticsContributions.get('note-detection-capability');
-    assert.equal(contribution.schema, 'slopsmith.note_detection_capability.v1');
+    assert.equal(contribution.schema, 'feedBack.note_detection_capability.v1');
     const serialized = JSON.stringify(contribution);
     assert.ok(!/Yamaha|deviceLabel|filename|\.sloppak|\.archive/i.test(serialized), serialized);
 });
 
 test('legacy setNoteStateProvider surface is wrapped and accounted', () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     // Simulate highway.js arriving after the host, then the notedetect
     // plugin installing its chart-coupled provider.
     let installed = null;
     window.highway = { setNoteStateProvider(fn) { installed = fn; } };
-    window.slopsmith.emit('song:loaded', {});
+    window.feedBack.emit('song:loaded', {});
     const provider = () => ({ state: 'hit' });
     window.highway.setNoteStateProvider(provider);
     assert.equal(installed, provider, 'legacy behavior preserved');
@@ -196,7 +196,7 @@ test('legacy setNoteStateProvider surface is wrapped and accounted', () => {
 
 test('unsupported binding/provider ids degrade with bounded reasons (FR-008)', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerMidiProvider(api);
     const badProvider = await api.dispatch({
         capability: 'note-detection', command: 'open-binding',
@@ -212,7 +212,7 @@ test('unsupported binding/provider ids degrade with bounded reasons (FR-008)', a
 
 test('_contextSummary whitelists arrangement kind — unknown values are dropped', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerMidiProvider(api);
     // Known arrangement kinds pass through.
     const open = await api.dispatch({
@@ -220,7 +220,7 @@ test('_contextSummary whitelists arrangement kind — unknown values are dropped
         source: 'caller', payload: { context: { arrangement: 'keys', stringCount: 6 } },
     });
     assert.equal(open.outcome, 'handled');
-    const snap = window.slopsmith.noteDetection.snapshot();
+    const snap = window.feedBack.noteDetection.snapshot();
     const ctx = snap.bindings.find(b => b.id === open.payload.bindingId).context;
     assert.equal(ctx.arrangement, 'keys');
 
@@ -230,28 +230,28 @@ test('_contextSummary whitelists arrangement kind — unknown values are dropped
         source: 'caller', payload: { context: { arrangement: '/Users/victim/song.archive' } },
     });
     assert.equal(open2.outcome, 'handled');
-    const snap2 = window.slopsmith.noteDetection.snapshot();
+    const snap2 = window.feedBack.noteDetection.snapshot();
     const ctx2 = snap2.bindings.find(b => b.id === open2.payload.bindingId).context;
     assert.equal(ctx2.arrangement, undefined, 'path-bearing arrangement must be dropped');
 });
 
 test('snapshot primitives are deep-copied — caller cannot mutate provider internals', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerMidiProvider(api);
-    const snap1 = window.slopsmith.noteDetection.snapshot();
+    const snap1 = window.feedBack.noteDetection.snapshot();
     const providerEntry = snap1.providers.find(p => p.id === 'keys-midi');
     assert.ok(Array.isArray(providerEntry.primitives));
     // Mutate the copy — must not affect subsequent snapshots.
     providerEntry.primitives.push('injected');
-    const snap2 = window.slopsmith.noteDetection.snapshot();
+    const snap2 = window.feedBack.noteDetection.snapshot();
     const providerEntry2 = snap2.providers.find(p => p.id === 'keys-midi');
     assert.ok(!providerEntry2.primitives.includes('injected'), 'live primitives must not be mutated via snapshot');
 });
 
 test('close-binding and set-target enforce requester ownership', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerMidiProvider(api);
     const open = await api.dispatch({
         capability: 'note-detection', command: 'open-binding',
@@ -283,7 +283,7 @@ test('close-binding and set-target enforce requester ownership', async () => {
 
 test('register-provider rejects cross-owner re-registration', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     // First registration by plugin-a.
     const first = await api.dispatch({
         capability: 'note-detection', command: 'register-provider',
@@ -311,7 +311,7 @@ test('register-provider rejects cross-owner re-registration', async () => {
 
 test('unregister-provider rejects cross-owner unregister', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     await registerMidiProvider(api);
 
     // A different participant must not unregister a provider it does not own.
@@ -322,7 +322,7 @@ test('unregister-provider rejects cross-owner unregister', async () => {
     assert.equal(steal.outcome, 'degraded', 'cross-owner unregister must be rejected');
 
     // Provider must still be present after the failed cross-owner attempt.
-    const snap = window.slopsmith.noteDetection.snapshot();
+    const snap = window.feedBack.noteDetection.snapshot();
     assert.ok(snap.providers.some(p => p.id === 'keys-midi'), 'provider must survive cross-owner unregister attempt');
 
     // The original owner can still unregister.
@@ -335,7 +335,7 @@ test('unregister-provider rejects cross-owner unregister', async () => {
 
 test('availability-changed fires only on 0→1 and 1→0 transitions', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
     const events = captureEvents(api, ['note-detection:availability-changed']);
 
     // First registration: 0→1, should emit.
@@ -364,7 +364,7 @@ test('availability-changed fires only on 0→1 and 1→0 transitions', async () 
 
 test('unregistering one of two providers from the same participant keeps participant in the pipeline', async () => {
     const window = loadNoteDetection();
-    const api = window.slopsmith.capabilities;
+    const api = window.feedBack.capabilities;
 
     // One plugin registers two providers under the same participantId.
     await api.dispatch({
@@ -386,7 +386,7 @@ test('unregistering one of two providers from the same participant keeps partici
     });
     assert.equal(unreg.outcome, 'handled');
 
-    const snap = window.slopsmith.noteDetection.snapshot();
+    const snap = window.feedBack.noteDetection.snapshot();
     assert.ok(!snap.providers.some(p => p.id === 'multi-provider-a'), 'provider-a must be removed');
     assert.ok(snap.providers.some(p => p.id === 'multi-provider-b'), 'provider-b must still be present');
     const participants = api.inspect('note-detection').participants || [];

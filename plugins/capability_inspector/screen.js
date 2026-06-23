@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    const state = window.__slopsmithCapabilityInspector || (window.__slopsmithCapabilityInspector = {});
+    const state = window.__feedBackCapabilityInspector || (window.__feedBackCapabilityInspector = {});
     state.render = render;
     if (state.installed) return;
     state.installed = true;
@@ -126,7 +126,7 @@
     }
 
     function registry() {
-        return window.slopsmith && window.slopsmith.capabilities;
+        return window.feedBack && window.feedBack.capabilities;
     }
 
     function snapshot() {
@@ -319,7 +319,7 @@
             lifecycle: review.lifecycle || 'plugin-defined',
             label: review.label || 'Plugin-defined',
             tone: review.tone || 'info',
-            summary: review.summary || 'Declared by a plugin or test fixture rather than registered as a core Slopsmith domain.',
+            summary: review.summary || 'Declared by a plugin or test fixture rather than registered as a core FeedBack domain.',
         };
     }
 
@@ -1087,7 +1087,7 @@
         const groups = new Map();
         for (const expected of Array.isArray(expectedShims) ? expectedShims : []) {
             const surface = String(expected && expected.legacySurface || '');
-            const eventMatch = surface.match(/^window\.slopsmith\.(emit|on):(.+)$/);
+            const eventMatch = surface.match(/^window\.feedBack\.(emit|on):(.+)$/);
             const key = eventMatch ? eventMatch[2] : surface;
             const type = eventMatch ? (eventMatch[1] === 'emit' ? 'emit' : 'listener') : 'surface';
             const entry = groups.get(key) || { group: key, emit: null, listener: null, surfaces: [] };
@@ -1461,14 +1461,14 @@
     }
 
     function audioSessionSnapshot() {
-        const api = window.slopsmith && window.slopsmith.audioSession;
+        const api = window.feedBack && window.feedBack.audioSession;
         if (!api || typeof api.snapshot !== 'function') return null;
         try { return api.snapshot(); }
         catch (_) { return null; }
     }
 
     function playbackSnapshot() {
-        const api = window.slopsmith && window.slopsmith.playback;
+        const api = window.feedBack && window.feedBack.playback;
         if (!api || typeof api.snapshot !== 'function') return null;
         try { return api.snapshot({ exportMode: 'local-inspector' }); }
         catch (_) { return null; }
@@ -1747,6 +1747,6 @@
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
     else install();
-    window.addEventListener('slopsmith:capabilities:ready', render);
-    window.addEventListener('slopsmith:capabilities:changed', scheduleRender);
+    window.addEventListener('feedBack:capabilities:ready', render);
+    window.addEventListener('feedBack:capabilities:changed', scheduleRender);
 })();

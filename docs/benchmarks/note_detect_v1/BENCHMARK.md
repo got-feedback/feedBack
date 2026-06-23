@@ -1,6 +1,6 @@
-# Slopsmith Note Detect Benchmark — v1
+# FeedBack Note Detect Benchmark — v1
 
-A short test piece for tuning Slopsmith's `note_detect` plugin. Eight
+A short test piece for tuning FeedBack's `note_detect` plugin. Eight
 exercises, each isolating a specific detection failure mode. Run with
 **Detect** enabled, play through, then export the diagnostic JSON
 (Settings → Plugins → Note Detection → Download Diagnostic JSON, or
@@ -43,4 +43,4 @@ Share the JSON (schema `note_detect.diagnostic.v1`). It includes:
 ## Source
 
 Built by `docs/benchmarks/note_detect_v1/build_benchmark.py` in the
-slopsmith repo. Tweak the exercise list there and regenerate.
+feedBack repo. Tweak the exercise list there and regenerate.

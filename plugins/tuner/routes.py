@@ -25,7 +25,7 @@ def _migrate_custom_tuning(name: str, value) -> dict:
 def setup(app: FastAPI, context: dict):
     config_dir = Path(context["config_dir"])
     config_file = config_dir / "tuner.json"
-    log = context.get("log") or logging.getLogger("slopsmith.plugin.tuner")
+    log = context.get("log") or logging.getLogger("feedBack.plugin.tuner")
 
     def _read() -> dict:
         defaults = {

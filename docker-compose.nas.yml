@@ -7,17 +7,17 @@ services:
       - "8000:8000"
     volumes:
       # Song library folder on NAS
-      - /volume1/music/slopsmith:/dlc
+      - /volume1/music/feedBack:/dlc
       # Persistent config, cache, favorites, loops, practice data
-      - slopsmith-config:/config
+      - feedBack-config:/config
     environment:
       - DLC_DIR=/dlc
       - CONFIG_DIR=/config
       # Logging (optional)
       # - LOG_LEVEL=INFO        # DEBUG | INFO | WARNING | ERROR  (default: INFO)
       # - LOG_FORMAT=json       # json | text  (default: text)
-      # - LOG_FILE=/config/slopsmith.log  # also write to a persistent file
+      # - LOG_FILE=/config/feedBack.log  # also write to a persistent file
     restart: unless-stopped
 
 volumes:
-  slopsmith-config:
+  feedBack-config:

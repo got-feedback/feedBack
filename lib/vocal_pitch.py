@@ -5,7 +5,7 @@ isolated vocals + per-syllable lyric timing (both produced by the
 WhisperX fallback or shipped in the source archive), the /pitch endpoint
 runs CREPE over the vocals stem and returns one MIDI note per supplied
 timing token. The result lands in `<sloppak>/vocal_pitch.json` in the
-shape the got-feedback/feedback-plugin-lyrics-karaoke renderer
+shape the got-feedback/feedBack-plugin-lyrics-karaoke renderer
 already consumes:
 
     {"version": 1, "notes": [{"t": float, "d": float, "midi": int}, ...]}
@@ -23,18 +23,18 @@ runs locally. Adding a local CREPE path here would mean pulling
 `crepe` + `tensorflow` as plugin deps (~500 MB+ on top of the
 existing torch/demucs/whisperx). Deferred until users hit the gap.
 If you need a local fallback today, install
-`got-feedback/feedback-plugin-lyrics-karaoke` and let its local
+`got-feedback/feedBack-plugin-lyrics-karaoke` and let its local
 pYIN run when the server isn't reachable.
 
 Cache key parity with stem_separation / lyric_transcription
 ───────────────────────────────────────────────────────────
 A `pitch_extraction` manifest block mirrors the shape introduced by
-slopsmith#357: `{engine, model, version}`. Today engine is fixed at
+feedBack#357: `{engine, model, version}`. Today engine is fixed at
 `"crepe"` (the server's choice) and model at `"v1"` (server doesn't
 yet expose the CREPE capacity dial it uses internally; this is the
 requested value, same caveat as `lyric_transcription.model`). The
 schema version is independent of the upstream CREPE version and bumps
-per slopsmith's contract:
+per feedBack's contract:
    * patch — metadata-only or implementation fixes
    * minor — backward-compatible additions
    * major — output shape / semantics changed; existing
@@ -50,7 +50,7 @@ import math
 from pathlib import Path
 from typing import Callable, Optional
 
-log = logging.getLogger("slopsmith.lib.vocal_pitch")
+log = logging.getLogger("feedBack.lib.vocal_pitch")
 
 ProgressCB = Optional[Callable[[float, str, str], None]]
 
@@ -72,7 +72,7 @@ def extract_pitch_remote(
 ) -> list[dict]:
     """POST the vocal stem + lyric timings to `{server_url}/pitch`.
 
-    `lyrics` is the same `[{t, d, w}, ...]` list slopsmith writes to
+    `lyrics` is the same `[{t, d, w}, ...]` list feedBack writes to
     `lyrics.json`. The endpoint only consumes `t` + `d` (it doesn't
     need the word text), but we pass the full payload through —
     slimmer to forward what we already have than to project.

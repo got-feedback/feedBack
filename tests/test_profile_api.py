@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture()
 def server(tmp_path, monkeypatch, isolate_logging):
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SKIP_STARTUP_TASKS", "1")
+    monkeypatch.setenv("FEEDBACK_SKIP_STARTUP_TASKS", "1")
     sys.modules.pop("server", None)
     srv = importlib.import_module("server")
     try:

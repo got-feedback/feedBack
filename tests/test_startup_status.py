@@ -1,6 +1,6 @@
 """Tests for GET /api/startup-status — shape, field types, and the
 _set_startup_status / _get_startup_status state helpers introduced in
-the async plugin-loading PR (slopsmith#115).
+the async plugin-loading PR (feedBack#115).
 """
 
 import importlib
@@ -51,14 +51,14 @@ _FAKE_PLUGIN_ERROR_EVENTS = [
 def client(tmp_path, monkeypatch, isolate_logging):
     """TestClient with CONFIG_DIR isolated in a per-test tmp_path.
 
-    SLOPSMITH_SYNC_STARTUP=1 makes the plugin-loader run synchronously
+    FEEDBACK_SYNC_STARTUP=1 makes the plugin-loader run synchronously
     inside startup_events() so startup is complete before TestClient.__enter__
     returns — no threading races, no polling.  load_plugins is still stubbed
     to a no-op so the "load" takes microseconds and startup_scan is also
     suppressed to avoid unrelated background I/O during tests.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     # Stub out the two background callables that call _set_startup_status.
@@ -67,7 +67,7 @@ def client(tmp_path, monkeypatch, isolate_logging):
     monkeypatch.setattr(server, "load_plugins", lambda *a, **kw: None)
     monkeypatch.setattr(server, "startup_scan", lambda: None)
     with TestClient(server.app) as test_client:
-        # With SLOPSMITH_SYNC_STARTUP the loader ran inline during startup, so
+        # With FEEDBACK_SYNC_STARTUP the loader ran inline during startup, so
         # the status must already be complete.  Poll briefly as a safety net in
         # case something unexpected deferred the update.
         deadline = time.monotonic() + 5.0
@@ -102,8 +102,8 @@ def startup_harness(tmp_path, monkeypatch, isolate_logging):
     closes the meta_db connection.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("SLOPSMITH_SYNC_STARTUP", "1")
-    monkeypatch.delenv("SLOPSMITH_DEMO_MODE", raising=False)
+    monkeypatch.setenv("FEEDBACK_SYNC_STARTUP", "1")
+    monkeypatch.delenv("FEEDBACK_DEMO_MODE", raising=False)
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     monkeypatch.setattr(server, "startup_scan", lambda: None)
@@ -590,7 +590,7 @@ def test_startup_status_e2e_real_plugin_loader(tmp_path, monkeypatch, isolate_lo
 
     Unlike the fake-load_plugins test, a regression in the plugin loader's
     emitted phase order or a missing phase will cause this test to fail.
-    Unlike the sync-mode transition tests, this omits SLOPSMITH_SYNC_STARTUP so
+    Unlike the sync-mode transition tests, this omits FEEDBACK_SYNC_STARTUP so
     the background thread runs and route registration is marshalled back onto the
     event loop via call_soon_threadsafe — the path the production server uses.
     """
@@ -617,7 +617,7 @@ def test_startup_status_e2e_real_plugin_loader(tmp_path, monkeypatch, isolate_lo
     # Override the plugin loader's built-in directory to our isolated test
     # plugins root so real installed plugins don't affect the phase sequence.
     monkeypatch.setattr(plugins_mod, "PLUGINS_DIR", plugins_root)
-    monkeypatch.delenv("SLOPSMITH_PLUGINS_DIR", raising=False)
+    monkeypatch.delenv("FEEDBACK_PLUGINS_DIR", raising=False)
 
     # _PIP_TARGET is computed from CONFIG_DIR at plugins import time, so it
     # may point at a previous test's tmp dir or the system /config path.
@@ -625,12 +625,12 @@ def test_startup_status_e2e_real_plugin_loader(tmp_path, monkeypatch, isolate_lo
     # for our test plugin) stay fully isolated.
     monkeypatch.setattr(plugins_mod, "_PIP_TARGET", tmp_path / "pip_packages")
 
-    # Set up server WITHOUT SLOPSMITH_SYNC_STARTUP so startup_events() spawns
+    # Set up server WITHOUT FEEDBACK_SYNC_STARTUP so startup_events() spawns
     # the real background thread and route registration is marshalled back onto
     # the event loop via call_soon_threadsafe (the production path).
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.delenv("SLOPSMITH_SYNC_STARTUP", raising=False)
-    monkeypatch.delenv("SLOPSMITH_DEMO_MODE", raising=False)
+    monkeypatch.delenv("FEEDBACK_SYNC_STARTUP", raising=False)
+    monkeypatch.delenv("FEEDBACK_DEMO_MODE", raising=False)
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     monkeypatch.setattr(server, "startup_scan", lambda: None)
@@ -716,21 +716,21 @@ def test_startup_status_e2e_real_plugin_loader(tmp_path, monkeypatch, isolate_lo
 
 def test_startup_status_endpoint_background_thread_path(tmp_path, monkeypatch, isolate_logging):
     """Verify /api/startup-status reflects the correct terminal state when the
-    background-thread code path is used (SLOPSMITH_SYNC_STARTUP not set).
+    background-thread code path is used (FEEDBACK_SYNC_STARTUP not set).
 
-    All other transition tests force SLOPSMITH_SYNC_STARTUP=1, which exercises
+    All other transition tests force FEEDBACK_SYNC_STARTUP=1, which exercises
     only the inline branch of startup_events().  In production the loader runs
     in a background thread; thread handoff bugs (missed progress events, route
     marshalling failures, races while the UI polls /api/startup-status) would
     go undetected by the sync-only tests.
 
-    This test omits SLOPSMITH_SYNC_STARTUP so startup_events() spawns the real
+    This test omits FEEDBACK_SYNC_STARTUP so startup_events() spawns the real
     background thread, then polls the HTTP endpoint until running=False and
     asserts the terminal contract.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.delenv("SLOPSMITH_SYNC_STARTUP", raising=False)
-    monkeypatch.delenv("SLOPSMITH_DEMO_MODE", raising=False)
+    monkeypatch.delenv("FEEDBACK_SYNC_STARTUP", raising=False)
+    monkeypatch.delenv("FEEDBACK_DEMO_MODE", raising=False)
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
 
@@ -794,8 +794,8 @@ def test_startup_status_endpoint_background_thread_failure(tmp_path, monkeypatch
     the async thread never publishes running=False or phase='error' is caught.
     """
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.delenv("SLOPSMITH_SYNC_STARTUP", raising=False)
-    monkeypatch.delenv("SLOPSMITH_DEMO_MODE", raising=False)
+    monkeypatch.delenv("FEEDBACK_SYNC_STARTUP", raising=False)
+    monkeypatch.delenv("FEEDBACK_DEMO_MODE", raising=False)
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
 

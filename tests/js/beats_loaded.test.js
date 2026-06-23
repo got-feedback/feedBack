@@ -31,13 +31,13 @@ function getCaseBlock(src, label) {
 
 test('beats:loaded emit is wired into the WS beats case', () => {
     // Source-level guard: catch a future contributor removing the emit
-    // (regression) or replacing window.slopsmith.emit with something
+    // (regression) or replacing window.feedBack.emit with something
     // else (intentional refactor — this test then needs updating).
     const src = fs.readFileSync(HIGHWAY_JS, 'utf8');
     const block = getCaseBlock(src, 'beats');
     assert.match(
         block,
-        /window\.slopsmith\.emit\(\s*['"]beats:loaded['"]/,
+        /window\.feedBack\.emit\(\s*['"]beats:loaded['"]/,
         'beats case must emit beats:loaded',
     );
     assert.match(
@@ -47,33 +47,33 @@ test('beats:loaded emit is wired into the WS beats case', () => {
     );
 });
 
-test('beats:loaded emit is guarded against missing window.slopsmith', () => {
-    // The WS handler can fire before the slopsmith namespace is defined
+test('beats:loaded emit is guarded against missing window.feedBack', () => {
+    // The WS handler can fire before the feedBack namespace is defined
     // (early in app boot). The emit must be guarded so a missing
     // namespace doesn't throw inside the WS message dispatcher.
-    // Looser pattern accepts any guard that reads window.slopsmith
+    // Looser pattern accepts any guard that reads window.feedBack
     // (including typeof checks and combined conditions) rather than
-    // mandating the exact `if (window.slopsmith)` form.
+    // mandating the exact `if (window.feedBack)` form.
     const src = fs.readFileSync(HIGHWAY_JS, 'utf8');
     const block = getCaseBlock(src, 'beats');
     assert.match(
         block,
-        /if\s*\(\s*[^)]*window\.slopsmith\b[^)]*\)/,
-        'beats:loaded emit must be guarded against a missing window.slopsmith',
+        /if\s*\(\s*[^)]*window\.feedBack\b[^)]*\)/,
+        'beats:loaded emit must be guarded against a missing window.feedBack',
     );
 });
 
 test('beats:loaded guard verifies emit is callable (typeof check)', () => {
-    // A partially-attached namespace (window.slopsmith exists but emit
+    // A partially-attached namespace (window.feedBack exists but emit
     // isn't a function yet during early boot) would throw without this
-    // extra check. A truthy check (`window.slopsmith.emit && ...`) lets
+    // extra check. A truthy check (`window.feedBack.emit && ...`) lets
     // non-callable values pass; require an explicit typeof === 'function'
     // check so the guard catches that real edge.
     const src = fs.readFileSync(HIGHWAY_JS, 'utf8');
     const block = getCaseBlock(src, 'beats');
     assert.match(
         block,
-        /typeof\s+window\.slopsmith\.emit\s*===\s*['"]function['"]/,
+        /typeof\s+window\.feedBack\.emit\s*===\s*['"]function['"]/,
         'guard must use typeof === \'function\' (not just truthy) to confirm emit is callable',
     );
 });

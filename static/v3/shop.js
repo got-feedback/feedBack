@@ -12,7 +12,7 @@
  */
 (function () {
     'use strict';
-    const sm = window.slopsmith;
+    const sm = window.feedBack;
     const SCREEN_ID = 'v3-shop';
 
     let _data = null;        // last GET /api/shop payload

@@ -12,19 +12,19 @@ const TUNER_SCREEN_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'sc
 function loadTuningHelpers() {
     const src = fs.readFileSync(APP_JS, 'utf8');
     const start = src.indexOf('function isBassArrangement(');
-    const endMarker = 'window.slopsmith.parseRawTuningOffsets = parseRawTuningOffsets;';
+    const endMarker = 'window.feedBack.parseRawTuningOffsets = parseRawTuningOffsets;';
     const end = src.indexOf(endMarker);
     if (start === -1 || end === -1) throw new Error('tuning helper block not found in app.js');
-    const sandbox = { window: { slopsmith: {} }, exports: {} };
+    const sandbox = { window: { feedBack: {} }, exports: {} };
     vm.createContext(sandbox);
     vm.runInContext(
         src.slice(start, end + endMarker.length),
         sandbox
     );
-    return sandbox.window.slopsmith;
+    return sandbox.window.feedBack;
 }
 
-const slopsmithHelpers = loadTuningHelpers();
+const feedBackHelpers = loadTuningHelpers();
 
 function createTunerSandbox() {
     const enableCalls = [];
@@ -101,7 +101,7 @@ function createTunerSandbox() {
         __setPlayerActive(v) { playerActive = v; },
         __setSongInfo(info) {
             songInfo = info;
-            sandbox.window.slopsmith.currentSong = info ? {
+            sandbox.window.feedBack.currentSong = info ? {
                 filename: info.filename || 'song.sloppak',
                 arrangementIndex: info.arrangement_index,
                 tuning: info.tuning,
@@ -111,8 +111,8 @@ function createTunerSandbox() {
     };
 
     sandbox.window = sandbox;
-    sandbox.window.slopsmith = {
-        ...slopsmithHelpers,
+    sandbox.window.feedBack = {
+        ...feedBackHelpers,
         on() {},
         off() {},
         currentSong: null,
@@ -318,8 +318,8 @@ test('song:loading clears dismiss state for next load', async () => {
 test('screen.js registers song:loading and song:ready auto-open listeners at boot', () => {
     const src = fs.readFileSync(TUNER_SCREEN_JS, 'utf8');
     assert.match(src, /function _installAutoOpenListeners/);
-    assert.match(src, /window\.slopsmith\.on\('song:loading', _onAutoOpenSongLoading\)/);
-    assert.match(src, /window\.slopsmith\.on\('song:ready', _onAutoOpenSongReady\)/);
+    assert.match(src, /window\.feedBack\.on\('song:loading', _onAutoOpenSongLoading\)/);
+    assert.match(src, /window\.feedBack\.on\('song:ready', _onAutoOpenSongReady\)/);
     assert.match(src, /function _tuningIdentityKey/);
     assert.doesNotMatch(src, /restartCurrentSong/);
 });

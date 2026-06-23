@@ -5,7 +5,7 @@
    text, fb-gold #e8c040 badge. Plain CSS (no Tailwind classes) so it needs no
    stylesheet rebuild. Per CLAUDE.md → Frontend Conventions. */
 
-.slopsmith-tour-menu-btn {
+.feedBack-tour-menu-btn {
     position: fixed;
     bottom: 12px;
     right: 12px;
@@ -28,14 +28,14 @@
     justify-content: center;
     transition: box-shadow 0.2s, transform 0.15s;
 }
-.slopsmith-tour-menu-btn:hover {
+.feedBack-tour-menu-btn:hover {
     box-shadow: 0 0 12px #0ea5e9aa;
     transform: translateY(-1px);
 }
-.slopsmith-tour-menu-btn.has-unseen {
+.feedBack-tour-menu-btn.has-unseen {
     animation: tour-pulse 2s ease-in-out infinite;
 }
-.slopsmith-tour-menu-btn.has-unseen::after {
+.feedBack-tour-menu-btn.has-unseen::after {
     content: '';
     position: absolute;
     top: -2px;
@@ -51,7 +51,7 @@
     50% { box-shadow: 0 0 16px #0ea5e9cc; }
 }
 
-.slopsmith-tour-menu-popover {
+.feedBack-tour-menu-popover {
     position: fixed;
     bottom: 56px;
     right: 12px;
@@ -72,7 +72,7 @@
     color: #f8fafc;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
-.slopsmith-tour-menu-popover .tour-menu-header {
+.feedBack-tour-menu-popover .tour-menu-header {
     padding: 4px 10px 6px;
     font-size: 11px;
     text-transform: uppercase;
@@ -81,13 +81,13 @@
     border-bottom: 1px solid #334155;
     margin-bottom: 4px;
 }
-.slopsmith-tour-menu-popover .tour-menu-empty {
+.feedBack-tour-menu-popover .tour-menu-empty {
     padding: 10px;
     color: #94a3b8;
     font-style: italic;
     text-align: center;
 }
-.slopsmith-tour-menu-popover .tour-menu-item {
+.feedBack-tour-menu-popover .tour-menu-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -103,23 +103,23 @@
     cursor: pointer;
     transition: background 0.12s;
 }
-.slopsmith-tour-menu-popover .tour-menu-item:hover {
+.feedBack-tour-menu-popover .tour-menu-item:hover {
     background: #334155;
     color: #f8fafc;
 }
 /* Keyboard focus gets an explicit ring instead of relying on the hover
    background — matches the :focus-visible treatment elsewhere in the
    app (style.css). Pointer focus is left alone. */
-.slopsmith-tour-menu-popover .tour-menu-item:focus-visible {
+.feedBack-tour-menu-popover .tour-menu-item:focus-visible {
     background: #334155;
     color: #f8fafc;
     outline: 2px solid #0ea5e9;
     outline-offset: -2px;
 }
-.slopsmith-tour-menu-popover .tour-menu-item-label {
+.feedBack-tour-menu-popover .tour-menu-item-label {
     flex: 1;
 }
-.slopsmith-tour-menu-popover .tour-menu-item-status {
+.feedBack-tour-menu-popover .tour-menu-item-status {
     font-size: 10px;
     font-weight: 600;
     padding: 2px 6px;
@@ -127,18 +127,18 @@
     min-width: 14px;
     text-align: center;
 }
-.slopsmith-tour-menu-popover .tour-menu-item-status.is-new {
+.feedBack-tour-menu-popover .tour-menu-item-status.is-new {
     background: #e8c040;
     color: #0f172a;
 }
-.slopsmith-tour-menu-popover .tour-menu-item-status.is-seen {
+.feedBack-tour-menu-popover .tour-menu-item-status.is-seen {
     background: #0b1220;
     color: #94a3b8;
 }
 
 /* ── First-visit toast — anchored above the menu button ── */
 
-.slopsmith-tour-prompt {
+.feedBack-tour-prompt {
     position: fixed;
     bottom: 56px;
     right: 12px;
@@ -154,21 +154,21 @@
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     transition: opacity 0.5s;
 }
-.slopsmith-tour-prompt.fading {
+.feedBack-tour-prompt.fading {
     opacity: 0;
     pointer-events: none;
 }
-.slopsmith-tour-prompt .tour-prompt-more {
+.feedBack-tour-prompt .tour-prompt-more {
     margin-top: 4px;
     font-size: 11px;
     color: #94a3b8;
 }
-.slopsmith-tour-prompt .tour-prompt-buttons {
+.feedBack-tour-prompt .tour-prompt-buttons {
     display: flex;
     gap: 6px;
     margin-top: 8px;
 }
-.slopsmith-tour-prompt button {
+.feedBack-tour-prompt button {
     padding: 3px 10px;
     border-radius: 4px;
     font-size: 12px;
@@ -176,15 +176,15 @@
     border: none;
     transition: opacity 0.15s;
 }
-.slopsmith-tour-prompt button:hover {
+.feedBack-tour-prompt button:hover {
     opacity: 0.85;
 }
-.slopsmith-tour-prompt button[data-action="start"] {
+.feedBack-tour-prompt button[data-action="start"] {
     background: #0ea5e9;
     color: #fff;
     font-weight: 600;
 }
-.slopsmith-tour-prompt button[data-action="dismiss"] {
+.feedBack-tour-prompt button[data-action="dismiss"] {
     background: #334155;
     color: #94a3b8;
 }

@@ -1,4 +1,4 @@
-// Source-level guards for the load-adaptive render scale (slopsmith#654).
+// Source-level guards for the load-adaptive render scale (feedBack#654).
 // The createHighway closure owns the rAF loop + WebGL sizing that's too
 // heavy for a vm sandbox, so — like highway_visibility.test.js — these
 // lock in the wiring rather than execute it.

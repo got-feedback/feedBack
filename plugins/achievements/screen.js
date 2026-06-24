@@ -33,7 +33,7 @@
     var registered = {};   // id -> def (contributed + expanded baseline defs)
     var earned = {};       // id -> { tier, cls, category }
     var baseline = null;   // /catalog baseline blob
-    var CAT_KEY = 'v3-profile-ach-cat';
+    var CAT_KEY = 'achievements:profile-cat';  // P-III: plugin localStorage keys prefixed with plugin id
     var INSTRUMENTS = ['guitar', 'bass', 'drums', 'keys'];
 
     function progState() {
@@ -172,11 +172,17 @@
         postUnlock(def, tier).then(function () { refreshEarned().then(scheduleRender); });
     }
 
+    // Local calendar date 'YYYY-MM-DD' (one source of truth for both the
+    // steady-hands day ledger and the witching-night date below).
+    function localISODate(d) {
+        d = d || new Date();
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
     // growth-streak + challenger record on real competency events (date ledger /
     // distinct challenge sets) — kept as bookkeeping over EVENTS, never activity.
     function recordGrowthDay() {
-        var date = new Date();
-        var iso = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+        var iso = localISODate();
         fetchJSON('/report-criterion', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ criterion_id: 'steady_hands_days', token: iso }),
@@ -190,17 +196,21 @@
 
     // ── Activity (Feats): in-memory session counters, flushed on song:ended ───
     var session = { notesTotal: 0 };           // cumulative across this sitting
-    var song = { hits: 0, streak: 0, maxStreak: 0, chart: null };
-    function resetSong(chart) { song = { hits: 0, streak: 0, maxStreak: 0, chart: chart || null }; }
+    // `active` gates note counting to an actual song in progress — without it,
+    // note:hit/miss from the tuner or input-calibration would inflate Feats from
+    // non-song input and flush a phantom streak with chart:null.
+    var song = { hits: 0, streak: 0, maxStreak: 0, chart: null, active: false };
+    function resetSong(chart) { song = { hits: 0, streak: 0, maxStreak: 0, chart: chart || null, active: true }; }
 
     function flushActivity(seconds) {
+        if (!song.active) return;   // no active song → nothing to flush (ignore stray events)
+        song.active = false;
         // No notedetect → song.hits stays 0; notes-based Feats simply don't move
         // (graceful degradation). song_done / seconds / chart still flow so the
         // notedetect-free Feats (Road Warrior, Time Served, Encore) progress.
         var hour = new Date().getHours();
         var isNight = hour >= 2 && hour < 5;
-        var d = new Date();
-        var iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        var iso = localISODate();
         var body = {
             notes: song.hits,
             session_notes: session.notesTotal,
@@ -364,13 +374,17 @@
             resetSong(e && e.detail && e.detail.filename);
         });
         bus.on && bus.on('note:hit', function () {
+            if (!song.active) return;   // ignore tuner/calibration note events
             song.hits++; song.streak++; session.notesTotal++;
             if (song.streak > song.maxStreak) song.maxStreak = song.streak;
         });
-        bus.on && bus.on('note:miss', function () { song.streak = 0; });
+        bus.on && bus.on('note:miss', function () { if (song.active) song.streak = 0; });
         bus.on && bus.on('song:ended', function (e) {
             flushActivity(e && e.detail && (e.detail.time || e.detail.audioT));
         });
+        // Song stopped/abandoned without a natural end → mark inactive so stray
+        // note events after it don't accrue against a phantom (chart:null) song.
+        bus.on && bus.on('song:stop', function () { song.active = false; });
     }
 
     if (document.readyState === 'loading') {

@@ -54,6 +54,35 @@ def test_report_unlock_is_idempotent_and_tier_monotonic(client):
     assert higher["changed"] is True
 
 
+def test_witching_feat_unlocks_on_seventh_consecutive_night(client):
+    # Regression: the derived witching_nights_run counter must NOT be pre-written
+    # before the prev snapshot, or diff_unlocks never sees the fresh unlock.
+    unlocked_ever = []
+    for day in range(1, 8):
+        res = client.post("/api/plugins/achievements/activity",
+                          json={"night_session": True, "night_date": "2026-06-%02d" % day}).json()
+        unlocked_ever += [u["id"] for u in res["unlocked"]]
+    assert "secret_witching" in unlocked_ever, "witching feat never reported as unlocked"
+    feats = [f["id"] for f in client.get("/api/plugins/achievements/feats").json()["feats"]]
+    assert "secret_witching" in feats
+
+
+def test_witching_not_unlocked_before_seven(client):
+    for day in range(1, 7):  # only 6 nights
+        client.post("/api/plugins/achievements/activity",
+                    json={"night_session": True, "night_date": "2026-06-%02d" % day})
+    feats = [f["id"] for f in client.get("/api/plugins/achievements/feats").json()["feats"]]
+    assert "secret_witching" not in feats
+
+
+def test_chart_key_is_stable_not_builtin_hash(client):
+    import hashlib
+    import routes
+    # Deterministic across processes (sha1-based), unlike the salted builtin hash().
+    assert routes._chart_key("song.sloppak") == "chart_plays:" + hashlib.sha1(b"song.sloppak").hexdigest()[:16]
+    assert routes._chart_key("a") != routes._chart_key("b")
+
+
 def test_report_criterion_counts_distinct(client):
     url = "/api/plugins/achievements/report-criterion"
     assert client.post(url, json={"criterion_id": "x", "token": "a"}).json()["count"] == 1

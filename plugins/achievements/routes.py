@@ -26,6 +26,7 @@ Pure threshold/criterion math lives in the sibling ``engine.py`` (P-V testable);
 this module is the SQLite + HTTP shell.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -243,8 +244,22 @@ def _maybe_start_drain():
     _state["log"].info("achievements wall drain worker started → %s", _WALL_URL)
 
 
+def _chart_key(chart):
+    """Stable per-chart counter key — a sha1 digest of the chart id. NOT the
+    builtin hash(), whose str hashing is salted per process (PYTHONHASHSEED), so
+    the same chart would land on a different counter after every restart and the
+    Encore Feat could never accumulate across sessions."""
+    return "chart_plays:" + hashlib.sha1(str(chart).encode("utf-8")).hexdigest()[:16]
+
+
 def _read_counters(conn):
-    return {row["key"]: int(row["value"]) for row in conn.execute("SELECT key, value FROM counters")}
+    # Excludes the per-chart `chart_plays:*` rows: they are bumped + read
+    # individually via _bump_counter and would otherwise make this aggregate
+    # round-trip O(distinct charts played) on every activity POST.
+    return {
+        row["key"]: int(row["value"])
+        for row in conn.execute("SELECT key, value FROM counters WHERE key NOT LIKE 'chart_plays:%'")
+    }
 
 
 def _write_counters(conn, counters):
@@ -378,13 +393,18 @@ def setup(app, context):
         with _lock:
             conn = _conn()
             try:
-                # Per-chart play count is the only stateful bit; bump it first so
-                # apply_activity() stays pure (it just takes the new max).
+                # Per-chart play count is the only directly-stateful bit; bump it
+                # first (stable key) so apply_activity() just takes the new max.
                 chart_play_count = None
                 if body.song_done and body.chart:
-                    chart_key = "chart_plays:" + str(abs(hash(body.chart)))
-                    chart_play_count = _bump_counter(conn, chart_key, 1)
-                # Night-window ledger → consecutive-night run feeds witching feat.
+                    chart_play_count = _bump_counter(conn, _chart_key(body.chart), 1)
+                # Night-window ledger → consecutive-night run. Computed here but
+                # NOT written before the prev snapshot: it is folded into the delta
+                # below so prev_tiers reflects the OLD run and new_tiers the new one
+                # (the same asymmetry chart_encore relies on). Pre-writing it would
+                # make prev already satisfy the Feat, so diff_unlocks would never
+                # see the freshly-earned witching unlock.
+                witching_run = None
                 if body.night_session and body.night_date:
                     conn.execute(
                         "INSERT OR IGNORE INTO comp_ledger(criterion_id, token) VALUES ('witching', ?)",
@@ -392,13 +412,10 @@ def setup(app, context):
                     )
                     nights = [r["token"] for r in conn.execute(
                         "SELECT token FROM comp_ledger WHERE criterion_id='witching'")]
-                    run = engine.consecutive_run_length(nights)
-                    conn.execute(
-                        "INSERT INTO counters(key, value) VALUES ('witching_nights_run', ?) "
-                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (run,))
+                    witching_run = engine.consecutive_run_length(nights)
 
                 counters = _read_counters(conn)
-                prev_tiers = _state["engine"].evaluate_feats(_state["feat_defs"], counters)
+                prev_tiers = engine.evaluate_feats(_state["feat_defs"], counters)
                 new_counters = engine.apply_activity(counters, {
                     "notes": body.notes,
                     "session_notes": body.session_notes,
@@ -407,6 +424,9 @@ def setup(app, context):
                     "seconds": body.seconds,
                     "chart_play_count": chart_play_count,
                 })
+                if witching_run is not None:
+                    new_counters["witching_nights_run"] = max(
+                        int(new_counters.get("witching_nights_run", 0) or 0), witching_run)
                 _write_counters(conn, new_counters)
                 new_tiers = engine.evaluate_feats(_state["feat_defs"], new_counters)
                 fresh = engine.diff_unlocks(prev_tiers, new_tiers)

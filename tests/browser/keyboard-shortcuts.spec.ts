@@ -90,7 +90,6 @@ test.describe('Keyboard Shortcuts', () => {
     const required = [
       { key: '?', scope: 'global' },
       { key: '/', scope: 'library' },
-      { key: 'c', scope: 'library' },
       { key: 'f', scope: 'library' },
       { key: 'e', scope: 'library' },
       { key: 'Space', scope: 'player' },
@@ -125,9 +124,7 @@ test.describe('Keyboard Shortcuts', () => {
     // Library shortcuts should be visible on library screen
     await expect(modal).toContainText('Focus search');
     await expect(modal).toContainText('/');
-    await expect(modal).toContainText('Convert library entry');
-    await expect(modal).toContainText('c');
-    
+
     // Player shortcuts should NOT be visible on library screen
     await expect(modal).not.toContainText('Play/Pause');
   });
@@ -149,7 +146,6 @@ test.describe('Keyboard Shortcuts', () => {
     const expectedShortcuts = [
       { key: '?', scope: 'global' },
       { key: '/', scope: 'library' },
-      { key: 'c', scope: 'library' },
       { key: 'f', scope: 'library' },
       { key: 'e', scope: 'library' },
       { key: 'Space', scope: 'player' },
@@ -649,6 +645,137 @@ test('should support condition callbacks', async ({ page }) => {
 
     expect(result.calledByCode).toBe(true);
     expect(result.calledByKey).toBe(true);
+  });
+
+  test('Space toggles play/pause when a player rail button is focused (#593)', async ({ page }) => {
+    await openPlayerWithMockSong(page);
+
+    // Inject a focusable <button> into the player (the bug: BUTTON elements
+    // are "interactive controls" so Space was blocked before reaching the
+    // shortcut dispatcher) and spy on the player-scope Space shortcut so the
+    // assertion does not depend on the real audio path. The dispatcher calls
+    // preventDefault() before the handler, so the focused button must NOT
+    // also activate.
+    await page.evaluate(() => {
+      // @ts-ignore
+      window.__spacePlayCount = 0;
+      // @ts-ignore
+      window.__railBtnClicked = 0;
+      // @ts-ignore
+      window.registerShortcut({
+        key: 'Space',
+        description: 'Play/Pause (test spy)',
+        scope: 'player',
+        // @ts-ignore
+        handler: () => { window.__spacePlayCount++; },
+      });
+      const btn = document.createElement('button');
+      btn.id = '__test-rail-btn';
+      btn.textContent = 'Mixer';
+      // @ts-ignore
+      btn.addEventListener('click', () => { window.__railBtnClicked++; });
+      document.getElementById('player')!.appendChild(btn);
+    });
+
+    await page.locator('#__test-rail-btn').focus();
+    await expect(page.locator('#__test-rail-btn')).toBeFocused();
+
+    await page.keyboard.press('Space');
+
+    const result = await page.evaluate(() => ({
+      // @ts-ignore
+      played: window.__spacePlayCount,
+      // @ts-ignore
+      clicked: window.__railBtnClicked,
+    }));
+    // Play/pause fired despite the button holding focus…
+    expect(result.played).toBe(1);
+    // …and the focused button did not also activate (dispatcher preventDefault()).
+    expect(result.clicked).toBe(0);
+  });
+
+  test('Space in a player-screen text input still types a space, not play/pause (#593)', async ({ page }) => {
+    await openPlayerWithMockSong(page);
+
+    // The text-input exemption (_isTextInput) is checked before the player
+    // Space carve-out, so typing space in an input must never toggle playback.
+    await page.evaluate(() => {
+      // @ts-ignore
+      window.__spacePlayCount = 0;
+      // @ts-ignore
+      window.registerShortcut({
+        key: 'Space',
+        description: 'Play/Pause (test spy)',
+        scope: 'player',
+        // @ts-ignore
+        handler: () => { window.__spacePlayCount++; },
+      });
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = '__test-player-input';
+      document.getElementById('player')!.appendChild(input);
+    });
+
+    await page.locator('#__test-player-input').focus();
+    await page.keyboard.press('Space');
+
+    const result = await page.evaluate(() => ({
+      // @ts-ignore
+      played: window.__spacePlayCount,
+      value: (document.getElementById('__test-player-input') as HTMLInputElement).value,
+    }));
+    expect(result.played).toBe(0);
+    expect(result.value).toBe(' ');
+  });
+
+  test('Space inside a modal dialog over the player reaches the modal, not play/pause (#593)', async ({ page }) => {
+    await openPlayerWithMockSong(page);
+
+    // A true modal dialog (role="dialog" aria-modal="true" / .feedBack-modal)
+    // layered over the player must trap interaction: Space activates the
+    // modal's focused control (native), it does NOT toggle playback behind it.
+    await page.evaluate(() => {
+      // @ts-ignore
+      window.__spacePlayCount = 0;
+      // @ts-ignore
+      window.__modalBtnClicked = 0;
+      // @ts-ignore
+      window.registerShortcut({
+        key: 'Space',
+        description: 'Play/Pause (test spy)',
+        scope: 'player',
+        // @ts-ignore
+        handler: () => { window.__spacePlayCount++; },
+      });
+      const modal = document.createElement('div');
+      modal.id = '__test-modal';
+      modal.className = 'feedBack-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      const btn = document.createElement('button');
+      btn.id = '__test-modal-btn';
+      btn.textContent = 'Close';
+      // @ts-ignore
+      btn.addEventListener('click', () => { window.__modalBtnClicked++; });
+      modal.appendChild(btn);
+      document.body.appendChild(modal);
+    });
+
+    await page.locator('#__test-modal-btn').focus();
+    await expect(page.locator('#__test-modal-btn')).toBeFocused();
+
+    await page.keyboard.press('Space');
+
+    const result = await page.evaluate(() => ({
+      // @ts-ignore
+      played: window.__spacePlayCount,
+      // @ts-ignore
+      clicked: window.__modalBtnClicked,
+    }));
+    // Playback is NOT toggled behind the modal…
+    expect(result.played).toBe(0);
+    // …and Space activated the modal's focused button natively.
+    expect(result.clicked).toBe(1);
   });
 
   test('should warn on invalid scope', async ({ page }) => {

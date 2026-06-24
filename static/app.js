@@ -445,6 +445,21 @@ function _shortcutDispatchBlocked(e) {
     // the popover's own keydown listener) — suppress the player-scope
     // "back to library" Esc so the user doesn't get bounced out of the player.
     if (e.key === 'Escape' && _sectionPracticePopoverOpen()) return true;
+    // Space on the player screen should always play/pause, even if focus is on a
+    // sidebar nav link, player rail button, popover control, or any other
+    // interactive element — the shortcut dispatcher calls preventDefault so the
+    // focused element won't also activate. Two exceptions keep native Space:
+    // text inputs (already exempted above), and focus inside a true modal
+    // dialog (role="dialog" aria-modal="true", or a .feedBack-modal overlay)
+    // layered over the player — a modal traps interaction, so Space must reach
+    // its focused control (e.g. the Close button) rather than toggle playback
+    // behind it. Non-modal player popovers/toasts (loop A/B, arrangement pin,
+    // role="dialog" aria-modal="false") are not modals and stay covered.
+    if (_isSpaceKey(e) && _getCurrentContext().isPlayer &&
+        !(e.target && e.target.closest &&
+          e.target.closest('[role="dialog"][aria-modal="true"], .feedBack-modal'))) {
+        return false;
+    }
     return _isInsideInteractiveControl(e.target);
 }
 
@@ -908,15 +923,13 @@ document.addEventListener('keydown', (e) => {
     // library entry — works on both grid cards and tree rows. Each
     // dispatches to a button class that the entry markup already
     // exposes, so plugins can keep owning the actual behavior:
-    //   c → .sloppak-convert-btn  (Sloppak Converter plugin)
     //   f → .fav-btn              (favorite heart toggle)
     //   e → .edit-btn             (edit metadata modal)
     // No-op when no entry is currently focused / selected, when the
-    // entry doesn't expose the requested button (e.g. a sloppak
-    // entry has no convert button), or when the button is disabled.
+    // entry doesn't expose the requested button, or when the button is disabled.
     // Bails on text input / drawer focus so single-letter typing in
     // inputs still works.
-    const entryShortcut = { c: 'button.sloppak-convert-btn', f: 'button.fav-btn', e: 'button.edit-btn' }[e.key.toLowerCase()];
+    const entryShortcut = { f: 'button.fav-btn', e: 'button.edit-btn' }[e.key.toLowerCase()];
     if (entryShortcut) {
         if (_isInsideInteractiveControl(document.activeElement)) return;
         const ae = document.activeElement;
@@ -3275,6 +3288,10 @@ async function loadSettings() {
     try { localStorage.setItem('countdownBeforeSong', countdownOn ? '1' : '0'); } catch (_) { /* private mode */ }
     const countdownEl = document.getElementById('setting-countdown-before-song');
     if (countdownEl) countdownEl.checked = countdownOn;
+    // Achievements epic: mirror the opt-in flag to localStorage so the
+    // onboarding card + the bundled achievements plugin can read the current
+    // state app-wide (the plugin's own settings panel still owns the toggle).
+    try { localStorage.setItem('achievementsEnabled', data.achievements_enabled === true ? '1' : '0'); } catch (_) { /* private mode */ }
     const missEl = document.getElementById('setting-miss-penalty');
     if (missEl) missEl.value = typeof data.miss_penalty === 'string' ? data.miss_penalty : 'none';
     const failEl = document.getElementById('setting-fail-behavior');
@@ -9413,15 +9430,6 @@ registerShortcut({
     handler: () => {
         const input = _activeSearchInput();
         if (input) input.focus();
-    }
-});
-
-registerShortcut({
-    key: 'c',
-    description: 'Convert library entry to .sloppak',
-    scope: 'library',
-    handler: () => {
-        // Handled by library navigation - this is for documentation only
     }
 });
 

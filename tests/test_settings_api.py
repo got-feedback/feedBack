@@ -582,6 +582,22 @@ def test_api_post_settings_null_string_is_noop_via_testclient(api_client, tmp_pa
     assert _read_cfg(tmp_path)["master_difficulty"] == 50
 
 
+def test_achievements_enabled_persists_and_validates(api_client, tmp_path):
+    """The achievements-epic opt-in flag round-trips as a boolean and rejects
+    non-bools at the route level (mirrors countdown_before_song)."""
+    tc, _server = api_client
+    r = tc.post("/api/settings", json={"achievements_enabled": True})
+    assert r.status_code == 200
+    assert _read_cfg(tmp_path)["achievements_enabled"] is True
+    bad = tc.post("/api/settings", json={"achievements_enabled": "yes"})
+    assert bad.status_code == 200 and "error" in bad.json()
+
+
+def test_achievements_enabled_is_resettable(server_module):
+    """The flag is in the resettable allow-list so a Reset clears it to default."""
+    assert "achievements_enabled" in server_module._RESETTABLE_SETTINGS_KEYS
+
+
 def test_skip_startup_tasks_drives_startup_to_complete(api_client):
     """With FEEDBACK_SKIP_STARTUP_TASKS set, the startup hook must:
       * skip plugin loading and the background scan,

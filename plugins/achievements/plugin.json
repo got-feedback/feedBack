@@ -1,0 +1,18 @@
+{
+  "id": "achievements",
+  "name": "Achievements",
+  "version": "0.1.0",
+  "bundled": true,
+  "private": false,
+  "description": "Achievements & Feats of Power — skill milestones on your Profile, plus rare activity Feats.",
+  "script": "screen.js",
+  "styles": "assets/achievements.css",
+  "settings": {
+    "html": "settings.html",
+    "category": "system",
+    "server_files": [
+      "achievements/"
+    ]
+  },
+  "routes": "routes.py"
+}

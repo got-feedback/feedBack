@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "global": [
+    {
+      "id": "first_steps",
+      "title": "First Steps",
+      "description": "Reach Mastery Rank 1 — finish onboarding.",
+      "category": "global",
+      "sourceId": "achievements",
+      "criterion": { "type": "mastery_rank", "tiers": [1] },
+      "tiers": [1]
+    },
+    {
+      "id": "ascendant",
+      "title": "Ascendant",
+      "description": "Climb the Mastery Rank ladder.",
+      "category": "global",
+      "sourceId": "achievements",
+      "criterion": { "type": "mastery_rank", "tiers": [10, 25, 50] },
+      "tiers": [10, 25, 50],
+      "tier_titles": ["Ascendant I", "Ascendant II", "Ascendant III"]
+    },
+    {
+      "id": "steady_hands",
+      "title": "Steady Hands",
+      "description": "Make a real advance on many separate days.",
+      "category": "global",
+      "sourceId": "achievements",
+      "criterion": { "type": "growth_streak_days", "tiers": [7, 30, 100] },
+      "tiers": [7, 30, 100],
+      "tier_titles": ["Steady Hands (7)", "Steady Hands (30)", "Steady Hands (100)"]
+    },
+    {
+      "id": "renaissance",
+      "title": "Renaissance",
+      "description": "Reach Level 10 across several distinct instrument paths.",
+      "category": "global",
+      "sourceId": "achievements",
+      "criterion": { "type": "paths_at_level", "level": 10, "tiers": [2, 3, 5] },
+      "tiers": [2, 3, 5],
+      "tier_titles": ["Renaissance (2)", "Renaissance (3)", "Renaissance (5)"]
+    }
+  ],
+  "per_instrument": [
+    {
+      "id": "path_rank",
+      "title": "{Inst} Mastery",
+      "description": "Climb the {Inst} path: Apprentice, Journeyman, Master.",
+      "sourceId": "achievements",
+      "criterion": { "type": "path_level", "tiers": [10, 25, "max"] },
+      "tier_titles": ["{Inst} Apprentice", "{Inst} Journeyman", "{Inst} Master"]
+    },
+    {
+      "id": "personal_best",
+      "title": "Personal Best ({Inst})",
+      "description": "Beat your own best accuracy on any {Inst} chart.",
+      "sourceId": "achievements",
+      "criterion": { "type": "personal_best" }
+    },
+    {
+      "id": "challenger",
+      "title": "Challenger ({Inst})",
+      "description": "Clear a full level-up challenge set on the {Inst} path.",
+      "sourceId": "achievements",
+      "criterion": { "type": "challenge_set_cleared" }
+    }
+  ]
+}

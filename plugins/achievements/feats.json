@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "feats": [
+    {
+      "id": "notes_total",
+      "title": "Note Hunter",
+      "description": "Hit a colossal number of notes across all your practice.",
+      "category": "global",
+      "sourceId": "achievements",
+      "secret": false,
+      "needs_notedetect": true,
+      "counter": "notes_total",
+      "tiers": [100000, 1000000, 10000000],
+      "tier_titles": ["Note Hunter", "Million-Note Maestro", "Ten-Million-Note Titan"]
+    },
+    {
+      "id": "notes_session",
+      "title": "Marathon",
+      "description": "Hit 25,000 notes in a single sitting.",
+      "category": "global",
+      "sourceId": "achievements",
+      "secret": false,
+      "needs_notedetect": true,
+      "counter": "notes_session_max",
+      "tiers": [25000],
+      "tier_titles": ["Marathon"]
+    },
+    {
+      "id": "streak_insong",
+      "title": "Untouchable",
+      "description": "Land a huge run of consecutive in-song hits with no miss.",
+      "category": "global",
+      "sourceId": "achievements",
+      "secret": false,
+      "needs_notedetect": true,
+      "counter": "streak_insong_max",
+      "tiers": [1000, 5000],
+      "tier_titles": ["Untouchable", "Truly Untouchable"]
+    },
+    {
+      "id": "songs_done",
+      "title": "Road Warrior",
+      "description": "Finish a mountain of songs.",
+      "category": "global",
+      "sourceId": "achievements",
+      "secret": false,
+      "needs_notedetect": false,
+      "counter": "songs_done",
+      "tiers": [1000, 5000],
+      "tier_titles": ["Road Warrior", "Road Legend"]
+    },
+    {
+      "id": "time_total",
+      "title": "Time Served",
+      "description": "Pour hundreds of hours into practice.",
+      "category": "global",
+      "sourceId": "achievements",
+      "secret": false,
+      "needs_notedetect": false,
+      "counter": "time_total_seconds",
+      "tiers": [1800000, 7200000],
+      "tier_titles": ["Time Served (500h)", "Time Served (2,000h)"]
+    },
+    {
+      "id": "chart_encore",
+      "title": "Encore",
+      "description": "Play the same chart again and again and again.",
+      "category": "global",
+      "sourceId": "achievements",
+      "secret": false,
+      "needs_notedetect": false,
+      "counter": "chart_encore_max",
+      "tiers": [100, 500],
+      "tier_titles": ["Encore", "Standing Ovation"]
+    },
+    {
+      "id": "secret_witching",
+      "title": "The Witching Hour",
+      "description": "Practise in the dead of night, seven nights running.",
+      "category": "global",
+      "sourceId": "achievements",
+      "secret": true,
+      "needs_notedetect": false,
+      "counter": "witching_nights_run",
+      "tiers": [7],
+      "tier_titles": ["The Witching Hour"]
+    },
+    {
+      "id": "secret_combo",
+      "title": "Hidden Track",
+      "description": "You found the hidden track.",
+      "category": "global",
+      "sourceId": "achievements",
+      "secret": true,
+      "needs_notedetect": false,
+      "counter": null,
+      "tiers": [],
+      "tier_titles": ["Hidden Track"]
+    }
+  ]
+}

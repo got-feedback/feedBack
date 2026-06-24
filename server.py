@@ -5388,6 +5388,11 @@ def _default_settings():
         "countdown_before_song": False,
         "miss_penalty": "none",
         "fail_behavior": "continue",
+        # Achievements epic: opt-in to publishing earned Feats (name + Feat id
+        # only) to the hosted wall. Default OFF — nothing leaves the device
+        # until the user opts in. Read by the bundled achievements plugin to
+        # gate its wall-sync enqueue.
+        "achievements_enabled": False,
     }
 
 
@@ -5524,6 +5529,12 @@ def save_settings(data: dict):
             if not isinstance(raw, bool):
                 return {"error": "countdown_before_song must be a boolean"}
             updates["countdown_before_song"] = raw
+    if "achievements_enabled" in data:
+        raw = data["achievements_enabled"]
+        if raw is not None:
+            if not isinstance(raw, bool):
+                return {"error": "achievements_enabled must be a boolean"}
+            updates["achievements_enabled"] = raw
     if "miss_penalty" in data:
         raw = data["miss_penalty"]
         if raw is not None:
@@ -5614,6 +5625,7 @@ _RESETTABLE_SETTINGS_KEYS = frozenset({
     "default_arrangement", "demucs_server_url", "master_difficulty",
     "av_offset_ms", "countdown_before_song", "miss_penalty", "fail_behavior",
     "reference_pitch", "instrument", "string_count", "tuning",
+    "achievements_enabled",
 })
 
 

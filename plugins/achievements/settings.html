@@ -1,0 +1,68 @@
+<!-- Achievements plugin — Privacy panel (mounts under the Settings "System" tab
+     via settings.category). Owns the wall opt-in toggle (bound to the core
+     `achievements_enabled` setting) + the self-serve "Remove me from the wall"
+     action. Default OFF — nothing publishes until the user opts in. -->
+<div class="text-sm text-gray-300 space-y-4" data-ach-privacy>
+  <div>
+    <p>Your <strong>Achievements</strong> and <strong>Feats of Power</strong> live on your
+       <em>Profile</em> page and are local &amp; private by default.</p>
+  </div>
+
+  <label class="flex items-start gap-3 cursor-pointer">
+    <input type="checkbox" id="setting-achievements-enabled"
+           class="mt-1 h-4 w-4 rounded border-gray-600 bg-gray-800 text-sky-500 focus:ring-sky-500">
+    <span>
+      <span class="font-medium text-gray-200">Share my Feats of Power on the public wall</span>
+      <span class="block text-gray-400">Publishes only your display name and the rare
+        <strong>Feats</strong> you earn (activity milestones) — never songs, skills, or scores.
+        You can turn this off and remove yourself at any time.</span>
+    </span>
+  </label>
+
+  <div>
+    <button type="button" id="ach-remove-me"
+            class="px-3 py-1.5 rounded-md text-sm border border-red-500/40 text-red-300 hover:bg-red-500/10 transition">
+      Remove me from the wall
+    </button>
+    <span id="ach-remove-status" class="ml-2 text-xs text-gray-400"></span>
+  </div>
+</div>
+
+<script>
+(function () {
+    var root = document.currentScript && document.currentScript.previousElementSibling;
+    // The panel re-injects on each Settings entry; bind once per element.
+    var toggle = document.getElementById('setting-achievements-enabled');
+    if (!toggle || toggle.dataset.wired === '1') return;
+    toggle.dataset.wired = '1';
+
+    // Hydrate from the authoritative server setting.
+    fetch('/api/settings').then(function (r) { return r.ok ? r.json() : {}; }).then(function (d) {
+        toggle.checked = d && d.achievements_enabled === true;
+    }).catch(function () { /* offline — leave unchecked */ });
+
+    toggle.addEventListener('change', function () {
+        var on = !!toggle.checked;
+        try { localStorage.setItem('achievementsEnabled', on ? '1' : '0'); } catch (_) {}
+        fetch('/api/settings', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ achievements_enabled: on }),
+        }).catch(function () { /* best-effort; revert on failure */ });
+    });
+
+    var removeBtn = document.getElementById('ach-remove-me');
+    var status = document.getElementById('ach-remove-status');
+    if (removeBtn) {
+        removeBtn.addEventListener('click', function () {
+            removeBtn.disabled = true;
+            if (status) status.textContent = 'Removing…';
+            fetch('/api/plugins/achievements/remove-me', { method: 'POST' })
+                .then(function (r) {
+                    if (status) status.textContent = r.ok ? 'Removed. Your Feats stay on your Profile.' : 'Could not reach the server — try again.';
+                })
+                .catch(function () { if (status) status.textContent = 'Offline — queued; it will sync when you reconnect.'; })
+                .finally(function () { removeBtn.disabled = false; });
+        });
+    }
+})();
+</script>

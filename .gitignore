@@ -21,6 +21,9 @@ plugins/*/
 # treats them identically to user-installed ones) but are bundled with
 # the default container image and marked `"bundled": true` in their
 # manifest. Add new core plugins as `!plugins/<id>/` exceptions.
+!plugins/achievements/
+!plugins/achievements/**
+plugins/achievements/__pycache__/
 !plugins/highway_3d/
 !plugins/highway_3d/**
 plugins/highway_3d/__pycache__/

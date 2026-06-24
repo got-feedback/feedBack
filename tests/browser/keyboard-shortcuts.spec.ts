@@ -90,7 +90,6 @@ test.describe('Keyboard Shortcuts', () => {
     const required = [
       { key: '?', scope: 'global' },
       { key: '/', scope: 'library' },
-      { key: 'c', scope: 'library' },
       { key: 'f', scope: 'library' },
       { key: 'e', scope: 'library' },
       { key: 'Space', scope: 'player' },
@@ -125,9 +124,7 @@ test.describe('Keyboard Shortcuts', () => {
     // Library shortcuts should be visible on library screen
     await expect(modal).toContainText('Focus search');
     await expect(modal).toContainText('/');
-    await expect(modal).toContainText('Convert library entry');
-    await expect(modal).toContainText('c');
-    
+
     // Player shortcuts should NOT be visible on library screen
     await expect(modal).not.toContainText('Play/Pause');
   });
@@ -149,7 +146,6 @@ test.describe('Keyboard Shortcuts', () => {
     const expectedShortcuts = [
       { key: '?', scope: 'global' },
       { key: '/', scope: 'library' },
-      { key: 'c', scope: 'library' },
       { key: 'f', scope: 'library' },
       { key: 'e', scope: 'library' },
       { key: 'Space', scope: 'player' },

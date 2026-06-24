@@ -169,8 +169,14 @@ def _enqueue_feat_sync(conn, feat_id, unlocked_at):
 # (engine.drain_decision) is pure + tested. A row leaves the queue only on a
 # server ack (or a user opt-out wiping it) — never silently dropped.
 
+# Canonical hosted Feats wall (the got-feedback service). Used by default so the
+# drain worker targets it out of the box; override via env for self-hosting or a
+# staging wall. Nothing is ever sent unless the user opted in AND has an identity
+# (see _enqueue_feat_sync), so a default URL does not publish anything on its own.
+_DEFAULT_WALL_URL = "https://feedback-achievements.onrender.com"
 _WALL_URL = (os.environ.get("FEEDBACK_ACHIEVEMENTS_WALL_URL")
-             or os.environ.get("SLOPSMITH_ACHIEVEMENTS_WALL_URL") or "").rstrip("/")
+             or os.environ.get("SLOPSMITH_ACHIEVEMENTS_WALL_URL")
+             or _DEFAULT_WALL_URL).rstrip("/")
 _WALL_TOKEN = os.environ.get("FEEDBACK_ACHIEVEMENTS_CLIENT_TOKEN", "fb-wall-v1")
 _DRAIN_INTERVAL_S = int(os.environ.get("FEEDBACK_ACHIEVEMENTS_DRAIN_INTERVAL", "30"))
 _drain_started = False

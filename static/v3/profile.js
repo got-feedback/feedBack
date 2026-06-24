@@ -96,6 +96,47 @@
     }
 
     // ── Profile screen (#v3-profile) ────────────────────────────────────────-
+    // The screen is tabbed exactly like the v3 Settings page (.fb-tabbar /
+    // .fb-tab[data-tab] / .fb-tabpanel[data-tab]; achievements epic): a
+    // **Profile** (main) tab and an **Achievements** tab. Core only ships the
+    // shell + two mount points; the bundled achievements plugin renders the
+    // Feats trophy shelf (#v3-profile-feats-slot, earned-only) and the full
+    // competency catalogue (#v3-profile-achievements-mount) into them on the
+    // `v3:profile-rendered` event below. Active tab persists in localStorage,
+    // mirroring settings.js.
+    var PROFILE_TAB_KEY = 'v3-profile-tab';
+    var PROFILE_DEFAULT_TAB = 'profile';
+
+    function activateProfileTab(tab) {
+        var root = document.getElementById('v3-profile');
+        if (!root) return;
+        var bar = root.querySelector('#v3-profile-tabbar');
+        var tabs = [];
+        if (bar) bar.querySelectorAll('.fb-tab').forEach(function (b) { if (b.dataset.tab) tabs.push(b.dataset.tab); });
+        if (tabs.indexOf(tab) === -1) tab = tabs.length ? tabs[0] : PROFILE_DEFAULT_TAB;
+        root.querySelectorAll('#v3-profile-tabbar .fb-tab').forEach(function (b) {
+            b.classList.toggle('active', b.dataset.tab === tab);
+        });
+        root.querySelectorAll('.fb-tabpanel').forEach(function (p) {
+            p.classList.toggle('active', p.dataset.tab === tab);
+        });
+        try { localStorage.setItem(PROFILE_TAB_KEY, tab); } catch (_) { /* private mode */ }
+    }
+
+    function wireProfileTabs() {
+        var bar = document.getElementById('v3-profile-tabbar');
+        if (bar && bar.dataset.wired !== '1') {
+            bar.dataset.wired = '1';
+            bar.addEventListener('click', function (e) {
+                var btn = e.target.closest ? e.target.closest('.fb-tab') : null;
+                if (btn && btn.dataset.tab) activateProfileTab(btn.dataset.tab);
+            });
+        }
+        var saved = PROFILE_DEFAULT_TAB;
+        try { saved = localStorage.getItem(PROFILE_TAB_KEY) || PROFILE_DEFAULT_TAB; } catch (_) { /* noop */ }
+        activateProfileTab(saved);
+    }
+
     function renderProfileScreen() {
         const root = document.getElementById('v3-profile');
         if (!root) return;
@@ -110,9 +151,8 @@
         const pathChips = ((prog && prog.paths) || []).map((path) =>
             '<span class="inline-flex items-center gap-1 bg-fb-bg/40 border border-fb-border/50 rounded-full px-3 py-1 text-xs text-fb-text">' +
             esc(path.name) + ' <span class="text-fb-primary font-semibold">Lv ' + path.level + '</span></span>').join(' ');
-        root.innerHTML =
-            '<div class="max-w-4xl mx-auto p-6 md:p-8 space-y-6">' +
-            // Header card
+        // Header card (Profile main tab).
+        const headerCard =
             '<div class="bg-fb-card/80 backdrop-blur rounded-xl p-6 border border-fb-border/50 flex flex-col sm:flex-row items-center gap-6">' +
             '<span data-v3-avatar-frame class="inline-block rounded-full">' +
             avatarImg(_profile && _profile.avatar_url, 'w-24 h-24') + '</span>' +
@@ -128,17 +168,39 @@
             '<div class="mt-4 flex items-center justify-center sm:justify-start gap-4">' +
             '<button type="button" data-v3-edit-profile class="text-sm text-fb-primary hover:text-fb-primaryHi">Edit name &amp; avatar</button>' +
             '<button type="button" data-v3-open-progress class="text-sm text-fb-primary hover:text-fb-primaryHi">View challenges &amp; quests →</button>' +
-            '</div></div></div>' +
-            // Per-song bests — top scored songs from /api/stats/top, filled by
-            // renderBests() after innerHTML is set. The placeholder text shows
-            // during load and when nothing's been scored yet.
+            '</div></div></div>';
+        // Per-song bests — top scored songs from /api/stats/top, filled by
+        // renderBests() after innerHTML is set. The placeholder text shows
+        // during load and when nothing's been scored yet.
+        const bestsCard =
             '<div class="bg-fb-card/80 backdrop-blur rounded-xl p-6 border border-fb-border/50">' +
             '<h3 class="text-lg font-bold text-fb-text mb-2">Your best scores</h3>' +
             '<div id="v3-profile-bests" class="text-sm text-fb-textDim">Play a song to start tracking your accuracy and best scores.</div>' +
+            '</div>';
+        const playerIdFooter = (_profile && _profile.player_hash
+            ? '<p class="text-center text-[10px] uppercase tracking-wider text-fb-textDim/60">player id ' + esc(_profile.player_hash.slice(0, 12)) + '</p>'
+            : '');
+        root.innerHTML =
+            '<div class="max-w-4xl mx-auto p-6 md:p-8">' +
+            '<div class="fb-tabbar" id="v3-profile-tabbar">' +
+            '<button type="button" class="fb-tab" data-tab="profile">Profile</button>' +
+            '<button type="button" class="fb-tab" data-tab="achievements">Achievements</button>' +
             '</div>' +
-            (_profile && _profile.player_hash
-                ? '<p class="text-center text-[10px] uppercase tracking-wider text-fb-textDim/60">player id ' + esc(_profile.player_hash.slice(0, 12)) + '</p>'
-                : '') +
+            // ── Profile (main) panel ──────────────────────────────────────────
+            '<div class="fb-tabpanel" data-tab="profile">' +
+            '<div class="space-y-6">' +
+            headerCard +
+            bestsCard +
+            // Feats of Power trophy shelf — rendered by the achievements plugin
+            // (earned Feats only; hidden-until-earned, so empty when none).
+            '<div id="v3-profile-feats-slot"></div>' +
+            playerIdFooter +
+            '</div></div>' +
+            // ── Achievements panel ────────────────────────────────────────────
+            '<div class="fb-tabpanel" data-tab="achievements">' +
+            '<div id="v3-profile-achievements-mount"></div>' +
+            '<p class="fb-tabpanel-empty" data-empty-for="v3-profile-achievements-mount">Install the Achievements plugin to track your skill milestones.</p>' +
+            '</div>' +
             '</div>';
         const edit = root.querySelector('[data-v3-edit-profile]');
         if (edit) edit.addEventListener('click', () => show(_profile, { editing: true }));
@@ -147,7 +209,13 @@
         if (window.v3Theme && typeof window.v3Theme.applyFrame === 'function') {
             window.v3Theme.applyFrame(root.querySelector('[data-v3-avatar-frame]'));
         }
+        wireProfileTabs();
         renderBests();
+        // Tell the achievements plugin (or any profile consumer) the shell +
+        // mount points exist now, so it can (re)inject on every profile entry —
+        // innerHTML above wipes prior injected content. Mirrors
+        // `v3:settings-rendered`. Harmless if no listener is attached.
+        try { document.dispatchEvent(new CustomEvent('v3:profile-rendered')); } catch (_) { /* noop */ }
     }
 
     // Fill the "Your best scores" panel from /api/stats/top (top scored songs,
@@ -646,6 +714,12 @@
         if (window.feedBack && typeof window.feedBack.on === 'function') {
             window.feedBack.on('progression:updated', () => { renderBadge(); renderProfileScreen(); });
             window.feedBack.on('v3:cosmetics-applied', () => { renderBadge(); renderProfileScreen(); });
+            // Re-render on every Profile entry so the Feats shelf + Achievements
+            // catalogue refresh (and `v3:profile-rendered` re-fires for the
+            // plugin) — the plugin may have loaded after the initial boot render.
+            window.feedBack.on('screen:changed', (e) => {
+                if (e && e.detail && e.detail.id === 'v3-profile') renderProfileScreen();
+            });
         }
     }
     if (document.readyState === 'loading') {

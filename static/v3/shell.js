@@ -17,6 +17,13 @@
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+    // Plugin ids whose manifest declared `"fullscreen": true`. Populated from
+    // /api/plugins in renderPromotedNav(); read by syncActive() to toggle the
+    // immersive (chrome-collapsed) shell whenever such a plugin's screen is the
+    // active one. Empty until plugins resolve — the worst case is one extra
+    // syncActive() once the fetch lands, which re-applies the class.
+    const FULLSCREEN_PLUGIN_IDS = new Set();
+
     // ── Navigation registry ────────────────────────────────────────────────
     // Each entry maps a stable hash key → a screen id (showScreen target) and a
     // label. Legacy screens are reused: "Songs" = #home (library), "Favorites"
@@ -112,6 +119,15 @@
             el.classList.toggle('text-fb-textDim', !on);
         });
         setTopbarTitle(titleFor(screenId));
+        // Immersive (full-screen) plugin screens: when the active screen belongs
+        // to a plugin that opted in via `"fullscreen": true`, collapse the host
+        // chrome (topbar hidden, sidebar → icon rail; see v3.css) and let the
+        // plugin own the content area. Toggled here so it tracks every
+        // navigation, including deep-link load and programmatic showScreen().
+        const fsPluginId = (screenId && screenId.indexOf('plugin-') === 0)
+            ? screenId.slice('plugin-'.length) : null;
+        const immersive = !!(fsPluginId && FULLSCREEN_PLUGIN_IDS.has(fsPluginId));
+        document.documentElement.classList.toggle('fb-immersive', immersive);
         // Show the song search only on the library screen. Everywhere else the
         // box is irrelevant (and would silently no-op against v3Songs.search).
         const searchWrap = document.getElementById('v3-search-wrap');
@@ -144,7 +160,7 @@
         return '<a href="#/' + entry.key + '" data-v3-nav="' + entry.key + '" ' +
             'class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-fb-textDim ' +
             'hover:text-fb-text hover:bg-fb-card/50 transition-colors">' +
-            iconSvg(entry.icon) + '<span class="truncate">' + esc(labelOverride != null ? labelOverride : entry.label) + '</span></a>';
+            iconSvg(entry.icon) + '<span class="truncate v3-nav-label">' + esc(labelOverride != null ? labelOverride : entry.label) + '</span></a>';
     }
     // Empty slot for a promoted plugin, anchored after a nav item. Filled by
     // renderPromotedNav() only when the plugin is installed, so an absent
@@ -161,7 +177,7 @@
             const items = NAV.filter((n) => n.group === group);
             if (!items.length) continue;
             const itemsHTML = items.map((it) => navItemHTML(it) + promotedSlotHTML(it.key)).join('');
-            html += '<div><div class="px-3 mb-1 text-[10px] uppercase tracking-wider font-semibold text-fb-textDim/70">' +
+            html += '<div><div class="v3-nav-group px-3 mb-1 text-[10px] uppercase tracking-wider font-semibold text-fb-textDim/70">' +
                 group + '</div><div class="space-y-0.5">' + itemsHTML + '</div></div>';
         }
         nav.innerHTML = html;
@@ -270,6 +286,12 @@
             if (res.ok) plugins = await res.json();
         } catch (e) { return; } // degrade: no promoted slots
         const list = Array.isArray(plugins) ? plugins : [];
+        // Record which installed plugins requested immersive (full-screen)
+        // screens, then re-sync the active screen so the chrome collapses even
+        // if we navigated to a fullscreen plugin before /api/plugins resolved.
+        FULLSCREEN_PLUGIN_IDS.clear();
+        for (const p of list) { if (p && p.fullscreen && p.id) FULLSCREEN_PLUGIN_IDS.add(p.id); }
+        try { syncActive(currentScreenId()); } catch (e) { /* non-fatal */ }
         for (const promo of PROMOTED_PLUGINS) {
             const host = document.getElementById(promo.slotId);
             const entry = byKey(promo.navKey);

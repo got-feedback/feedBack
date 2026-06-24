@@ -1074,3 +1074,39 @@ body.font-display { font-family: Rubik, system-ui, sans-serif; }
 }
 .fb-settings-note { font-size: .75rem; color: #64748b; margin-top: 1rem; }
 .fb-tabpanel-empty { font-size: .8rem; color: #64748b; padding: .5rem 0; }
+
+/* ── Immersive (full-screen) plugin screens ──────────────────────────────────
+   A plugin that declares `"fullscreen": true` in its manifest gets the whole
+   content area when its screen is active. shell.js toggles `html.fb-immersive`
+   on navigation (see syncActive). DAW-style plugin UIs (e.g. a practice studio)
+   need the viewport, not a scrolling content page below the topbar — the cause
+   of the "cut off at the bottom / too much top padding" reports on the embedded
+   layout. Mirrors the proven chrome-hide pattern in static/v3/index.html
+   (`html.ss-follower-pre …`), but keeps the sidebar as a functional icon rail
+   so the user is never trapped (Escape is bound only on player/settings
+   scopes, not plugin screens). */
+html.fb-immersive #v3-topbar { display: none !important; }
+
+/* Sidebar → icon rail: narrow it, drop the wordmark + group headers + labels,
+   center the remaining icons. The .v3-nav-label / .v3-nav-group hooks are added
+   by shell.js so these rules don't depend on Tailwind utility class strings. */
+html.fb-immersive #v3-sidebar { width: 4.5rem; }
+html.fb-immersive #v3-brand { display: none; }
+html.fb-immersive #v3-nav { padding-left: .5rem; padding-right: .5rem; }
+html.fb-immersive #v3-nav .v3-nav-group,
+html.fb-immersive #v3-nav .v3-nav-label { display: none; }
+html.fb-immersive #v3-nav a {
+    justify-content: center;
+    gap: 0;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+/* The active plugin screen fills the now-topbar-less content area. #v3-main is
+   position:relative, so pinning the screen avoids relying on the auto-height
+   block flow that made a 100vh plugin overflow #v3-main and force a scroll. */
+html.fb-immersive #v3-main > .screen.active {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}

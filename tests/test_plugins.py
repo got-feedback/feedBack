@@ -4035,3 +4035,35 @@ def test_settings_category_parsed_from_manifest(tmp_path, reset_plugin_state):
     assert rows["plainset"]["has_settings"] is True
     assert rows["noset"]["settings_category"] is None
     assert rows["noset"]["has_settings"] is False
+
+
+def test_fullscreen_flag_parsed_from_manifest(tmp_path, reset_plugin_state):
+    """A plugin manifest's top-level `fullscreen: true` surfaces as the boolean
+    `fullscreen` on the loaded entry (drives the v3 shell's immersive mode).
+    Only a strict boolean `true` opts in — absent, false, or a truthy non-bool
+    (e.g. the string "true") all resolve to False so a plugin can't be opted in
+    by accident."""
+    plugins = reset_plugin_state
+
+    def _write(pid, manifest_extra):
+        d = tmp_path / pid
+        d.mkdir()
+        (d / "plugin.json").write_text(json.dumps({
+            "id": pid, "name": pid, "routes": "routes.py",
+            "screen": "screen.html", **manifest_extra,
+        }))
+        (d / "routes.py").write_text("def setup(app, ctx):\n    pass\n")
+        (d / "screen.html").write_text("<div></div>")
+
+    _write("immersive", {"fullscreen": True})
+    _write("strflag", {"fullscreen": "true"})   # truthy non-bool → not opted in
+    _write("falseflag", {"fullscreen": False})
+    _write("noflag", {})                          # field absent
+
+    _run_load_plugins(plugins, type("FakeApp", (), {})(), tmp_path)
+
+    rows = {p["id"]: p for p in plugins.LOADED_PLUGINS}
+    assert rows["immersive"]["fullscreen"] is True
+    assert rows["strflag"]["fullscreen"] is False
+    assert rows["falseflag"]["fullscreen"] is False
+    assert rows["noflag"]["fullscreen"] is False

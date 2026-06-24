@@ -1350,6 +1350,13 @@ def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=N
                     _icon = "assets/thumb.png"
             except OSError:
                 _icon = None
+        # Immersive (full-screen) screen opt-in. A plugin that declares a
+        # top-level `"fullscreen": true` gets the whole content area when its
+        # screen is active: the v3 shell hides the topbar and collapses the
+        # sidebar to an icon rail (see static/v3/shell.js + v3.css). For
+        # DAW-style plugin UIs that need the viewport, not a scrolling content
+        # page. Strict `is True` so a stray truthy value can't silently opt in.
+        _fullscreen = manifest.get("fullscreen") is True
         return {
             "id": plugin_id,
             "name": manifest.get("name", plugin_id),
@@ -1368,6 +1375,9 @@ def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=N
             "has_script": bool(manifest.get("script")),
             "has_settings": bool(manifest.get("settings")),
             "settings_category": _settings_category,
+            # Drives the v3 shell's immersive (full-screen) mode for this
+            # plugin's screen. False unless the manifest declares it explicitly.
+            "fullscreen": _fullscreen,
             "has_tour": _is_valid_tour_manifest(manifest.get("tour")),
             # `styles` is an optional relpath (under the plugin's assets/) to a
             # compiled, preflight-off stylesheet the frontend injects as a
@@ -2080,6 +2090,8 @@ def register_plugin_api(app: FastAPI):
                 "has_screen": p["has_screen"],
                 "has_script": p["has_script"],
                 "has_settings": p["has_settings"],
+                # v3 immersive screen opt-in (full-screen plugin UI).
+                "fullscreen": p.get("fullscreen", False),
                 # Settings-tab placement; None when the manifest's `settings`
                 # is absent, a bare string, or omits `category`.
                 "settings_category": p.get("settings_category"),
@@ -2132,6 +2144,7 @@ def register_plugin_api(app: FastAPI):
                 "has_script": e.get("has_script", False),
                 "has_settings": e.get("has_settings", False),
                 "settings_category": e.get("settings_category"),
+                "fullscreen": e.get("fullscreen", False),
                 "has_tour": e.get("has_tour", False),
                 "has_styles": e.get("has_styles", False),
                 "styles": e.get("styles"),

@@ -908,15 +908,13 @@ document.addEventListener('keydown', (e) => {
     // library entry — works on both grid cards and tree rows. Each
     // dispatches to a button class that the entry markup already
     // exposes, so plugins can keep owning the actual behavior:
-    //   c → .sloppak-convert-btn  (Sloppak Converter plugin)
     //   f → .fav-btn              (favorite heart toggle)
     //   e → .edit-btn             (edit metadata modal)
     // No-op when no entry is currently focused / selected, when the
-    // entry doesn't expose the requested button (e.g. a sloppak
-    // entry has no convert button), or when the button is disabled.
+    // entry doesn't expose the requested button, or when the button is disabled.
     // Bails on text input / drawer focus so single-letter typing in
     // inputs still works.
-    const entryShortcut = { c: 'button.sloppak-convert-btn', f: 'button.fav-btn', e: 'button.edit-btn' }[e.key.toLowerCase()];
+    const entryShortcut = { f: 'button.fav-btn', e: 'button.edit-btn' }[e.key.toLowerCase()];
     if (entryShortcut) {
         if (_isInsideInteractiveControl(document.activeElement)) return;
         const ae = document.activeElement;
@@ -9413,15 +9411,6 @@ registerShortcut({
     handler: () => {
         const input = _activeSearchInput();
         if (input) input.focus();
-    }
-});
-
-registerShortcut({
-    key: 'c',
-    description: 'Convert library entry to .sloppak',
-    scope: 'library',
-    handler: () => {
-        // Handled by library navigation - this is for documentation only
     }
 });
 

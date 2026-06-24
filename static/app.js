@@ -5958,6 +5958,10 @@ async function playSong(filename, arrangement, options) {
     clearLoop();
     _resetSectionPracticeLog();
     _hideSectionPracticeBar();
+    // Reset so the jump-fix (setInterval, ~line 8979) doesn't mistake the new
+    // song starting at t=0 for an unexpected seek from the previous song's
+    // position. audio.currentTime may not reset synchronously when src is cleared.
+    lastAudioTime = 0;
 
     currentFilename = filename;
     // A fresh load arms autoplay; a pending auto-exit from the previous

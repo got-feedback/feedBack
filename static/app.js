@@ -2795,6 +2795,88 @@ const HWC_SLOT_KEYS = HWC_SLOTS.map((s) => s.key);
 // is queryable.
 const HWC_DEFAULT_FALLBACK = { lowE: '#cc0000', A: '#cca800', D: '#0066cc', G: '#cc6600', B: '#00cc66', highE: '#9900cc', low7: '#cc00aa', low8: '#00cccc' };
 
+// One-click string-color presets. Each is a full named-slot → hex map (every
+// slot, so 7/8-string charts get a sensible color too) keyed by the same slot
+// names as HWC_SLOTS, so "Low E" always lands on the lowE slot regardless of
+// string count. Hues are chosen for the dark scene (~#080810): each color is
+// bright enough to read on black and distinct from its neighbours.
+//   - warmcool: an ordered low→high spectrum (warm reds at the bass end →
+//     cool blues/violet at the treble end) so pitch reads as color temperature.
+//   - vivid: punchier, higher-saturation take on the classic mapping for a
+//     stage-bright look.
+//   - colorblind: the Okabe–Ito accessible qualitative palette (vermillion,
+//     orange, yellow, bluish-green, sky-blue, blue, reddish-purple), the most
+//     distinguishable option for deuteranopia/protanopia.
+//   - neon: electric, max-saturation hues whose LIGHTNESS deliberately zig-zags
+//     between neighbours (bright→bright→brightest→dark blue→bright green→dark
+//     violet) so adjacent strings separate harder than vivid — a stage/stream
+//     "pop" set, not a vivid duplicate.
+//   - accessible: a CVD-safe set ORDERED by ascending lightness low→high (deep
+//     blue → vermilion → azure → orange → yellow → cream). Unlike the unordered
+//     Okabe–Ito 'colorblind' set, the value ramp teaches pitch low→high AND
+//     survives grayscale/colorblindness; no red/green pair carries meaning.
+//   - ember: a warm, lower-intensity family for long sessions, luminance-stepped
+//     from rust/ember at the bass through warm gold to cream at the treble. The
+//     bass embers stay light enough to clear the near-black scene.
+//   - tapedeck: a vintage-print, slightly desaturated ochre-tinted family
+//     (rust-red → mustard → avocado → teal → faded denim → dusty plum). Muted
+//     hues collapse, so neighbour LIGHTNESS deliberately zig-zags to keep the
+//     dusty mid-strings (avocado/teal/denim) distinct on the dark board.
+//   - crtgreen / crtamber: monochrome CRT-phosphor families (green / amber)
+//     stepped by STRICT ASCENDING LIGHTNESS low→high. Mono sets collapse on hue,
+//     so lightness alone carries the ordering. Verified to stay legible even on
+//     the matching phosphor scene board (green-on-green / amber-on-amber).
+//   - pitchramp: a smooth low→high hue sweep (violet → blue → teal → green →
+//     yellow → warm-white) with rising lightness — memorable + teaches order.
+//   - sunrise: a soft dawn gradient (plum → rose → coral → amber → gold → cream),
+//     warm and lower-intensity, lightness-stepped low→high.
+const HWC_PRESETS = [
+    {
+        id: 'warmcool', label: 'Warm → Cool',
+        colors: { lowE: '#ff3b30', A: '#ff7a18', D: '#ffc400', G: '#36c46a', B: '#2196f3', highE: '#9b5cff', low7: '#ff2d78', low8: '#00c2c7' },
+    },
+    {
+        id: 'vivid', label: 'Vivid',
+        colors: { lowE: '#ff2222', A: '#ffd000', D: '#1e8bff', G: '#ff7a00', B: '#16d65a', highE: '#b24bff', low7: '#ff3cc0', low8: '#15d8d8' },
+    },
+    {
+        id: 'colorblind', label: 'Colorblind-friendly',
+        colors: { lowE: '#d55e00', A: '#e69f00', D: '#f0e442', G: '#009e73', B: '#56b4e9', highE: '#cc79a7', low7: '#0072b2', low8: '#999999' },
+    },
+    {
+        id: 'neon', label: 'Neon',
+        colors: { lowE: '#ff1f4e', A: '#ff9d00', D: '#e9ff00', G: '#1844ff', B: '#00ff84', highE: '#d000ff', low7: '#ff00aa', low8: '#00f0ff' },
+    },
+    {
+        id: 'accessible', label: 'Accessible (ordered)',
+        colors: { lowE: '#2453c0', A: '#c44a00', D: '#3f93cf', G: '#ec9a1e', B: '#f2d43c', highE: '#f5eecb', low7: '#173f96', low8: '#0f2c6b' },
+    },
+    {
+        id: 'ember', label: 'Warm Ember',
+        colors: { lowE: '#c0392b', A: '#e0552a', D: '#ef7d2e', G: '#f6a13a', B: '#f4c95d', highE: '#f7e3a8', low7: '#9e2f23', low8: '#7d2418' },
+    },
+    {
+        id: 'tapedeck', label: 'Tape Deck',
+        colors: { lowE: '#b04632', A: '#d8ad42', D: '#5f7a34', G: '#54b3a6', B: '#5e83ad', highE: '#b98abb', low7: '#8f3526', low8: '#6f2a1e' },
+    },
+    {
+        id: 'crtgreen', label: 'CRT Green',
+        colors: { lowE: '#0a5a23', A: '#108a30', D: '#1fb53f', G: '#3ad94f', B: '#74f06a', highE: '#c7ffb0', low7: '#08491c', low8: '#063514' },
+    },
+    {
+        id: 'crtamber', label: 'CRT Amber',
+        colors: { lowE: '#7a3a02', A: '#a85f06', D: '#cf8410', G: '#e8a82a', B: '#f4cf5e', highE: '#ffeeb8', low7: '#5f2d01', low8: '#471f00' },
+    },
+    {
+        id: 'pitchramp', label: 'Pitch Ramp',
+        colors: { lowE: '#7a2390', A: '#2f5ad8', D: '#1f9bc4', G: '#2fb84a', B: '#cfd22a', highE: '#f3e0c0', low7: '#5e1a78', low8: '#440f5e' },
+    },
+    {
+        id: 'sunrise', label: 'Sunrise',
+        colors: { lowE: '#8a3a6e', A: '#bf4a5e', D: '#e0664f', G: '#f29a55', B: '#f7c873', highE: '#fce8b8', low7: '#6e2c5c', low8: '#54214a' },
+    },
+];
+
 // Translation table: chart string index → named slot, for a given string count
 // and bass/guitar family. Mirrors the 3D highway's _baseOpenStringMidis: bass
 // shares the low strings (E A D G), 7/8-string guitars prepend lower strings,
@@ -2889,6 +2971,18 @@ function applyHighwayStringColors(slotMap, opts) {
         } catch (_) {}
     }
     reapplyHighwayStringColors();
+}
+
+// Apply a named one-click string-color preset (see HWC_PRESETS) to all strings.
+// Persists + applies to both highways (via applyHighwayStringColors), then —
+// when the Settings UI is mounted — refreshes the per-string pickers so their
+// swatches show the preset's colors. Unknown id is a no-op.
+function applyHighwayStringPreset(id) {
+    const preset = HWC_PRESETS.find((p) => p.id === id);
+    if (!preset) return false;
+    applyHighwayStringColors(preset.colors);
+    try { if (typeof hwcRenderPickers === 'function') hwcRenderPickers(); } catch (_) {}
+    return true;
 }
 
 // Apply colors by NAMED string to both highways for the current arrangement.
@@ -3062,6 +3156,10 @@ function _hwcInstallFacade() {
         // Set colors programmatically (persists + applies to both highways).
         // Pass a named slot map, or null/{} to revert to defaults.
         apply(slotMap) { return applyHighwayStringColors(slotMap); },
+        // One-click presets: [{ id, label, colors }] (full named-slot maps).
+        presets: HWC_PRESETS.map((p) => ({ id: p.id, label: p.label, colors: { ...p.colors } })),
+        // Apply a preset by id (persists + applies to both highways).
+        applyPreset(id) { return applyHighwayStringPreset(id); },
         // Share-code interop (the "SLOPHWY2." copy/paste format).
         encodeShare(name, slotMap) { return encodeHighwayColorShare(name, slotMap); },
         decodeShare(code) { return decodeHighwayColorShare(code); },

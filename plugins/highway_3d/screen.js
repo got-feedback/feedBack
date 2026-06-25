@@ -1123,7 +1123,7 @@
         return _bgBandsCache;
     }
 
-    const BG_DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', showFretOnNote: true, fretNumberGhostScope: 'chords', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
+    const BG_DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', bgTheme: 'default', hwTheme: 'default', showFretOnNote: true, fretNumberGhostScope: 'chords', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
     // User-selectable, persistable bg styles — must mirror settings.html's
     // VALID_STYLES. 'venue' is deliberately NOT here: it is an internal effective
     // style reached only via _venueSceneOverride (the viz-picker Venue flow), so
@@ -1131,6 +1131,83 @@
     // mount outside that flow and settings.html (which can't represent 'venue')
     // would be unable to switch back. BG_STYLES still has a 'venue' renderer entry.
     const BG_STYLE_IDS = ['off', 'particles', 'silhouettes', 'lights', 'geometric', 'image', 'video'];
+    // Scene color themes — TWO INDEPENDENT AXES sharing one palette family.
+    // The combined `BG_THEMES` table below is the single source of truth; each
+    // entry carries the colors for BOTH axes, but the two axes are selected and
+    // applied SEPARATELY (two dropdowns, two settings keys):
+    //   • BACKGROUND axis (setting key `bgTheme`) owns:
+    //       clear — WebGL clear color (the empty background behind everything)
+    //       fog   — distance fog tint (kept === clear so the horizon dissolves
+    //               cleanly instead of showing a seam)
+    //   • HIGHWAY axis (setting key `hwTheme`) owns:
+    //       board   — the fretboard / highway-surface plane color
+    //       lane    — the lit highway lane strip under the gems (optional)
+    //       laneDim — the lane's dimmer alternating row (optional)
+    // Because both axes read from the SAME id-set (the keys of this table), ANY
+    // background id can mix with ANY highway id (e.g. Deep Focus background +
+    // Cathode Green highway); picking the SAME id in both gives the original
+    // "matched" combined look. _bgBackgroundColors()/_bgHighwayColors() below
+    // are the per-axis accessors; both fall back to 'default' for unknown ids.
+    // 'default' reproduces the original look byte-for-byte on BOTH axes, so
+    // existing users (and anyone who never touches either setting) see no
+    // change. A migration in _bgLoadSettings() makes an existing single-`bgTheme`
+    // pick drive BOTH axes until the user diverges them, so upgrades are
+    // visually identical too. All themes keep the board very dark and the
+    // background dark so the bright per-string note gems, lane, and labels
+    // retain contrast. NOTE: settings.html mirrors these ids in its
+    // VALID_BG_THEMES set (shared by both dropdowns) — keep them in sync.
+    // Optional `lane` / `laneDim` fields retint the lit highway lane strip + its
+    // dimmer alternating row. A theme that omits them falls back to the stock
+    // blue lane (HWY_LANE_STRIPE_ODD_HEX / _EVEN_HEX); only 'default' relies on
+    // that fallback (so its output stays byte-identical). Every other theme sets
+    // its own lane so the Highway axis is visibly distinct entry-to-entry — the
+    // near-black neutral boards alone aren't separable, so the lane carries it.
+    // See _applyBgTheme().
+    const BG_THEMES = {
+        default:    { clear: 0x101820, fog: 0x101820, board: 0x08080e },
+        // Cool navy surface + a brighter pure-blue lane, so it reads distinct
+        // from 'default' (neutral board + stock teal-blue lane) on the Highway axis.
+        midnight:   { clear: 0x0a0e1a, fog: 0x0a0e1a, board: 0x080d1c, lane: 0x244fae, laneDim: 0x122a5e },
+        // Lighter NEUTRAL-grey surface + a steel-grey lane — the only mid-dark
+        // neutral board, so the surface itself is visibly different from the
+        // near-black neutrals around it (board kept dark enough for gem contrast).
+        charcoal:   { clear: 0x16181c, fog: 0x16181c, board: 0x141417, lane: 0x525a66, laneDim: 0x282d34 },
+        deeppurple: { clear: 0x140a1e, fog: 0x140a1e, board: 0x0b0610, lane: 0x3a1f6e, laneDim: 0x1f1040 },
+        forest:     { clear: 0x0a1614, fog: 0x0a1614, board: 0x06100c, lane: 0x15602a, laneDim: 0x0a3318 },
+        // Warm dark neutral (espresso/umber) — the first non-cool scene.
+        warmslate:  { clear: 0x1c130b, fog: 0x1c130b, board: 0x0e0805, lane: 0x5e3a12, laneDim: 0x341f0a },
+        // Recessive near-black neutral (a hair above #000000, ~zero chroma) —
+        // maximizes gem-vs-board contrast; a clean stage/stream look. Purest-dark
+        // board + a clean steel-cyan lane (brighter/cooler than 'default's muted
+        // teal-blue) so the Highway axis reads clearly distinct from default.
+        deepfocus:  { clear: 0x0c0c0d, fog: 0x0c0c0d, board: 0x060606, lane: 0x2f7fa0, laneDim: 0x163c4e },
+        // Calm dark teal — blue-dominant so it reads distinct from the navy
+        // 'midnight' and the green 'forest'.
+        deepsea:    { clear: 0x06222b, fog: 0x06222b, board: 0x03141a, lane: 0x0e5a63, laneDim: 0x063338 },
+        // Retro CRT glow — a warm AMBER phosphor cast (the classic amber
+        // terminal). Amber rather than green so a phosphor board can't crush
+        // green/teal gems, and so it stays clearly distinct from 'forest' and
+        // 'deepsea'. Board stays very dark / low-chroma to keep gems popping.
+        cathode:    { clear: 0x140b03, fog: 0x140b03, board: 0x0c0702, lane: 0x6e4a0e, laneDim: 0x3a2806 },
+        // Retro CRT GREEN phosphor — leaned more saturated / cyan-green than
+        // 'forest' so it reads as a terminal, not woodland (dRGB 35 vs forest,
+        // 32 vs deepsea). Phosphor-green board + green lane. Verified to keep
+        // green/teal gems legible (green-on-green floor CR ~2.2).
+        cathodegreen: { clear: 0x07301a, fog: 0x07301a, board: 0x031a0c, lane: 0x0e6e2a, laneDim: 0x073a18 },
+        // Warm hearth — the first warm-RED scene, pairs with the Ember/Sunrise
+        // strings. Deep red, pushed away from the amber 'cathode'/'warmslate'
+        // (dRGB ~26 from cathode). Ember-red lane.
+        hearth:     { clear: 0x280806, fog: 0x280806, board: 0x1a0606, lane: 0x7a2410, laneDim: 0x3f1409 },
+    };
+    const BG_THEME_IDS = Object.keys(BG_THEMES);
+    // Shared lookup for the combined entry (both axes are keyed by the same id
+    // set, so a single id list / coerce check validates either axis).
+    function _bgThemeColors(id) { return BG_THEMES[id] || BG_THEMES.default; }
+    // Per-axis accessors. Background reads clear/fog; highway reads
+    // board/lane/laneDim. They alias the same table — splitting at read-time
+    // keeps one source of truth while letting the two dropdowns pick freely.
+    function _bgBackgroundColors(id) { return _bgThemeColors(id); }
+    function _bgHighwayColors(id) { return _bgThemeColors(id); }
     const VENUE_SCENE_ASSET_BASE = '/static/assets/venue/themes/small-club/';
     const VENUE_BG_PLATE_PNG = 'bg-plate.png';
     const VENUE_BG_PLATE_WEBP = 'bg-plate.webp';
@@ -1412,6 +1489,9 @@
         if (_BG_BOOL_KEYS.has(key)) return _bgCoerceBool(val, BG_DEFAULTS[key]);
         if (key === 'style') return BG_STYLE_IDS.includes(val) ? val : BG_DEFAULTS.style;
         if (key === 'palette') return (PALETTE_IDS.includes(val) || val === 'custom') ? val : BG_DEFAULTS.palette;
+        if (key === 'bgTheme') return BG_THEME_IDS.includes(val) ? val : BG_DEFAULTS.bgTheme;
+        // Highway axis shares the same id-set as the background axis.
+        if (key === 'hwTheme') return BG_THEME_IDS.includes(val) ? val : BG_DEFAULTS.hwTheme;
         if (key === 'chordDiagramPosition')
             return CHORD_DIAG_POSITION_IDS.includes(val) ? val : BG_DEFAULTS.chordDiagramPosition;
         if (key === 'sectionHudPosition')
@@ -1483,6 +1563,20 @@
     window.h3dBgSetIntensity = (v) => _bgWriteGlobal('intensity', v);
     window.h3dBgSetReactive = (v) => _bgWriteGlobal('reactive', !!v);
     window.h3dBgSetPalette = (v) => _bgWriteGlobal('palette', v);
+    // BACKGROUND scene-color axis (clear + fog only). Validated against
+    // BG_THEME_IDS in _bgCoerce; the listener re-applies clear/fog live and
+    // independently of the highway axis.
+    window.h3dBgSetBgTheme = (v) => {
+        const s = String(v);
+        _bgWriteGlobal('bgTheme', BG_THEME_IDS.includes(s) ? s : BG_DEFAULTS.bgTheme);
+    };
+    // HIGHWAY scene-color axis (board + lane + laneDim). Same id-set as the
+    // background axis, so any highway can mix with any background. The listener
+    // re-applies the board plane + lane live and independently.
+    window.h3dBgSetHwTheme = (v) => {
+        const s = String(v);
+        _bgWriteGlobal('hwTheme', BG_THEME_IDS.includes(s) ? s : BG_DEFAULTS.hwTheme);
+    };
     // Apply a user-defined per-string color set (core theming UI). `hexArray`
     // is up to 8 hex strings; invalid/missing entries fall back to the default
     // palette per index. Writes the colors, then flips the palette to 'custom'
@@ -2738,6 +2832,13 @@
         let bgGroup = null, bgStage = null, bgState = null;
         let bgMountedStyleId = null;
         let bgStyleId = 'particles', bgIntensity = 0.5, bgReactive = true;
+        // Active scene color theme (background + highway surface). Read in
+        // _bgLoadSettings, applied by _applyBgTheme (clear + fog + board plane).
+        let bgThemeId = 'default';   // BACKGROUND axis (clear + fog)
+        let hwThemeId = 'default';   // HIGHWAY axis (board + lane + laneDim)
+        // Board (fretboard/highway-surface) plane material — kept so the theme
+        // can recolor it live without rebuilding the board. Set in buildBoard().
+        let _boardPlaneMat = null;
         // Per-render opt-out for plugins borrowing the highway as a viz: when the
         // mount bundle sets bgReactive === false, suppress the audio-reactive
         // background for THIS instance only (no shared h3d_bg_* write). Captured
@@ -6220,6 +6321,11 @@
 
             _bgLoadSettings();
             buildBoard();
+            // Apply the scene color theme now that settings + board exist. Sets
+            // the clear color + fog tint (board plane was themed in buildBoard).
+            // For the default theme this is identical to the hardcoded values
+            // initScene seeded above, so nothing changes for existing users.
+            _applyBgTheme();
 
             // Background animations (#13). Read settings keyed by this
             // panel and mount the active style's meshes. Subscribe to
@@ -6335,6 +6441,17 @@
                     _bgLoadSettings();
                     if (fretG) buildBoard();
                     if (bgStyleId === 'lights') _bgRebuild();
+                    return;
+                }
+                if (changedKey === 'bgTheme' || changedKey === 'hwTheme') {
+                    // A scene-color axis changed (background = bgTheme:
+                    // clear+fog; highway = hwTheme: board plane + lane). Recolor
+                    // in place — no mesh rebuild needed (the board plane material
+                    // is mutated via _boardPlaneMat, the lane via mLaneOdd/Even).
+                    // _applyBgTheme reapplies both axes from their own keys, so
+                    // changing one dropdown retints only its half.
+                    _bgLoadSettings();
+                    _applyBgTheme();
                     return;
                 }
                 if (changedKey === 'customImageDataUrl') {
@@ -6543,6 +6660,18 @@
                 _bgPaletteSig = newSig;
                 _applyPaletteToMaterials();
             }
+            bgThemeId = _bgReadSetting(panelKey, 'bgTheme');
+            // Highway axis. BACKWARD-COMPAT MIGRATION: if the user has never
+            // written hwTheme (pre-split installs, or anyone who only ever
+            // touched the old single "Scene colors" control), inherit the
+            // background pick so an existing 'cathode' selection drives BOTH the
+            // background AND the highway = byte-identical to the pre-split look.
+            // Once the user moves the Highway dropdown, _bgHasStored flips true
+            // and the two axes read independently. (Same mirror-at-first-read
+            // pattern as zoomSmoothing/tiltSmoothing inheriting cameraSmoothing.)
+            hwThemeId = _bgHasStored(panelKey, 'hwTheme')
+                ? _bgReadSetting(panelKey, 'hwTheme')
+                : bgThemeId;
             showFretOnNote = _bgReadSetting(panelKey, 'showFretOnNote');
             fretNumberGhostScope = _bgReadSetting(panelKey, 'fretNumberGhostScope');
             cameraSmoothing = _bgReadSetting(panelKey, 'cameraSmoothing');
@@ -6916,12 +7045,52 @@
                 if (ren) ren.setClearColor(0x080c12);
                 if (ambLight) ambLight.intensity = 0.68;
             } else {
-                scene.fog.color.setHex(0x101820);
+                // Restore the user's scene-color theme (clear + fog) rather than
+                // the old hardcoded gray, so deactivating venue doesn't wipe a
+                // chosen background theme. _applyBgTheme reads the current theme.
                 scene.fog.near = FOG_START * 0.8;
                 scene.fog.far = FOG_END * 1.2;
-                if (ren) ren.setClearColor(0x101820);
                 if (ambLight) ambLight.intensity = 0.85;
+                _applyBgTheme();
             }
+        }
+
+        // Apply BOTH scene-color axes, each from its own setting key:
+        //   • BACKGROUND (bgThemeId): the WebGL clear color + the distance-fog
+        //     tint. Skipped while the venue scene is active (venue owns those —
+        //     see _bgApplyVenueSceneFog).
+        //   • HIGHWAY (hwThemeId): the fretboard/highway-surface plane + the lit
+        //     highway lane strip (the bright quad under the gems) + its dimmer
+        //     alternating row. Always themed; venue doesn't touch them.
+        // The two axes are independent, so picking a different id in each mixes
+        // freely. Safe to call any time; called from initScene, buildBoard, and
+        // the scene-theme listener (so a live switch of EITHER dropdown retints
+        // only its half immediately).
+        //
+        // The lane fields are OPTIONAL on a highway theme: one that omits `lane`
+        // / `laneDim` falls back to the stock lit/dim lane hexes, so every
+        // existing/neutral highway theme stays byte-identical (default blue lane
+        // unchanged). Only colored highway themes opt into a coordinated lane.
+        function _applyBgTheme() {
+            // --- Background axis: clear + fog ---
+            const bg = _bgBackgroundColors(bgThemeId);
+            if (!_venueSceneOverride) {
+                if (scene && scene.fog) scene.fog.color.setHex(bg.fog);
+                if (ren) ren.setClearColor(bg.clear);
+            }
+            // --- Highway axis: board plane + lane ---
+            const hw = _bgHighwayColors(hwThemeId);
+            if (_boardPlaneMat) _boardPlaneMat.color.setHex(hw.board);
+            // Lit lane strip + its dimmer alternating row. Fall back to the
+            // hardcoded stock lane colors when the highway theme omits them.
+            const laneLit = (typeof hw.lane === 'number') ? hw.lane : HWY_LANE_STRIPE_ODD_HEX;
+            const laneDim = (typeof hw.laneDim === 'number') ? hw.laneDim : HWY_LANE_STRIPE_EVEN_HEX;
+            if (mLaneOdd) mLaneOdd.color.setHex(laneLit);
+            if (mLaneEven) mLaneEven.color.setHex(laneDim);
+            // Keep the (otherwise vestigial) lane target color in sync with the
+            // lit lane so any future lane-blend consumer reads the themed value.
+            if (_laneTargetColor) _laneTargetColor.setHex(laneLit);
+            else _laneTargetColor = new T.Color(laneLit);
         }
 
         /* ── Fretboard (static geometry) ────────────────────────────────── */
@@ -6967,7 +7136,12 @@
             // spawn horizon (-AHEAD * TS), so the far edge aligns with AHEAD.
             const blAhead = TS * AHEAD;
             const pg = new T.PlaneGeometry(bw, blAhead);
-            const pm = new T.MeshLambertMaterial({ color: 0x08080e, transparent: true, opacity: 0.6 });
+            // Board (highway-surface) color comes from the active HIGHWAY scene
+            // theme (default theme = the original 0x08080e). Kept on
+            // _boardPlaneMat so _applyBgTheme can recolor it live without
+            // rebuilding the board.
+            const pm = new T.MeshLambertMaterial({ color: _bgHighwayColors(hwThemeId).board, transparent: true, opacity: 0.6 });
+            _boardPlaneMat = pm;
             const p = new T.Mesh(pg, pm);
             p.rotation.x = -Math.PI / 2;
             p.position.set(board.center, S_BASE - NH / 2 - 2 * K, -blAhead / 2);
@@ -13156,7 +13330,7 @@
             if (ren) { ren.dispose(); ren = null; }
             scene = cam = noteG = beatG = lblG = fretG = tuningLblG = null;
             ambLight = dirLight = null;
-            mStr = []; mGlow = []; mSus = []; mStrHitOutline = []; mAccentOutline = []; mAccentCore = []; mAccentHaloNear = []; mAccentHaloMid = []; mAccentHaloFar = []; _accentShellsByString = []; mWhiteOutline = mSusOutline = null; mMissOutline = null; mHitSusOutline = null; stringLines = []; stringLineGlows = []; fretWireMats = []; fretTubeGeo?.dispose?.(); fretTubeGeo = null;
+            mStr = []; mGlow = []; mSus = []; mStrHitOutline = []; mAccentOutline = []; mAccentCore = []; mAccentHaloNear = []; mAccentHaloMid = []; mAccentHaloFar = []; _accentShellsByString = []; mWhiteOutline = mSusOutline = null; mMissOutline = null; mHitSusOutline = null; stringLines = []; stringLineGlows = []; _boardPlaneMat = null; fretWireMats = []; fretTubeGeo?.dispose?.(); fretTubeGeo = null;
             for (const m of _inlayMats) m?.dispose?.(); _inlayMats = []; _inlayLabels = [];
             // mTapChevron: dispose explicitly — if no tap marker ever
             // spawned a pooled mesh, the scene.traverse() pass above never

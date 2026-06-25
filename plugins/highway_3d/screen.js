@@ -253,10 +253,10 @@
             let tx = 0;
             if (_bcCollapsed) tx = 210;        // tuck the whole panel off the right edge
             else if (_bcPaneOpen) tx = -248;   // slide panel LEFT to make room for the pane
-            _bcPanel.style.transform = 'translateX(' + tx + 'px)';
+            _bcPanel.style.transform = 'translateX(' + tx + 'px) translateY(-50%)';
         }
         if (_bcPane) {
-            _bcPane.style.transform = (_bcPaneOpen && !_bcCollapsed) ? 'translateX(0)' : 'translateX(calc(100% + 16px))';
+            _bcPane.style.transform = (_bcPaneOpen && !_bcCollapsed) ? 'translateX(0) translateY(-50%)' : 'translateX(calc(100% + 16px)) translateY(-50%)';
         }
     }
     function _bcSetPane(open) {
@@ -306,12 +306,22 @@
     }
 
     let _bcPanel = null, _bcPanelKeyBound = false;
-    function _bcEnsurePanel() {
-        if (_bcPanel) return _bcPanel;
+    function _bcEnsurePanel(host) {
+        if (_bcPanel && _bcPanel.isConnected) {
+            // Singleton panel: follow the active highway. If it's still parented
+            // to a different wrap (e.g. another mounted highway instance such as
+            // Virtuoso's embedded one), move it — and the pane — to this wrap so
+            // it appears on whichever highway is currently on-screen.
+            if (host && _bcPanel.parentNode !== host) {
+                host.appendChild(_bcPanel);
+                if (_bcPane) host.appendChild(_bcPane);
+            }
+            return _bcPanel;
+        }
         const s = _bcLoadSettings();
         const p = document.createElement('div');
         p.id = 'viz3d-panel';
-        p.style.cssText = 'position:fixed;top:8px;right:10px;z-index:100000;font:12px/1.45 system-ui,sans-serif;' +
+        p.style.cssText = 'position:absolute;top:50%;right:10px;z-index:100000;pointer-events:auto;font:12px/1.45 system-ui,sans-serif;' +
             'color:#cfe3ff;background:rgba(8,10,20,0.82);padding:9px 11px;border-radius:8px;width:186px;' +
             'box-shadow:0 2px 12px rgba(0,0,0,0.5);user-select:none;transition:transform 0.28s ease;';
         p.innerHTML =
@@ -343,7 +353,7 @@
             '<div style="margin:5px 0 4px;font-size:11px;opacity:.75"><span id="vz-pcount">★ 0   🚫 0</span></div>' +
             '<div id="vz-meter" style="opacity:.65;margin-top:6px;font:11px/1.3 monospace">gtr —  ·  song —</div>' +
             '<div style="opacity:.45;margin-top:4px;font-size:11px">` or ‹‹ to hide</div>';
-        document.body.appendChild(p);
+        (host || document.body).appendChild(p);
 
         // Slide handle (<< / >>) so the panel can tuck off the right edge and stop
         // covering the Now / Up-Next labels.
@@ -364,14 +374,14 @@
         // Sliding preset-list pane (sits to the LEFT of the control panel)
         const pane = document.createElement('div');
         pane.id = 'viz3d-listpane';
-        pane.style.cssText = 'position:fixed;top:8px;right:10px;z-index:99999;width:236px;max-height:74vh;display:flex;flex-direction:column;' +
+        pane.style.cssText = 'position:absolute;top:50%;right:10px;z-index:99999;pointer-events:auto;width:236px;max-height:74vh;display:flex;flex-direction:column;' +
             'background:rgba(8,10,20,0.93);border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,0.55);color:#cfe3ff;' +
-            'font:12px system-ui,sans-serif;overflow:hidden;transform:translateX(calc(100% + 16px));transition:transform 0.28s ease;';
+            'font:12px system-ui,sans-serif;overflow:hidden;transform:translateX(calc(100% + 16px)) translateY(-50%);transition:transform 0.28s ease;';
         pane.innerHTML =
             '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 9px 7px 10px;font-weight:600;border-bottom:1px solid rgba(255,255,255,.1)"><span>Presets</span><button id="vz-defaults" title="Restore the bundled default favorites + bans" style="' + BC_BTN + ';font-weight:400">↺ defaults</button></div>' +
             '<input id="vz-filter" placeholder="filter…" spellcheck="false" style="margin:8px 9px 6px;padding:4px 7px;background:#11141f;color:#cfe3ff;border:1px solid rgba(255,255,255,.15);border-radius:5px;outline:none">' +
             '<div id="vz-list" style="overflow-y:auto;padding:0 4px 8px"></div>';
-        document.body.appendChild(pane);
+        (host || document.body).appendChild(pane);
         _bcPane = pane;
         _bcListEl = pane.querySelector('#vz-list');
         _bcFilterEl = pane.querySelector('#vz-filter');
@@ -521,7 +531,7 @@
         _bcPrimary = ctrl;
 
         _bcControllers.add(ctrl);
-        _bcEnsurePanel();
+        _bcEnsurePanel(wrap);
         ctrl.applySettings();
 
         _bcLoadLib().then(() => {

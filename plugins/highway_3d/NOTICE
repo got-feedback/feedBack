@@ -1,0 +1,30 @@
+3D Highway plugin — third-party notices
+=======================================
+
+The "Butterchurn (visualizer)" background style (the 'butterchurn' option in
+the plugin's Background-style setting) bundles the third-party components below
+under plugins/highway_3d/assets/vendor/. They are lazy-loaded only when a user
+selects that background style.
+
+The 3D Highway plugin and the feedBack project are licensed under the GNU Affero
+General Public License v3.0 (AGPL-3.0-only). The components below are under their
+own permissive (MIT) licenses, which are compatible with AGPL-3.0.
+
+- Butterchurn — a WebGL implementation of the MilkDrop visualizer.
+  https://github.com/jberg/butterchurn
+  Copyright (c) Jordan Berg. MIT License.
+  Vendored at: plugins/highway_3d/assets/vendor/butterchurn.min.js
+
+- butterchurn-presets — MilkDrop preset pack.
+  https://github.com/jberg/butterchurn-presets
+  Presets authored by the MilkDrop community (Geiss, Flexi, Martin, Rovastar,
+  Zylot, Aderrasi, Cope, Eo.S., Unchained, and many others); refer to each
+  preset's embedded attribution.
+  Vendored at: plugins/highway_3d/assets/vendor/butterchurnPresets.min.js
+
+- Three.js (r170) — loaded at runtime from feedBack core's vendored copy
+  (/static/vendor/three/three.module.min.js). https://threejs.org  MIT License.
+
+Provenance: the Butterchurn background integration originated as the standalone
+"3D Highway + Butterchurn" plugin and was merged into the bundled 3D Highway
+renderer as the opt-in 'butterchurn' background style.

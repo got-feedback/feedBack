@@ -20,6 +20,585 @@
     const THREE_URL = '/static/vendor/three/three.module.min.js';
     const THREE_CDN = 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js';
 
+    /* ── Butterchurn audio-reactive background ──────────────────────────
+     * Mounts a Butterchurn (WebGL MilkDrop) canvas BEHIND the transparent
+     * 3D highway. On desktop it's driven by the guitar/mic input (the song
+     * audio lives in JUCE, not the webview <audio>); in a browser it taps
+     * the song <audio> directly.
+     * ──────────────────────────────────────────────────────────────────── */
+    const BC_VENDOR = '/api/plugins/highway_3d/assets/vendor/';
+    const BC_FRAME = 1024;
+    const BC_WORKLET = '/api/plugins/highway_3d/assets/viz-worklet.js';
+    const _bcMeters = { gtr: 0, song: 0 }; // live levels shown in the panel readout
+    const BC_BTN = 'background:rgba(255,255,255,.09);color:#cfe3ff;border:1px solid rgba(255,255,255,.16);border-radius:5px;padding:3px 8px;cursor:pointer;font:12px system-ui';
+    let _bcLoading = null;
+    function _bcLoadLib() {
+        if (_bcLoading) return _bcLoading;
+        _bcLoading = new Promise((resolve, reject) => {
+            const add = (url, next) => {
+                const s = document.createElement('script');
+                s.src = url; s.async = true;
+                s.onload = next; s.onerror = () => reject(new Error('load ' + url));
+                document.head.appendChild(s);
+            };
+            add(BC_VENDOR + 'butterchurn.min.js', () =>
+                add(BC_VENDOR + 'butterchurnPresets.min.js', resolve));
+        });
+        return _bcLoading;
+    }
+    function _bcResolve() { let b = window.butterchurn; if (b && b.default) b = b.default; return b; }
+    function _bcPresets() { let p = window.butterchurnPresets; if (p && p.default) p = p.default; return p; }
+    function _bcIsDesktop() {
+        const d = window.feedBackDesktop || window.slopsmithDesktop;
+        return !!(d && d.isDesktop && d.audio && typeof d.audio.getRawAudioFrame === 'function');
+    }
+    // Fast-forward an index to the first entry after time `ct` (used on seek/loop).
+    function _bcFfIdx(arr, ct, key) { if (!arr) return 0; let i = 0; while (i < arr.length && (arr[i][key] || 0) <= ct) i++; return i; }
+
+    // Desktop: bridge GUITAR input PCM + SONG output level into a Web Audio node
+    // Butterchurn can tap. Guitar gives spectral texture from your playing; the
+    // song's output meter (getLevels) injects an energy pulse so the visuals also
+    // react to the backing track (JUCE plays it — there's no song PCM to FFT).
+    function _bcGuitarFeed(actx, onReady) {
+        const latest = new Float32Array(BC_FRAME);
+        let polling = true, songLevel = 0, chartLevel = 0;
+        let node = null, sp = null, silent = null;
+        const api = (window.feedBackDesktop || window.slopsmithDesktop).audio;
+        const gainNow = () => (_bcSettings && _bcSettings.guitarGain) || 6;
+
+        // Keep the source node processing (silently — JUCE already monitors the
+        // guitar), and hand it to Butterchurn via the onReady callback.
+        function attach(srcNode) {
+            silent = actx.createGain(); silent.gain.value = 0;
+            srcNode.connect(silent); silent.connect(actx.destination);
+            try { if (onReady) onReady(srcNode); } catch (e) {}
+        }
+        // Fallback for contexts without AudioWorklet support.
+        function useScriptProcessor() {
+            let phase = 0, phase2 = 0;
+            const TWO_PI = Math.PI * 2;
+            const oscStep = TWO_PI * (90 / actx.sampleRate);
+            const oscStep2 = TWO_PI * (520 / actx.sampleRate);
+            sp = actx.createScriptProcessor(BC_FRAME, 1, 1);
+            sp.onaudioprocess = (e) => {
+                const out = e.outputBuffer.getChannelData(0);
+                const n = Math.min(out.length, latest.length);
+                const lvl = songLevel, clvl = chartLevel, gg = gainNow();
+                for (let i = 0; i < out.length; i++) {
+                    const g = (i < n ? latest[i] : 0) * gg;
+                    const song = lvl * (0.7 * Math.sin(phase) + 0.3 * (Math.random() * 2 - 1)) * 1.4;
+                    const chart = clvl * (0.5 * Math.sin(phase2) + 0.5 * (Math.random() * 2 - 1)) * 1.5;
+                    phase += oscStep; if (phase > TWO_PI) phase -= TWO_PI;
+                    phase2 += oscStep2; if (phase2 > TWO_PI) phase2 -= TWO_PI;
+                    const v = g + song + chart;
+                    out[i] = v > 1 ? 1 : (v < -1 ? -1 : v);
+                }
+            };
+            attach(sp);
+            console.log('[viz3d] audio feed: ScriptProcessor (fallback)');
+        }
+
+        // Preferred path: AudioWorklet (runs off the main thread).
+        if (actx.audioWorklet && typeof actx.audioWorklet.addModule === 'function' && typeof AudioWorkletNode === 'function') {
+            actx.audioWorklet.addModule(BC_WORKLET).then(() => {
+                if (!polling || sp) return;
+                node = new AudioWorkletNode(actx, 'viz-feed', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+                attach(node);
+                console.log('[viz3d] audio feed: AudioWorklet');
+            }).catch((e) => {
+                console.warn('[viz3d] AudioWorklet unavailable, using ScriptProcessor:', e && e.message);
+                if (polling && !sp && !node) useScriptProcessor();
+            });
+        } else {
+            useScriptProcessor();
+        }
+
+        // Guitar PCM poll → waveform + level meter (+ pushed to the worklet).
+        (function pcmLoop() {
+            if (!polling) return;
+            Promise.resolve(api.getRawAudioFrame(BC_FRAME)).then((f) => {
+                if (f && f.length) {
+                    if (f.length >= BC_FRAME) latest.set(f.subarray(0, BC_FRAME));
+                    else { latest.fill(0); latest.set(f); }
+                    let s = 0; for (let i = 0; i < BC_FRAME; i++) s += latest[i] * latest[i];
+                    _bcMeters.gtr = Math.sqrt(s / BC_FRAME) * gainNow();
+                    if (node) node.port.postMessage({ frame: latest.slice(0), song: songLevel, chart: chartLevel, gain: gainNow() });
+                }
+            }).catch(() => {}).then(() => { if (polling) setTimeout(pcmLoop, 16); });
+        })();
+        // Song output meter poll → music energy pulse.
+        (function levelLoop() {
+            if (!polling) return;
+            Promise.resolve(api.getLevels && api.getLevels()).then((L) => {
+                if (L && typeof L.outputLevel === 'number') {
+                    songLevel = Math.min(1, L.outputLevel * ((_bcSettings && _bcSettings.songGain) || 1.8));
+                    _bcMeters.song = songLevel;
+                    if (node) node.port.postMessage({ song: songLevel, chart: chartLevel, gain: gainNow() });
+                }
+            }).catch(() => {}).then(() => { if (polling) setTimeout(levelLoop, 40); });
+        })();
+
+        return {
+            setChart(v) { chartLevel = v; },
+            stop() {
+                polling = false;
+                try { if (sp) { sp.disconnect(); sp.onaudioprocess = null; } } catch (e) {}
+                try { if (node) node.disconnect(); } catch (e) {}
+                try { if (silent) silent.disconnect(); } catch (e) {}
+            }
+        };
+    }
+    // Browser: tap the song <audio> element (one-shot per element).
+    let _bcBrowserAudio = null;
+    function _bcBrowserSource() {
+        if (_bcBrowserAudio) return _bcBrowserAudio;
+        const el = document.getElementById('audio');
+        if (!el) return null;
+        const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return null;
+        const ctx = new Ctx(); let source;
+        try { source = ctx.createMediaElementSource(el); }
+        catch (e) { try { ctx.close(); } catch (_) {} return null; }
+        source.connect(ctx.destination);
+        const resume = () => { if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {}); };
+        resume(); el.addEventListener('play', resume);
+        _bcBrowserAudio = { ctx, source };
+        return _bcBrowserAudio;
+    }
+    /* ── Controls + readability (localStorage-backed, global config) ───── */
+    const BC_LS = 'viz3d_settings';
+    const BC_DEFAULTS = { enabled: true, opacity: 1.0, laneDim: true, laneDimStrength: 0.45, chartAccents: true, colorTint: true, chartStrength: 1.0, tintStrength: 0.65, guitarGain: 6, songGain: 1.8, cyclePool: 'all', hold: false };
+    let _bcSettings = null;
+    function _bcLoadSettings() {
+        if (_bcSettings) return _bcSettings;
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem(BC_LS) || '{}'); } catch (e) {}
+        _bcSettings = Object.assign({}, BC_DEFAULTS, saved);
+        return _bcSettings;
+    }
+    function _bcSaveSettings() { try { localStorage.setItem(BC_LS, JSON.stringify(_bcSettings)); } catch (e) {} }
+    const _bcControllers = new Set();
+    function _bcApplyAll() { _bcControllers.forEach((c) => { try { c.applySettings(); } catch (e) {} }); }
+
+    // Preset curation: favorites / bans (persisted globally) + the "primary"
+    // controller the panel's preset buttons drive.
+    // Seeded once on first run (reputation-based starter set; user can edit freely).
+    const BC_DEFAULT_FAVORITES = [
+        'Flexi, martin + geiss - dedicated to the sherwin maxawow',
+        'Geiss - Reaction Diffusion 2',
+        'Geiss - Spiral Artifact',
+        'Flexi + Martin - cascading decay swing',
+        'Flexi - mindblob [shiny mix]',
+        'Geiss - Cauldron - painterly 2 (saturation remix)',
+        'Zylot - Paint Spill (Music Reactive Paint Mix)',
+        'Flexi - predator-prey-spirals',
+        'Rovastar + Loadus + Geiss - FractalDrop (Triple Mix)',
+        'Flexi, fishbrain, Geiss + Martin - tokamak witchery',
+    ];
+    const BC_DEFAULT_BANS = [
+        'martin - mucus cervix',
+        'Goody - The Wild Vort',
+        'martin - extreme heat',
+        'Unchained - Rewop',
+        'high-altitude basket unraveling - singh grooves nitrogen argon nz+',
+        '$$$ Royal - Mashup (197)',
+        '$$$ Royal - Mashup (431)',
+        'suksma - uninitialized variabowl (hydroponic chronic)',
+        'shifter - dark tides bdrv mix 2',
+        '_Mig_049',
+    ];
+    const _bcFavorites = new Set();
+    const _bcBanned = new Set();
+    let _bcListsLoaded = false;
+    function _bcLoadLists() {
+        if (_bcListsLoaded) return; _bcListsLoaded = true;
+        try { (JSON.parse(localStorage.getItem('viz3d_favorites') || '[]') || []).forEach((n) => _bcFavorites.add(n)); } catch (e) {}
+        try { (JSON.parse(localStorage.getItem('viz3d_banned') || '[]') || []).forEach((n) => _bcBanned.add(n)); } catch (e) {}
+        let seeded = false;
+        try { seeded = !!localStorage.getItem('viz3d_seeded'); } catch (e) {}
+        if (!seeded) {
+            BC_DEFAULT_FAVORITES.forEach((n) => _bcFavorites.add(n));
+            BC_DEFAULT_BANS.forEach((n) => _bcBanned.add(n));
+            try { localStorage.setItem('viz3d_seeded', '1'); } catch (e) {}
+            _bcSaveLists();
+        }
+    }
+    function _bcSaveLists() {
+        try { localStorage.setItem('viz3d_favorites', JSON.stringify([..._bcFavorites])); } catch (e) {}
+        try { localStorage.setItem('viz3d_banned', JSON.stringify([..._bcBanned])); } catch (e) {}
+    }
+    // Re-add the bundled defaults anytime (merges; a default-fav un-bans, a default-ban un-favs).
+    function _bcRestoreDefaults() {
+        BC_DEFAULT_FAVORITES.forEach((n) => { _bcBanned.delete(n); _bcFavorites.add(n); });
+        BC_DEFAULT_BANS.forEach((n) => { _bcFavorites.delete(n); _bcBanned.add(n); });
+        try { localStorage.setItem('viz3d_seeded', '1'); } catch (e) {}
+        _bcSaveLists(); _bcUpdatePanelPreset(); _bcRenderList();
+    }
+    let _bcPrimary = null;
+    let _bcPane = null, _bcListEl = null, _bcFilterEl = null, _bcPaneOpen = false, _bcCollapsed = false;
+
+    function _bcStatusMark(name) {
+        return _bcFavorites.has(name) ? '★ ' : (_bcBanned.has(name) ? '🚫 ' : '');
+    }
+    function _bcSetHold(v) {
+        const s = _bcLoadSettings();
+        s.hold = !!v; _bcSaveSettings();
+        const b = _bcPanel && _bcPanel.querySelector('#vz-hold');
+        if (b) b.textContent = s.hold ? '▶ Resume' : '⏸ Hold';
+    }
+    // Drives both panels off the right edge. Order when both open (L→R):
+    //   visualizer panel → preset pane → window edge. Pane lives off-screen by
+    //   default; opening it shoves the panel LEFT to make room.
+    function _bcLayout() {
+        if (_bcPanel) {
+            let tx = 0;
+            if (_bcCollapsed) tx = 210;        // tuck the whole panel off the right edge
+            else if (_bcPaneOpen) tx = -248;   // slide panel LEFT to make room for the pane
+            _bcPanel.style.transform = 'translateX(' + tx + 'px)';
+        }
+        if (_bcPane) {
+            _bcPane.style.transform = (_bcPaneOpen && !_bcCollapsed) ? 'translateX(0)' : 'translateX(calc(100% + 16px))';
+        }
+    }
+    function _bcSetPane(open) {
+        _bcPaneOpen = !!open && !_bcCollapsed;
+        const b = _bcPanel && _bcPanel.querySelector('#vz-listbtn');
+        if (b) b.textContent = _bcPaneOpen ? '>>' : '<<';
+        if (_bcPaneOpen) _bcRenderList();
+        _bcLayout();
+    }
+    function _bcRenderList() {
+        if (!_bcListEl) return;
+        const ctrl = _bcPrimary;
+        const keys = (ctrl && ctrl.keys) ? ctrl.keys : [];
+        const filt = ((_bcFilterEl && _bcFilterEl.value) || '').toLowerCase();
+        const cur = ctrl && ctrl.curName;
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < keys.length; i++) {
+            const name = keys[i];
+            if (filt && name.toLowerCase().indexOf(filt) === -1) continue;
+            const row = document.createElement('div');
+            row.textContent = _bcStatusMark(name) + name;
+            row.title = name;
+            row.style.cssText = 'padding:3px 7px;border-radius:4px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;' +
+                (name === cur ? 'background:rgba(110,160,255,.28);' : '') + (_bcBanned.has(name) ? 'opacity:.55;' : '');
+            row.addEventListener('click', () => {
+                if (!_bcPrimary) return;
+                _bcPrimary.loadByName(name, 1.0);
+                _bcSetHold(true); // picked from the list → sit on it
+            });
+            frag.appendChild(row);
+        }
+        _bcListEl.innerHTML = '';
+        _bcListEl.appendChild(frag);
+    }
+    function _bcUpdatePanelPreset() {
+        if (!_bcPanel) return;
+        const name = _bcPrimary ? (_bcPrimary.curName || null) : null;
+        const nameEl = _bcPanel.querySelector('#vz-pname');
+        const favBtn = _bcPanel.querySelector('#vz-fav');
+        const banBtn = _bcPanel.querySelector('#vz-ban');
+        const cntEl = _bcPanel.querySelector('#vz-pcount');
+        if (nameEl) { nameEl.textContent = (name ? _bcStatusMark(name) : '') + (name || '—'); nameEl.title = name ? (name + ' — click for full list') : ''; }
+        if (favBtn) favBtn.textContent = (name && _bcFavorites.has(name)) ? '★ Favorited' : '☆ Favorite';
+        if (banBtn) banBtn.textContent = (name && _bcBanned.has(name)) ? '🚫 Banned' : '🚫 Ban';
+        if (cntEl) cntEl.textContent = '★ ' + _bcFavorites.size + '   🚫 ' + _bcBanned.size;
+        if (_bcPaneOpen) _bcRenderList();
+    }
+
+    let _bcPanel = null, _bcPanelKeyBound = false;
+    function _bcEnsurePanel() {
+        if (_bcPanel) return _bcPanel;
+        const s = _bcLoadSettings();
+        const p = document.createElement('div');
+        p.id = 'viz3d-panel';
+        p.style.cssText = 'position:fixed;top:8px;right:10px;z-index:100000;font:12px/1.45 system-ui,sans-serif;' +
+            'color:#cfe3ff;background:rgba(8,10,20,0.82);padding:9px 11px;border-radius:8px;width:186px;' +
+            'box-shadow:0 2px 12px rgba(0,0,0,0.5);user-select:none;transition:transform 0.28s ease;';
+        p.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px"><span style="font-weight:600">🌀 Visualizer</span><button id="vz-listbtn" title="Show / hide full preset list" style="' + BC_BTN + ';padding:1px 7px">&lt;&lt;</button></div>' +
+            '<label style="display:flex;align-items:center;gap:7px;margin:6px 0"><input type="checkbox" id="vz-on"> Background on</label>' +
+            '<label style="display:block;margin:6px 0">Opacity <span id="vz-opv" style="opacity:.6"></span><input type="range" id="vz-op" min="0" max="100" style="width:100%"></label>' +
+            '<label style="display:flex;align-items:center;gap:7px;margin:6px 0"><input type="checkbox" id="vz-ld"> Dim behind lane</label>' +
+            '<label style="display:block;margin:6px 0">Dim strength <input type="range" id="vz-lds" min="0" max="100" style="width:100%"></label>' +
+            '<label style="display:flex;align-items:center;gap:7px;margin:6px 0"><input type="checkbox" id="vz-ca"> Chart accents</label>' +
+            '<label style="display:block;margin:6px 0">Chart strength <input type="range" id="vz-cs" min="0" max="200" style="width:100%"></label>' +
+            '<label style="display:flex;align-items:center;gap:7px;margin:6px 0"><input type="checkbox" id="vz-ct"> Color tint</label>' +
+            '<label style="display:block;margin:6px 0">Tint strength <input type="range" id="vz-ts" min="0" max="100" style="width:100%"></label>' +
+            '<label style="display:block;margin:6px 0">Guitar gain <span id="vz-ggv" style="opacity:.6"></span><input type="range" id="vz-gg" min="1" max="12" step="0.5" style="width:100%"></label>' +
+            '<label style="display:block;margin:6px 0">Song gain <span id="vz-sgv" style="opacity:.6"></span><input type="range" id="vz-sg" min="0" max="5" step="0.1" style="width:100%"></label>' +
+            '<div style="border-top:1px solid rgba(255,255,255,.12);margin:8px 0 5px"></div>' +
+            '<div style="display:flex;align-items:center;gap:6px;margin:4px 0">' +
+              '<button id="vz-prev" style="' + BC_BTN + '">◀</button>' +
+              '<div id="vz-pname" style="flex:1;text-align:center;font-size:11px;opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" title="">—</div>' +
+              '<button id="vz-next" style="' + BC_BTN + '">▶</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;margin:4px 0">' +
+              '<button id="vz-fav" style="' + BC_BTN + ';flex:1">♡ Favorite</button>' +
+              '<button id="vz-ban" style="' + BC_BTN + ';flex:1">🚫 Ban</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;align-items:flex-end;margin:6px 0">' +
+              '<label style="flex:1">Cycle <select id="vz-cyc" style="width:100%;background:#11141f;color:#cfe3ff;border:1px solid rgba(255,255,255,.15);border-radius:5px;padding:3px"><option value="all">All</option><option value="favorites">Favorites</option><option value="bans">Bans</option></select></label>' +
+              '<button id="vz-hold" style="' + BC_BTN + '">⏸ Hold</button>' +
+            '</div>' +
+            '<div style="margin:5px 0 4px;font-size:11px;opacity:.75"><span id="vz-pcount">★ 0   🚫 0</span></div>' +
+            '<div id="vz-meter" style="opacity:.65;margin-top:6px;font:11px/1.3 monospace">gtr —  ·  song —</div>' +
+            '<div style="opacity:.45;margin-top:4px;font-size:11px">` or ‹‹ to hide</div>';
+        document.body.appendChild(p);
+
+        // Slide handle (<< / >>) so the panel can tuck off the right edge and stop
+        // covering the Now / Up-Next labels.
+        const tab = document.createElement('button');
+        tab.textContent = '>>';
+        tab.title = 'Hide / show controls';
+        tab.style.cssText = 'position:absolute;top:6px;left:-23px;width:23px;height:28px;border:none;cursor:pointer;' +
+            'background:rgba(8,10,20,0.82);color:#cfe3ff;border-radius:7px 0 0 7px;font:12px/1 monospace;padding:0;';
+        p.appendChild(tab);
+        tab.addEventListener('click', () => {
+            _bcCollapsed = !_bcCollapsed;
+            if (_bcCollapsed) _bcPaneOpen = false; // collapsing the panel hides the pane too
+            tab.textContent = _bcCollapsed ? '<<' : '>>';
+            const lb = p.querySelector('#vz-listbtn'); if (lb) lb.textContent = _bcPaneOpen ? '>>' : '<<';
+            _bcLayout();
+        });
+
+        // Sliding preset-list pane (sits to the LEFT of the control panel)
+        const pane = document.createElement('div');
+        pane.id = 'viz3d-listpane';
+        pane.style.cssText = 'position:fixed;top:8px;right:10px;z-index:99999;width:236px;max-height:74vh;display:flex;flex-direction:column;' +
+            'background:rgba(8,10,20,0.93);border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,0.55);color:#cfe3ff;' +
+            'font:12px system-ui,sans-serif;overflow:hidden;transform:translateX(calc(100% + 16px));transition:transform 0.28s ease;';
+        pane.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 9px 7px 10px;font-weight:600;border-bottom:1px solid rgba(255,255,255,.1)"><span>Presets</span><button id="vz-defaults" title="Restore the bundled default favorites + bans" style="' + BC_BTN + ';font-weight:400">↺ defaults</button></div>' +
+            '<input id="vz-filter" placeholder="filter…" spellcheck="false" style="margin:8px 9px 6px;padding:4px 7px;background:#11141f;color:#cfe3ff;border:1px solid rgba(255,255,255,.15);border-radius:5px;outline:none">' +
+            '<div id="vz-list" style="overflow-y:auto;padding:0 4px 8px"></div>';
+        document.body.appendChild(pane);
+        _bcPane = pane;
+        _bcListEl = pane.querySelector('#vz-list');
+        _bcFilterEl = pane.querySelector('#vz-filter');
+        _bcFilterEl.addEventListener('input', _bcRenderList);
+        pane.querySelector('#vz-defaults').addEventListener('click', _bcRestoreDefaults);
+
+        const q = (id) => p.querySelector(id);
+        const on = q('#vz-on'), op = q('#vz-op'), opv = q('#vz-opv'), ld = q('#vz-ld'), lds = q('#vz-lds');
+        const ca = q('#vz-ca'), tn = q('#vz-ct'), cs = q('#vz-cs'), ts = q('#vz-ts'), gg = q('#vz-gg'), ggv = q('#vz-ggv'), sg = q('#vz-sg'), sgv = q('#vz-sgv');
+        on.checked = s.enabled; op.value = Math.round(s.opacity * 100); opv.textContent = op.value + '%';
+        ld.checked = s.laneDim; lds.value = Math.round(s.laneDimStrength * 100);
+        ca.checked = s.chartAccents; tn.checked = s.colorTint;
+        cs.value = Math.round((s.chartStrength != null ? s.chartStrength : 1) * 100);
+        ts.value = Math.round((s.tintStrength != null ? s.tintStrength : 0.65) * 100);
+        gg.value = s.guitarGain != null ? s.guitarGain : 6; ggv.textContent = '×' + gg.value;
+        sg.value = s.songGain != null ? s.songGain : 1.8; sgv.textContent = '×' + sg.value;
+        const commit = () => {
+            s.enabled = on.checked; s.opacity = op.value / 100;
+            s.laneDim = ld.checked; s.laneDimStrength = lds.value / 100;
+            s.chartAccents = ca.checked; s.colorTint = tn.checked;
+            s.chartStrength = cs.value / 100; s.tintStrength = ts.value / 100; s.guitarGain = parseFloat(gg.value); s.songGain = parseFloat(sg.value);
+            opv.textContent = op.value + '%'; ggv.textContent = '×' + gg.value; sgv.textContent = '×' + sg.value;
+            _bcSaveSettings(); _bcApplyAll();
+        };
+        [on, op, ld, lds, ca, tn, cs, ts, gg, sg].forEach((el) => el.addEventListener('input', commit));
+        _bcPanel = p;
+
+        // Preset curation wiring (favorites / bans / cycle / reset)
+        _bcLoadLists();
+        const cyc = q('#vz-cyc');
+        cyc.value = s.cyclePool || 'all';
+        cyc.addEventListener('change', () => { s.cyclePool = cyc.value; _bcSaveSettings(); });
+        _bcSetHold(!!s.hold); // sync the Hold button label to the saved state
+        q('#vz-hold').addEventListener('click', () => _bcSetHold(!_bcLoadSettings().hold));
+        q('#vz-listbtn').addEventListener('click', () => _bcSetPane(!_bcPaneOpen));
+        q('#vz-pname').addEventListener('click', () => _bcSetPane(!_bcPaneOpen));
+        q('#vz-prev').addEventListener('click', () => { if (_bcPrimary) _bcPrimary.step(-1); });
+        q('#vz-next').addEventListener('click', () => { if (_bcPrimary) _bcPrimary.step(1); });
+        q('#vz-fav').addEventListener('click', () => { if (_bcPrimary) _bcPrimary.toggleFav(); });
+        q('#vz-ban').addEventListener('click', () => { if (_bcPrimary) _bcPrimary.banCur(); });
+        _bcSetPane(false); // start collapsed; sets the list-button label
+        _bcUpdatePanelPreset();
+
+        // Live level readout — proves the song (not just guitar) is driving things.
+        // Self-stops when the panel is removed (_bcPanel !== p).
+        (function meterLoop() {
+            if (_bcPanel !== p) return;
+            const m = p.querySelector('#vz-meter');
+            if (m) m.textContent = 'gtr ' + _bcMeters.gtr.toFixed(2) + '  ·  song ' + _bcMeters.song.toFixed(2);
+            setTimeout(meterLoop, 150);
+        })();
+
+        if (!_bcPanelKeyBound) {
+            _bcPanelKeyBound = true;
+            window.addEventListener('keydown', (e) => {
+                if (e.key !== '`' || e.metaKey || e.ctrlKey || !_bcPanel) return;
+                const tag = (e.target && e.target.tagName) || '';
+                if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+                const reveal = _bcPanel.style.display === 'none';
+                _bcPanel.style.display = reveal ? '' : 'none';
+                if (_bcPane) _bcPane.style.display = reveal ? '' : 'none';
+            });
+        }
+        return _bcPanel;
+    }
+
+    // Create a Butterchurn background controller bound to a wrap element.
+    function _bcCreateController(wrap, sizeProvider) {
+        const ctrl = { viz: null, actx: null, guitar: null, map: null, keys: [], cycle: 0, dead: false, lastW: -1, lastH: -1, canvas: null, backdrop: null, scrim: null, tint: null };
+        // Layered DOM in the wrap, all BEHIND the transparent 3D highway:
+        //   backdrop(z-4 dark) → bc canvas(z-3) → tint(z-2 instrument color) → scrim(z-1 lane dim)
+        const mkLayer = (cls, css) => { const d = document.createElement('div'); d.className = cls; d.style.cssText = css; wrap.appendChild(d); return d; };
+        const backdrop = mkLayer('viz3d-backdrop', 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:-4;background:#070710;pointer-events:none;');
+        const canvas = document.createElement('canvas');
+        canvas.className = 'viz3d-bc';
+        canvas.style.cssText = 'position:absolute;top:0;left:0;z-index:-3;pointer-events:none;';
+        wrap.appendChild(canvas);
+        const tint = mkLayer('viz3d-tint', 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:-2;pointer-events:none;mix-blend-mode:overlay;background:transparent;');
+        const scrim = mkLayer('viz3d-scrim', 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:-1;pointer-events:none;');
+        ctrl.canvas = canvas; ctrl.backdrop = backdrop; ctrl.scrim = scrim; ctrl.tint = tint;
+
+        ctrl.applySettings = function () {
+            const s = _bcLoadSettings();
+            canvas.style.display = s.enabled ? '' : 'none';
+            canvas.style.opacity = String(s.enabled ? s.opacity : 0);
+            if (s.laneDim) {
+                const a = Math.max(0, Math.min(1, s.laneDimStrength)).toFixed(3);
+                scrim.style.display = '';
+                scrim.style.background = 'linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,' + a +
+                    ') 30%, rgba(0,0,0,' + a + ') 70%, rgba(0,0,0,0) 100%)';
+            } else {
+                scrim.style.display = 'none';
+            }
+        };
+
+        // ── Preset curation (favorites / bans / cycle mode) ──
+        ctrl.curName = null; ctrl.lastManual = 0;
+        ctrl.allList = () => (ctrl.keys || []).filter((k) => !_bcBanned.has(k));
+        ctrl.pool = () => {
+            const mode = _bcLoadSettings().cyclePool || 'all';
+            if (mode === 'bans') return (ctrl.keys || []).filter((k) => _bcBanned.has(k));
+            if (mode === 'favorites') {
+                const f = (ctrl.keys || []).filter((k) => _bcFavorites.has(k) && !_bcBanned.has(k));
+                if (f.length) return f;
+            }
+            return ctrl.allList();
+        };
+        ctrl.browseArr = () => ctrl.keys || []; // ◀▶ and the list pane walk the full preset list
+        ctrl.loadByName = (name, blend) => {
+            if (!ctrl.viz || !name || !ctrl.map || !ctrl.map[name]) return;
+            try { ctrl.viz.loadPreset(ctrl.map[name], blend || 0); ctrl.curName = name; } catch (e) {}
+            _bcUpdatePanelPreset();
+        };
+        ctrl.autoTick = () => {
+            if (ctrl.dead || _bcLoadSettings().hold) return;
+            if (performance.now() - ctrl.lastManual < 8000) return;
+            const pool = ctrl.pool();
+            if (!pool.length) return;
+            let name = pool[(Math.random() * pool.length) | 0];
+            if (pool.length > 1 && name === ctrl.curName) name = pool[(pool.indexOf(name) + 1) % pool.length];
+            ctrl.loadByName(name, 2.7);
+        };
+        ctrl.step = (dir) => {
+            const list = ctrl.browseArr();
+            if (!list.length) return;
+            let i = list.indexOf(ctrl.curName); if (i < 0) i = (dir > 0 ? -1 : 0);
+            i = (i + dir + list.length) % list.length;
+            ctrl.lastManual = performance.now();
+            ctrl.loadByName(list[i], 1.5);
+        };
+        ctrl.toggleFav = () => {
+            if (!ctrl.curName) return;
+            if (_bcFavorites.has(ctrl.curName)) _bcFavorites.delete(ctrl.curName);
+            else { _bcFavorites.add(ctrl.curName); _bcBanned.delete(ctrl.curName); }
+            _bcSaveLists(); _bcUpdatePanelPreset();
+        };
+        ctrl.banCur = () => {
+            if (!ctrl.curName) return;
+            if (_bcBanned.has(ctrl.curName)) {           // un-ban (two-way) — stay on it
+                _bcBanned.delete(ctrl.curName);
+                _bcSaveLists(); _bcUpdatePanelPreset();
+            } else {                                     // ban + advance off it
+                _bcBanned.add(ctrl.curName); _bcFavorites.delete(ctrl.curName);
+                _bcSaveLists(); ctrl.step(1);
+            }
+        };
+        _bcPrimary = ctrl;
+
+        _bcControllers.add(ctrl);
+        _bcEnsurePanel();
+        ctrl.applySettings();
+
+        _bcLoadLib().then(() => {
+            if (ctrl.dead) return;
+            const bc = _bcResolve();
+            if (!bc || typeof bc.createVisualizer !== 'function') { console.warn('[viz3d] Butterchurn global missing'); return; }
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            const sz = (sizeProvider && sizeProvider()) || { w: 1280, h: 720 };
+            // Browser (Docker/web app): build Butterchurn on the SAME context as the
+            // <audio> tap, or connectAudio() fails cross-context. Desktop uses its own.
+            const browserAudio = _bcIsDesktop() ? null : _bcBrowserSource();
+            ctrl.actx = (browserAudio && browserAudio.ctx) || new Ctx();
+            if (ctrl.actx.state === 'suspended' && ctrl.actx.resume) ctrl.actx.resume().catch(() => {});
+            ctrl.viz = bc.createVisualizer(ctrl.actx, canvas, {
+                width: sz.w || 1280, height: sz.h || 720,
+                pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5), textureRatio: 1,
+            });
+            if (_bcIsDesktop()) {
+                try {
+                    ctrl.guitar = _bcGuitarFeed(ctrl.actx, (srcNode) => { try { if (ctrl.viz) ctrl.viz.connectAudio(srcNode); } catch (e) {} });
+                    console.log('[viz3d] bg: feeding GUITAR input into Butterchurn');
+                } catch (e) { console.warn('[viz3d] guitar feed failed', e); }
+            } else if (browserAudio && browserAudio.source) {
+                try { ctrl.viz.connectAudio(browserAudio.source); console.log('[viz3d] browser: Butterchurn tapping <audio> (real song spectrum)'); }
+                catch (e) { console.warn('[viz3d] <audio> connect failed', e); }
+            }
+            _bcLoadLists();
+            const presets = _bcPresets();
+            if (presets && typeof presets.getPresets === 'function') { ctrl.map = presets.getPresets(); ctrl.keys = Object.keys(ctrl.map); }
+            const pool0 = ctrl.pool();
+            ctrl.loadByName(pool0.length ? pool0[(Math.random() * pool0.length) | 0] : (ctrl.keys[0] || null), 0.0);
+            ctrl.cycle = setInterval(() => ctrl.autoTick(), 30000);
+            console.log('[viz3d] Butterchurn ready, presets:', ctrl.keys.length);
+        }).catch((e) => console.error('[viz3d] Butterchurn load failed', e));
+        return {
+            applySettings() { ctrl.applySettings(); },
+            chart(v) { if (ctrl.guitar && ctrl.guitar.setChart) ctrl.guitar.setChart(v); },
+            tint(hex, alpha) {
+                if (!ctrl.tint) return;
+                if (hex == null) { ctrl.tint.style.background = 'transparent'; return; }
+                const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
+                ctrl.tint.style.background = 'rgba(' + r + ',' + g + ',' + b + ',' + (alpha || 0).toFixed(3) + ')';
+            },
+            render() {
+                const s = _bcLoadSettings();
+                if (!ctrl.viz || !s.enabled) return; // skip GPU work when the bg is off
+                const sz = sizeProvider && sizeProvider();
+                if (sz && sz.w > 0 && sz.h > 0 && (sz.w !== ctrl.lastW || sz.h !== ctrl.lastH)) {
+                    ctrl.lastW = sz.w; ctrl.lastH = sz.h;
+                    const wpx = sz.w + 'px', hpx = sz.h + 'px';
+                    // Confine ALL layers to exactly the highway-canvas rect so the opaque
+                    // backdrop can't bleed over the transport bar above the highway.
+                    [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => {
+                        if (el) { el.style.width = wpx; el.style.height = hpx; el.style.right = 'auto'; el.style.bottom = 'auto'; }
+                    });
+                    try { ctrl.viz.setRendererSize(sz.w, sz.h); } catch (e) {}
+                }
+                try { ctrl.viz.render(); } catch (e) {}
+            },
+            resize(w, h) { if (ctrl.viz && ctrl.viz.setRendererSize) { try { ctrl.viz.setRendererSize(w, h); } catch (e) {} ctrl.lastW = w; ctrl.lastH = h; } },
+            destroy() {
+                ctrl.dead = true;
+                _bcControllers.delete(ctrl);
+                if (_bcPrimary === ctrl) { _bcPrimary = _bcControllers.values().next().value || null; _bcUpdatePanelPreset(); }
+                if (ctrl.cycle) { clearInterval(ctrl.cycle); ctrl.cycle = 0; }
+                if (ctrl.guitar) { ctrl.guitar.stop(); ctrl.guitar = null; }
+                [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => { if (el && el.parentNode) el.parentNode.removeChild(el); });
+                ctrl.viz = null;
+                if (_bcControllers.size === 0) {
+                    if (_bcPanel && _bcPanel.parentNode) _bcPanel.parentNode.removeChild(_bcPanel);
+                    if (_bcPane && _bcPane.parentNode) _bcPane.parentNode.removeChild(_bcPane);
+                    _bcPanel = null; _bcPane = null; _bcListEl = null; _bcFilterEl = null; _bcPaneOpen = false;
+                }
+            },
+        };
+    }
+
     // Selectable per-string color palettes (issue #10). Each palette has
     // 8 entries to match MAX_RENDER_STRINGS so 6/7/8-string arrangements
     // all index safely. Default is the canonical chart-format classic
@@ -1130,7 +1709,7 @@
     // _bgCoerce must reject a stored h3d_bg_style='venue' — otherwise venue could
     // mount outside that flow and settings.html (which can't represent 'venue')
     // would be unable to switch back. BG_STYLES still has a 'venue' renderer entry.
-    const BG_STYLE_IDS = ['off', 'particles', 'silhouettes', 'lights', 'geometric', 'image', 'video'];
+    const BG_STYLE_IDS = ['off', 'particles', 'silhouettes', 'lights', 'geometric', 'butterchurn', 'image', 'video'];
     // Scene color themes — TWO INDEPENDENT AXES sharing one palette family.
     // The combined `BG_THEMES` table below is the single source of truth; each
     // entry carries the colors for BOTH axes, but the two axes are selected and
@@ -2573,6 +3152,9 @@
         // ── Per-instance Three.js state ───────────────────────────────────
         let scene = null, cam = null, ren = null;
         let wrap = null;
+        let bcCtrl = null; // Butterchurn audio-reactive background (the 'butterchurn' bg-style)
+        let _chartEnv = 0, _chartPrevT = -1, _bcBeatIdx = 0, _bcNoteIdx = 0, _bcChordIdx = 0, _bcTintTarget = null;
+        let _tintR = 20, _tintG = 24, _tintB = 40; // smoothed instrument-color tint for the bg
         // highway:visibility listener (feedBack#246). Hides the .h3d-wrap
         // overlay when feedBack's canvas is display:none'd (splitscreen
         // case). Without this, the wrap is a *sibling* of #highway so
@@ -5244,9 +5826,9 @@
             // steers GPU selection to the dGPU; on single-dGPU desktops it
             // requests the high-performance power profile. (It does not by
             // itself force NVIDIA's utilisation-driven clock ramp on Linux.)
-            ren = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            ren = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', alpha: true });
             _probe = new T.Vector3();
-            ren.setClearColor(0x101820);
+            ren.setClearColor(0x101820, _bcActive() ? 0 : 1);
             wrap.appendChild(ren.domElement);
 
             lyricsCanvas = document.createElement('canvas');
@@ -6635,6 +7217,7 @@
             // setting without writing it back. Re-applied here so it sticks across
             // setting reloads.
             if (_bgReactiveOptOut) bgReactive = false;
+            if (bgStyleId === 'butterchurn') bgReactive = false; // Butterchurn owns the <audio> tap
             const newPaletteId = _bgReadSetting(panelKey, 'palette');
             let newPalette;
             if (newPaletteId === 'custom') {
@@ -6945,6 +7528,24 @@
         function _bgEffectiveStyleId() {
             return _venueSceneOverride ? 'venue' : bgStyleId;
         }
+        // The 'butterchurn' bg-style renders a WebGL MilkDrop canvas BEHIND a
+        // transparent highway via the self-contained _bc* controller (top of file),
+        // NOT a Three.js fog-scenery style (its scenery falls back to 'off'). Mount
+        // is idempotent and driven by the bg-style dropdown through _bgMountStyle.
+        function _bcActive() { return bgStyleId === 'butterchurn'; }
+        function _bcSyncMode() {
+            if (_bcActive()) {
+                if (!bcCtrl && wrap) {
+                    try { bcCtrl = _bcCreateController(wrap, () => canvasSize(highwayCanvas)); }
+                    catch (e) { console.warn('[3D-Hwy] Butterchurn init failed', e); }
+                }
+                if (ren) ren.setClearColor(0x101820, 0); // transparent so the visualizer shows through
+            } else if (bcCtrl) {
+                try { bcCtrl.destroy(); } catch (e) {}
+                bcCtrl = null;
+                _applyBgTheme(); // restore the opaque themed clear
+            }
+        }
         function _bgMountStyle() {
             const effectiveId = _bgEffectiveStyleId();
             const style = BG_STYLES[effectiveId] || BG_STYLES.off;
@@ -6980,6 +7581,7 @@
             bgStage = stage;
             bgState = result;
             bgMountedStyleId = effectiveId;
+            _bcSyncMode();
         }
         function _bgUnmountStyle() {
             const mountedId = bgMountedStyleId || _bgEffectiveStyleId();
@@ -7076,7 +7678,7 @@
             const bg = _bgBackgroundColors(bgThemeId);
             if (!_venueSceneOverride) {
                 if (scene && scene.fog) scene.fog.color.setHex(bg.fog);
-                if (ren) ren.setClearColor(bg.clear);
+                if (ren) ren.setClearColor(bg.clear, _bcActive() ? 0 : 1);
             }
             // --- Highway axis: board plane + lane ---
             const hw = _bgHighwayColors(hwThemeId);
@@ -13218,6 +13820,7 @@
             _fxElemSeen = new WeakSet();
             _fxRingMs = _fxBreakMs = -1e9;
             _chordVerdicts = new Map();
+            if (bcCtrl) { try { bcCtrl.destroy(); } catch (e) {} bcCtrl = null; }
             _bgUnmountStyle();
             bgGroup = null; _bgLastT = 0;
             _diagChord = null; _diagPrev = null; _diagPrevOpacity = 0; _diagPrevStartOpacity = 0; _diagPrevStartT = null;
@@ -13581,6 +14184,51 @@
                     }
                 }
 
+                if (bcCtrl) {
+                    const cfg = _bcLoadSettings();
+                    const _ct = bundle.currentTime || 0;
+                    if (cfg.chartAccents) {
+                        if (_ct < _chartPrevT - 0.08 || _ct - _chartPrevT > 1.0) {
+                            _bcBeatIdx = _bcFfIdx(bundle.beats, _ct, 'time');
+                            _bcNoteIdx = _bcFfIdx(bundle.notes, _ct, 't');
+                            _bcChordIdx = _bcFfIdx(bundle.chords, _ct, 't');
+                        }
+                        const _beats = bundle.beats || [];
+                        while (_bcBeatIdx < _beats.length && _beats[_bcBeatIdx].time <= _ct) {
+                            const strong = _beats[_bcBeatIdx].measure !== undefined && _beats[_bcBeatIdx].measure !== -1;
+                            _chartEnv = Math.max(_chartEnv, strong ? 1.0 : 0.6);
+                            _bcBeatIdx++;
+                        }
+                        const _notes = bundle.notes || [];
+                        let _tintS = -1;
+                        while (_bcNoteIdx < _notes.length && _notes[_bcNoteIdx].t <= _ct) {
+                            _chartEnv = Math.max(_chartEnv, 0.6);
+                            _tintS = _notes[_bcNoteIdx].s;
+                            _bcNoteIdx++;
+                        }
+                        const _chords = bundle.chords || [];
+                        while (_bcChordIdx < _chords.length && _chords[_bcChordIdx].t <= _ct) {
+                            _chartEnv = Math.max(_chartEnv, 0.95);
+                            _bcChordIdx++;
+                        }
+                        if (_tintS >= 0 && activePalette && activePalette.length) {
+                            _bcTintTarget = activePalette[((_tintS % activePalette.length) + activePalette.length) % activePalette.length];
+                        }
+                        _chartPrevT = _ct;
+                        _chartEnv *= 0.86;
+                        bcCtrl.chart(_chartEnv * (cfg.chartStrength != null ? cfg.chartStrength : 1));
+                    } else {
+                        bcCtrl.chart(0);
+                    }
+                    if (cfg.colorTint && _bcTintTarget != null) {
+                        const tr = (_bcTintTarget >> 16) & 255, tg = (_bcTintTarget >> 8) & 255, tb = _bcTintTarget & 255;
+                        _tintR += (tr - _tintR) * 0.06; _tintG += (tg - _tintG) * 0.06; _tintB += (tb - _tintB) * 0.06;
+                        bcCtrl.tint((Math.round(_tintR) << 16) | (Math.round(_tintG) << 8) | Math.round(_tintB), cfg.tintStrength != null ? cfg.tintStrength : 0.65);
+                    } else {
+                        bcCtrl.tint(null, 0);
+                    }
+                    bcCtrl.render();
+                }
                 pbBeg(6); ren.render(scene, cam); pbEnd(6);
                 if (lyricsCtx && lyricsCanvas) {
                     lyricsCtx.clearRect(0, 0, lyricsCanvas.width, lyricsCanvas.height);

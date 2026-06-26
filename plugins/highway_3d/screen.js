@@ -44,6 +44,10 @@
             add(BC_VENDOR + 'butterchurn.min.js', () =>
                 add(BC_VENDOR + 'butterchurnPresets.min.js', resolve));
         });
+        // Don't cache a rejected promise: a transient load failure (network
+        // hiccup, blocked request) must not permanently disable the feature for
+        // the session. Clearing _bcLoading lets the next mount retry the load.
+        _bcLoading.catch(() => { _bcLoading = null; });
         return _bcLoading;
     }
     function _bcResolve() { let b = window.butterchurn; if (b && b.default) b = b.default; return b; }
@@ -148,22 +152,14 @@
             }
         };
     }
-    // Browser: tap the song <audio> element (one-shot per element).
-    let _bcBrowserAudio = null;
-    function _bcBrowserSource() {
-        if (_bcBrowserAudio) return _bcBrowserAudio;
-        const el = document.getElementById('audio');
-        if (!el) return null;
-        const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return null;
-        const ctx = new Ctx(); let source;
-        try { source = ctx.createMediaElementSource(el); }
-        catch (e) { try { ctx.close(); } catch (_) {} return null; }
-        source.connect(ctx.destination);
-        const resume = () => { if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {}); };
-        resume(); el.addEventListener('play', resume);
-        _bcBrowserAudio = { ctx, source };
-        return _bcBrowserAudio;
-    }
+    // Browser audio is sourced by REUSING the highway's own shared analyser
+    // (the same #audio / stems side-chain tap the fog scenery uses), passed in
+    // as `audioProvider` to _bcCreateController. We deliberately do NOT open a
+    // second createMediaElementSource on #audio here: it can only be called
+    // once per element (a second tap throws InvalidStateError and permanently
+    // disables the other consumer), it would route the song through a fresh,
+    // possibly-suspended context and mute playback, and it would miss the stems
+    // side-chain that sloppaks expose at window.feedBack.stems.getAnalyser().
     /* ── Controls + readability (localStorage-backed, global config) ───── */
     const BC_LS = 'viz3d_settings';
     const BC_DEFAULTS = { enabled: true, opacity: 1.0, laneDim: true, laneDimStrength: 0.45, chartAccents: true, colorTint: true, chartStrength: 1.0, tintStrength: 0.65, guitarGain: 6, songGain: 1.8, cyclePool: 'all', hold: false };
@@ -449,7 +445,7 @@
     }
 
     // Create a Butterchurn background controller bound to a wrap element.
-    function _bcCreateController(wrap, sizeProvider) {
+    function _bcCreateController(wrap, sizeProvider, audioProvider) {
         const ctrl = { viz: null, actx: null, guitar: null, map: null, keys: [], cycle: 0, dead: false, lastW: -1, lastH: -1, canvas: null, backdrop: null, scrim: null, tint: null };
         // Layered DOM in the wrap, all BEHIND the transparent 3D highway:
         //   backdrop(z-4 dark) → bc canvas(z-3) → tint(z-2 instrument color) → scrim(z-1 lane dim)
@@ -540,10 +536,15 @@
             if (!bc || typeof bc.createVisualizer !== 'function') { console.warn('[viz3d] Butterchurn global missing'); return; }
             const Ctx = window.AudioContext || window.webkitAudioContext;
             const sz = (sizeProvider && sizeProvider()) || { w: 1280, h: 720 };
-            // Browser (Docker/web app): build Butterchurn on the SAME context as the
-            // <audio> tap, or connectAudio() fails cross-context. Desktop uses its own.
-            const browserAudio = _bcIsDesktop() ? null : _bcBrowserSource();
-            ctrl.actx = (browserAudio && browserAudio.ctx) || new Ctx();
+            // Browser (Docker/web app): REUSE the highway's existing shared
+            // analyser (the fog scenery's #audio / stems tap) via audioProvider,
+            // and build Butterchurn on that SAME AudioContext so connectAudio()
+            // doesn't fail cross-context. Desktop uses its own context fed by the
+            // guitar/mic input. `ownsActx` tracks whether WE created the context
+            // (so destroy() closes only contexts we own, never the shared one).
+            const fogAudio = _bcIsDesktop() ? null : (audioProvider ? audioProvider() : null);
+            ctrl.ownsActx = !(fogAudio && fogAudio.ctx);
+            ctrl.actx = (fogAudio && fogAudio.ctx) || new Ctx();
             if (ctrl.actx.state === 'suspended' && ctrl.actx.resume) ctrl.actx.resume().catch(() => {});
             ctrl.viz = bc.createVisualizer(ctrl.actx, canvas, {
                 width: sz.w || 1280, height: sz.h || 720,
@@ -554,9 +555,11 @@
                     ctrl.guitar = _bcGuitarFeed(ctrl.actx, (srcNode) => { try { if (ctrl.viz) ctrl.viz.connectAudio(srcNode); } catch (e) {} });
                     console.log('[viz3d] bg: feeding GUITAR input into Butterchurn');
                 } catch (e) { console.warn('[viz3d] guitar feed failed', e); }
-            } else if (browserAudio && browserAudio.source) {
-                try { ctrl.viz.connectAudio(browserAudio.source); console.log('[viz3d] browser: Butterchurn tapping <audio> (real song spectrum)'); }
-                catch (e) { console.warn('[viz3d] <audio> connect failed', e); }
+            } else if (fogAudio && fogAudio.analyser) {
+                // The shared AnalyserNode is a passthrough — connecting it onward
+                // to Butterchurn's internal analyser doesn't disturb the fog's reads.
+                try { ctrl.viz.connectAudio(fogAudio.analyser); console.log('[viz3d] browser: Butterchurn tapping shared analyser (' + (fogAudio.source || 'core') + ')'); }
+                catch (e) { console.warn('[viz3d] shared-analyser connect failed', e); }
             }
             _bcLoadLists();
             const presets = _bcPresets();
@@ -600,6 +603,15 @@
                 if (ctrl.guitar) { ctrl.guitar.stop(); ctrl.guitar = null; }
                 [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => { if (el && el.parentNode) el.parentNode.removeChild(el); });
                 ctrl.viz = null;
+                // Close the AudioContext only if we own it (desktop, or the
+                // browser fallback). The browser path normally reuses the
+                // highway's shared context, which the fog system owns — never
+                // close that. Without this, desktop leaks a new AudioContext per
+                // mount and hits the browser's ~6-context cap after a few toggles.
+                if (ctrl.ownsActx && ctrl.actx && typeof ctrl.actx.close === 'function') {
+                    try { ctrl.actx.close(); } catch (e) {}
+                }
+                ctrl.actx = null;
                 if (_bcControllers.size === 0) {
                     if (_bcPanel && _bcPanel.parentNode) _bcPanel.parentNode.removeChild(_bcPanel);
                     if (_bcPane && _bcPane.parentNode) _bcPane.parentNode.removeChild(_bcPane);
@@ -7553,7 +7565,10 @@
         function _bcSyncMode() {
             if (_bcActive()) {
                 if (!bcCtrl && wrap) {
-                    try { bcCtrl = _bcCreateController(wrap, () => canvasSize(highwayCanvas)); }
+                    // audioProvider reuses this instance's shared analyser (the
+                    // fog scenery's #audio / stems tap) so the browser path never
+                    // opens a second createMediaElementSource on #audio.
+                    try { bcCtrl = _bcCreateController(wrap, () => canvasSize(highwayCanvas), () => { try { return _bgGetAnalyser(); } catch (e) { return null; } }); }
                     catch (e) { console.warn('[3D-Hwy] Butterchurn init failed', e); }
                 }
                 if (ren) ren.setClearColor(0x101820, 0); // transparent so the visualizer shows through
@@ -7661,7 +7676,9 @@
                 scene.fog.color.setHex(0x080c12);
                 scene.fog.near = FOG_START * 0.98;
                 scene.fog.far = FOG_END * 0.98;
-                if (ren) ren.setClearColor(0x080c12);
+                // Keep the clear transparent while Butterchurn is active so the
+                // venue scene doesn't occlude the visualizer behind the highway.
+                if (ren) ren.setClearColor(0x080c12, _bcActive() ? 0 : 1);
                 if (ambLight) ambLight.intensity = 0.68;
             } else {
                 // Restore the user's scene-color theme (clear + fog) rather than

@@ -459,7 +459,7 @@
 
     // Create a Butterchurn background controller bound to a wrap element.
     function _bcCreateController(wrap, sizeProvider, audioProvider) {
-        const ctrl = { viz: null, actx: null, guitar: null, map: null, keys: [], cycle: 0, dead: false, lastW: -1, lastH: -1, canvas: null, backdrop: null, scrim: null, tint: null };
+        const ctrl = { viz: null, actx: null, guitar: null, map: null, keys: [], cycle: 0, dead: false, lastW: -1, lastH: -1, canvas: null, backdrop: null, scrim: null, tint: null, wrap: wrap };
         // Layered DOM in the wrap, all BEHIND the transparent 3D highway:
         //   backdrop(z-4 dark) → bc canvas(z-3) → tint(z-2 instrument color) → scrim(z-1 lane dim)
         const mkLayer = (cls, css) => { const d = document.createElement('div'); d.className = cls; d.style.cssText = css; wrap.appendChild(d); return d; };
@@ -661,6 +661,16 @@
                     if (_bcPanel && _bcPanel.parentNode) _bcPanel.parentNode.removeChild(_bcPanel);
                     if (_bcPane && _bcPane.parentNode) _bcPane.parentNode.removeChild(_bcPane);
                     _bcPanel = null; _bcPane = null; _bcListEl = null; _bcFilterEl = null; _bcPaneOpen = false;
+                } else if (_bcPrimary && _bcPrimary.wrap) {
+                    // Splitscreen: a controller other than this one is still
+                    // alive. The singleton panel was parented to THIS (now
+                    // destroyed) wrap, so re-home it onto the surviving primary's
+                    // wrap — otherwise the panel is orphaned on the dead wrap and
+                    // the surviving highway is left with no visualizer controls
+                    // (_bcEnsurePanel only runs at controller creation). It moves
+                    // the existing panel+pane when connected, or rebuilds them on
+                    // the survivor if this wrap was already detached.
+                    try { _bcEnsurePanel(_bcPrimary.wrap); _bcUpdatePanelPreset(); } catch (e) {}
                 }
             },
         };

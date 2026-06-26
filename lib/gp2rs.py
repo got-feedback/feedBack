@@ -1124,7 +1124,17 @@ def _build_xml(
     # for compatibility, and emit additional string6+ attributes (up to
     # `len(tuning)-1`) for 7+ string arrangements. FeedBack parses
     # them; the format ignores them.
+    #
+    # `stringCount` records the AUTHORITATIVE string count (== len(tuning)),
+    # because the 6-slot padding above erases the 4-vs-5-vs-6-string
+    # distinction for standard tunings (a 4-string bass, 5-string bass and
+    # 6-string guitar are otherwise byte-identical, all string0..5 = 0).
+    # parse_arrangement trims `tuning` back to this on read so downstream
+    # string-count derivation (song.arrangement_string_count, the editor's
+    # _stringCountFor) sees the real width instead of guessing. RS2014 and
+    # any other consumer simply ignore the unknown attribute.
     tuning_el = ET.SubElement(root, "tuning")
+    tuning_el.set("stringCount", str(len(tuning)))
     for i in range(max(6, len(tuning))):
         tuning_el.set(f"string{i}", str(tuning[i] if i < len(tuning) else 0))
     ET.SubElement(root, "capo").text = "0"

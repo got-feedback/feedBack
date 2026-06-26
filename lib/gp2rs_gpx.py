@@ -239,12 +239,20 @@ def _gpif_tracks(root: ET.Element) -> list[dict]:
     _bars_by_id = {b.get('id'): b for b in (root.find('Bars') or [])}
     _voices_by_id = {v.get('id'): v for v in (root.find('Voices') or [])}
     _beats_by_id = {b.get('id'): b for b in (root.find('Beats') or [])}
+    _notes_by_id = {n.get('id'): n for n in (root.find('Notes') or [])}
 
     def _note_count_for_raw(raw_idx: int) -> int:
-        # Total note count for the track (sum of notes across all its beats).
-        # This is the single source of truth: list_tracks surfaces it as the
-        # 'notes' field, and _auto_select_gpx uses (count == 0) to skip empty
-        # tracks — so the graph is walked once here, not again in list_tracks.
+        # Count of notes that ACTUALLY become RS notes for the track. This is
+        # the single source of truth: list_tracks surfaces it as the 'notes'
+        # field (the importer's per-track preview count) and _auto_select_gpx
+        # uses (count == 0) to skip empty tracks — so the graph is walked once
+        # here, not again in list_tracks.
+        #
+        # Tie-DESTINATION notes are excluded: a tied note is folded into the
+        # previous note as extended sustain (see the `_note_is_tie` skips in
+        # convert_file), so it never becomes a separate RS note. Counting them
+        # made the preview overstate the result (e.g. 260 shown, 241 imported);
+        # excluding them makes the preview match what the user actually gets.
         n = 0
         for mb in _masterbars:
             bar_ids = mb.findtext('Bars', '').split()
@@ -263,9 +271,11 @@ def _gpif_tracks(root: ET.Element) -> list[dict]:
                     beat = _beats_by_id.get(bid)
                     if beat is None:
                         continue
-                    notes_text = beat.findtext('Notes', '').strip()
-                    if notes_text:
-                        n += len(notes_text.split())
+                    for nid in beat.findtext('Notes', '').split():
+                        note_el = _notes_by_id.get(nid)
+                        if note_el is not None and _note_is_tie(note_el):
+                            continue
+                        n += 1
         return n
 
     result = []
@@ -1372,9 +1382,69 @@ def convert_file(
     track_indices, _piano_merge_map = _find_piano_pairs(track_indices, tracks, names)
 
     output_files = []
-    # Counts of auto-named guitar/bass arrangements so far, so multiple guitars
-    # get distinct RS roles (Lead, Rhythm, Combo, …) instead of all "Lead".
-    _role_counts: dict[str, int] = {}
+    # All auto-assigned arrangement names handed out so far, so multiple
+    # arrangements get distinct labels (Lead, Rhythm, Combo, Bass, Bass 2, …)
+    # and the name-aware and positional guitar paths never collide.
+    _used_arr_names: set[str] = set()
+
+    def _unique_arr_name(base: str) -> str:
+        """Return `base`, or `base 2`/`base 3`/… if it's already been used."""
+        if base not in _used_arr_names:
+            _used_arr_names.add(base)
+            return base
+        k = 2
+        while f"{base} {k}" in _used_arr_names:
+            k += 1
+        name = f"{base} {k}"
+        _used_arr_names.add(name)
+        return name
+
+    _KEYS_PROGS = set(range(0, 8)) | set(range(16, 24)) | {80, 81, 82, 83}
+
+    def _auto_guitar_hint(track_idx: int):
+        """For a track that auto-resolves to a guitar arrangement, return its
+        role hint: 'lead', 'rhythm', or '' (unhinted). None when the track is
+        NOT an auto-named guitar (explicitly named, bass, drum, vocal, keys).
+        Mirrors the per-track classification in the conversion loop below."""
+        if track_idx >= len(tracks) or names.get(track_idx):
+            return None
+        t = tracks[track_idx]
+        if t['is_drums'] or _is_vocal_track(t):
+            return None
+        low = t['name'].lower()
+        sp = t['string_pitches']
+        prog = t['midi_program']
+        if (isinstance(prog, int) and 32 <= prog <= 39) or (bool(sp) and max(sp) <= 48) or 'bass' in low:
+            return None  # bass
+        if (not sp and prog in _KEYS_PROGS) or any(kw in low for kw in ('piano', 'keys', 'keyboard', 'organ')):
+            return None  # keys
+        if 'lead' in low and 'rhythm' not in low:
+            return 'lead'
+        if 'rhythm' in low and 'lead' not in low:
+            return 'rhythm'
+        return ''  # guitar, no role hint
+
+    # Two-pass guitar role naming, resolved up front so the per-track loop just
+    # looks names up. Reserve every name-hinted Lead/Rhythm first, THEN fill
+    # unhinted guitars into the remaining canonical roles. A single pass would
+    # let an unhinted guitar that appears BEFORE a hinted one steal its role,
+    # pushing the real Lead/Rhythm to a non-canonical "Rhythm 2" that the
+    # downstream name-based path classification doesn't recognise.
+    _guitar_name_by_idx: dict[int, str] = {}
+    _unhinted_guitars: list[int] = []
+    for _ti in track_indices:
+        hint = _auto_guitar_hint(_ti)
+        if hint is None:
+            continue
+        if hint == 'lead':
+            _guitar_name_by_idx[_ti] = _unique_arr_name('Lead')
+        elif hint == 'rhythm':
+            _guitar_name_by_idx[_ti] = _unique_arr_name('Rhythm')
+        else:
+            _unhinted_guitars.append(_ti)
+    for _ti in _unhinted_guitars:
+        base = next((r for r in ('Lead', 'Rhythm', 'Combo') if r not in _used_arr_names), 'Combo')
+        _guitar_name_by_idx[_ti] = _unique_arr_name(base)
 
     for track_idx in track_indices:
         if track_idx >= len(tracks):
@@ -1422,16 +1492,12 @@ def convert_file(
             )
             low = track['name'].lower()
             if is_bass or 'bass' in low:
-                _bc = _role_counts.get('bass', 0)
-                _role_counts['bass'] = _bc + 1
-                arr_name = 'Bass' if _bc == 0 else f'Bass {_bc + 1}'
+                arr_name = _unique_arr_name('Bass')
             else:
-                # Distinct guitar roles by appearance order so two guitars
-                # don't both become "Lead": Lead, Rhythm, Combo, then Combo N.
-                _gc = _role_counts.get('guitar', 0)
-                _role_counts['guitar'] = _gc + 1
-                _roles = ('Lead', 'Rhythm', 'Combo')
-                arr_name = _roles[_gc] if _gc < len(_roles) else f'Combo {_gc - 1}'
+                # Guitar role was resolved up front (two-pass, honoring
+                # "lead"/"rhythm" in the GP track name so a Rhythm-before-Lead
+                # file isn't swapped by positional assignment).
+                arr_name = _guitar_name_by_idx.get(track_idx) or _unique_arr_name('Lead')
 
         # Vocal tracks get their own converter — outputs vocals XML, not notes XML
         if is_vocal:
@@ -2317,7 +2383,15 @@ def _auto_select_gpx(tracks: list[dict]) -> tuple[list[int], dict[int, str]]:
         if is_bass:
             selected.append((i, 'bass'))
         elif is_guitar:
-            selected.append((i, 'guitar'))
+            # Honor "lead"/"rhythm" in the GP track name so two guitars keep
+            # the author's roles instead of being labelled by appearance order
+            # (which swaps a Rhythm-before-Lead file). Unhinted → positional.
+            if 'lead' in name_l and 'rhythm' not in name_l:
+                selected.append((i, 'guitar_lead'))
+            elif 'rhythm' in name_l and 'lead' not in name_l:
+                selected.append((i, 'guitar_rhythm'))
+            else:
+                selected.append((i, 'guitar'))
         elif is_keys:
             selected.append((i, 'keys'))
 
@@ -2326,19 +2400,48 @@ def _auto_select_gpx(tracks: list[dict]) -> tuple[list[int], dict[int, str]]:
             if not t['is_drums'] and t.get('note_count', 1) > 0:
                 selected.append((i, 'guitar'))
 
-    indices = []
     name_map = {}
     counts: dict[str, int] = {}
-    RS_NAMES = {'guitar': ('Lead', 'Rhythm', 'Combo'), 'bass': ('Bass',), 'keys': ('Keys',), 'drums': ('Drums',), 'vocal': ('Vocals',)}
+    RS_NAMES = {'bass': ('Bass',), 'keys': ('Keys',),
+                'drums': ('Drums',), 'vocal': ('Vocals',)}
+    used: set[str] = set()
+
+    def _unique(base: str) -> str:
+        if base not in used:
+            used.add(base)
+            return base
+        k = 2
+        while f"{base} {k}" in used:
+            k += 1
+        used.add(f"{base} {k}")
+        return f"{base} {k}"
+
+    # Two passes so name-hinted Lead/Rhythm guitars reserve their canonical role
+    # BEFORE unhinted guitars are filled in — otherwise an unhinted guitar that
+    # appears before a hinted one steals its role (real Rhythm → "Rhythm 2").
+    # Non-guitar roles are handled in pass 1. `name_map` keys by track index so
+    # this does not affect arrangement (selection) order, computed separately.
+    for idx, role in selected:
+        if role == 'guitar':
+            continue
+        if role == 'guitar_lead':
+            base = 'Lead'
+        elif role == 'guitar_rhythm':
+            base = 'Rhythm'
+        else:
+            counts[role] = counts.get(role, 0) + 1
+            c = counts[role]
+            names_for_role = RS_NAMES.get(role, (role.title(),))
+            base = names_for_role[min(c - 1, len(names_for_role) - 1)]
+            if c > len(names_for_role):
+                base = f"{names_for_role[-1]} {c}"
+        name_map[idx] = _unique(base)
 
     for idx, role in selected:
-        counts[role] = counts.get(role, 0) + 1
-        c = counts[role]
-        names_for_role = RS_NAMES.get(role, (role.title(),))
-        arr_name = names_for_role[min(c - 1, len(names_for_role) - 1)]
-        if c > len(names_for_role):
-            arr_name = f"{names_for_role[-1]} {c}"
-        indices.append(idx)
-        name_map[idx] = arr_name
+        if role != 'guitar':
+            continue
+        base = next((r for r in ('Lead', 'Rhythm', 'Combo') if r not in used), 'Combo')
+        name_map[idx] = _unique(base)
 
+    indices = [idx for idx, _role in selected]
     return indices, name_map

@@ -20,6 +20,651 @@
     const THREE_URL = '/static/vendor/three/three.module.min.js';
     const THREE_CDN = 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js';
 
+    /* ── Butterchurn audio-reactive background ──────────────────────────
+     * Mounts a Butterchurn (WebGL MilkDrop) canvas BEHIND the transparent
+     * 3D highway. On desktop it's driven by the guitar/mic input (the song
+     * audio lives in JUCE, not the webview <audio>); in a browser it taps
+     * the song <audio> directly.
+     * ──────────────────────────────────────────────────────────────────── */
+    const BC_VENDOR = '/api/plugins/highway_3d/assets/vendor/';
+    const BC_FRAME = 1024;
+    const BC_WORKLET = '/api/plugins/highway_3d/assets/viz-worklet.js';
+    const _bcMeters = { gtr: 0, song: 0 }; // live levels shown in the panel readout
+    const BC_BTN = 'background:rgba(255,255,255,.09);color:#cfe3ff;border:1px solid rgba(255,255,255,.16);border-radius:5px;padding:3px 8px;cursor:pointer;font:12px system-ui';
+    let _bcLoading = null;
+    function _bcLoadLib() {
+        if (_bcLoading) return _bcLoading;
+        _bcLoading = new Promise((resolve, reject) => {
+            const add = (url, next) => {
+                const s = document.createElement('script');
+                s.src = url; s.async = true;
+                s.onload = next; s.onerror = () => reject(new Error('load ' + url));
+                document.head.appendChild(s);
+            };
+            add(BC_VENDOR + 'butterchurn.min.js', () =>
+                add(BC_VENDOR + 'butterchurnPresets.min.js', resolve));
+        });
+        // Don't cache a rejected promise: a transient load failure (network
+        // hiccup, blocked request) must not permanently disable the feature for
+        // the session. Clearing _bcLoading lets the next mount retry the load.
+        _bcLoading.catch(() => { _bcLoading = null; });
+        return _bcLoading;
+    }
+    function _bcResolve() { let b = window.butterchurn; if (b && b.default) b = b.default; return b; }
+    function _bcPresets() { let p = window.butterchurnPresets; if (p && p.default) p = p.default; return p; }
+    function _bcIsDesktop() {
+        const d = window.feedBackDesktop || window.slopsmithDesktop;
+        return !!(d && d.isDesktop && d.audio && typeof d.audio.getRawAudioFrame === 'function');
+    }
+    // Fast-forward an index to the first entry after time `ct` (used on seek/loop).
+    // Position at the first entry whose time is >= ct (strict <), so an event
+    // landing exactly on the seek/loop target time is still fired by the update
+    // walkers (which consume `<= ct`) instead of being skipped past here.
+    function _bcFfIdx(arr, ct, key) { if (!arr) return 0; let i = 0; while (i < arr.length && (arr[i][key] || 0) < ct) i++; return i; }
+    // Force-free a canvas's WebGL context so the GPU resources are released
+    // immediately instead of lingering until GC — repeated Butterchurn
+    // mount/unmount cycles otherwise pile up live contexts toward the browser cap.
+    function _bcReleaseCanvasGL(canvas) {
+        if (!canvas || typeof canvas.getContext !== 'function') return;
+        let gl = null;
+        try { gl = canvas.getContext('webgl2') || canvas.getContext('webgl'); } catch (e) { gl = null; }
+        if (!gl || typeof gl.getExtension !== 'function') return;
+        try { const lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); } catch (e) {}
+    }
+
+    // Desktop: bridge GUITAR input PCM + SONG output level into a Web Audio node
+    // Butterchurn can tap. Guitar gives spectral texture from your playing; the
+    // song's output meter (getLevels) injects an energy pulse so the visuals also
+    // react to the backing track (JUCE plays it — there's no song PCM to FFT).
+    function _bcGuitarFeed(actx, onReady) {
+        const latest = new Float32Array(BC_FRAME);
+        let polling = true, songLevel = 0, chartLevel = 0;
+        let node = null, sp = null, silent = null;
+        const api = (window.feedBackDesktop || window.slopsmithDesktop).audio;
+        const gainNow = () => (_bcLoadSettings().guitarGain) || 6;
+
+        // Keep the source node processing (silently — JUCE already monitors the
+        // guitar), and hand it to Butterchurn via the onReady callback.
+        function attach(srcNode) {
+            silent = actx.createGain(); silent.gain.value = 0;
+            srcNode.connect(silent); silent.connect(actx.destination);
+            try { if (onReady) onReady(srcNode); } catch (e) {}
+        }
+        // Fallback for contexts without AudioWorklet support.
+        function useScriptProcessor() {
+            let phase = 0, phase2 = 0;
+            const TWO_PI = Math.PI * 2;
+            const oscStep = TWO_PI * (90 / actx.sampleRate);
+            const oscStep2 = TWO_PI * (520 / actx.sampleRate);
+            sp = actx.createScriptProcessor(BC_FRAME, 1, 1);
+            sp.onaudioprocess = (e) => {
+                const out = e.outputBuffer.getChannelData(0);
+                const n = Math.min(out.length, latest.length);
+                const lvl = songLevel, clvl = chartLevel, gg = gainNow();
+                for (let i = 0; i < out.length; i++) {
+                    const g = (i < n ? latest[i] : 0) * gg;
+                    const song = lvl * (0.7 * Math.sin(phase) + 0.3 * (Math.random() * 2 - 1)) * 1.4;
+                    const chart = clvl * (0.5 * Math.sin(phase2) + 0.5 * (Math.random() * 2 - 1)) * 1.5;
+                    phase += oscStep; if (phase > TWO_PI) phase -= TWO_PI;
+                    phase2 += oscStep2; if (phase2 > TWO_PI) phase2 -= TWO_PI;
+                    const v = g + song + chart;
+                    out[i] = v > 1 ? 1 : (v < -1 ? -1 : v);
+                }
+            };
+            attach(sp);
+            console.log('[viz3d] audio feed: ScriptProcessor (fallback)');
+        }
+
+        // Preferred path: AudioWorklet (runs off the main thread).
+        if (actx.audioWorklet && typeof actx.audioWorklet.addModule === 'function' && typeof AudioWorkletNode === 'function') {
+            actx.audioWorklet.addModule(BC_WORKLET).then(() => {
+                if (!polling || sp) return;
+                node = new AudioWorkletNode(actx, 'viz-feed', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+                attach(node);
+                console.log('[viz3d] audio feed: AudioWorklet');
+            }).catch((e) => {
+                console.warn('[viz3d] AudioWorklet unavailable, using ScriptProcessor:', e && e.message);
+                if (polling && !sp && !node) useScriptProcessor();
+            });
+        } else {
+            useScriptProcessor();
+        }
+
+        // Guitar PCM poll → waveform + level meter (+ pushed to the worklet).
+        (function pcmLoop() {
+            if (!polling) return;
+            Promise.resolve(api.getRawAudioFrame(BC_FRAME)).then((f) => {
+                if (f && f.length) {
+                    if (f.length >= BC_FRAME) latest.set(f.subarray(0, BC_FRAME));
+                    else { latest.fill(0); latest.set(f); }
+                    let s = 0; for (let i = 0; i < BC_FRAME; i++) s += latest[i] * latest[i];
+                    _bcMeters.gtr = Math.sqrt(s / BC_FRAME) * gainNow();
+                    if (node) node.port.postMessage({ frame: latest.slice(0), song: songLevel, chart: chartLevel, gain: gainNow() });
+                }
+            }).catch(() => {}).then(() => { if (polling) setTimeout(pcmLoop, 16); });
+        })();
+        // Song output meter poll → music energy pulse.
+        (function levelLoop() {
+            if (!polling) return;
+            Promise.resolve(api.getLevels && api.getLevels()).then((L) => {
+                if (L && typeof L.outputLevel === 'number') {
+                    songLevel = Math.min(1, L.outputLevel * ((_bcLoadSettings().songGain) || 1.8));
+                    _bcMeters.song = songLevel;
+                    if (node) node.port.postMessage({ song: songLevel, chart: chartLevel, gain: gainNow() });
+                }
+            }).catch(() => {}).then(() => { if (polling) setTimeout(levelLoop, 40); });
+        })();
+
+        return {
+            setChart(v) { chartLevel = v; },
+            stop() {
+                polling = false;
+                try { if (sp) { sp.disconnect(); sp.onaudioprocess = null; } } catch (e) {}
+                try { if (node) node.disconnect(); } catch (e) {}
+                try { if (silent) silent.disconnect(); } catch (e) {}
+            }
+        };
+    }
+    // Browser audio is sourced by REUSING the highway's own shared analyser
+    // (the same #audio / stems side-chain tap the fog scenery uses), passed in
+    // as `audioProvider` to _bcCreateController. We deliberately do NOT open a
+    // second createMediaElementSource on #audio here: it can only be called
+    // once per element (a second tap throws InvalidStateError and permanently
+    // disables the other consumer), it would route the song through a fresh,
+    // possibly-suspended context and mute playback, and it would miss the stems
+    // side-chain that sloppaks expose at window.feedBack.stems.getAnalyser().
+    /* ── Controls + readability (localStorage-backed, global config) ───── */
+    const BC_LS = 'viz3d_settings';
+    const BC_DEFAULTS = { enabled: true, opacity: 1.0, laneDim: true, laneDimStrength: 0.45, chartAccents: true, colorTint: true, chartStrength: 1.0, tintStrength: 0.65, guitarGain: 6, songGain: 1.8, cyclePool: 'all', hold: false };
+    let _bcSettings = null;
+    function _bcLoadSettings() {
+        if (_bcSettings) return _bcSettings;
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem(BC_LS) || '{}'); } catch (e) {}
+        _bcSettings = Object.assign({}, BC_DEFAULTS, saved);
+        return _bcSettings;
+    }
+    function _bcSaveSettings() { try { localStorage.setItem(BC_LS, JSON.stringify(_bcSettings)); } catch (e) {} }
+    const _bcControllers = new Set();
+    function _bcApplyAll() { _bcControllers.forEach((c) => { try { c.applySettings(); } catch (e) {} }); }
+    // Live-apply hook for the plugin's settings.html. The visualizer's on/off +
+    // slider controls now live in the standard settings panel (settings.html),
+    // which persists them into the BC_LS blob and then calls this so a mounted
+    // highway re-reads and applies them immediately. Defined on window at module
+    // scope so it's available regardless of whether a highway is mounted yet;
+    // settings.html guards the call with `?.` for the not-yet-loaded case.
+    window.h3dBcApplySettings = function () {
+        _bcSettings = null;        // drop the cache so the next read reloads from localStorage
+        _bcLoadSettings();
+        _bcApplyAll();
+        try { _bcUpdatePanelPreset(); } catch (e) {}
+    };
+
+    // Preset curation: favorites / bans (persisted globally) + the "primary"
+    // controller the panel's preset buttons drive.
+    // Seeded once on first run (reputation-based starter set; user can edit freely).
+    const BC_DEFAULT_FAVORITES = [
+        'Flexi, martin + geiss - dedicated to the sherwin maxawow',
+        'Geiss - Reaction Diffusion 2',
+        'Geiss - Spiral Artifact',
+        'Flexi + Martin - cascading decay swing',
+        'Flexi - mindblob [shiny mix]',
+        'Geiss - Cauldron - painterly 2 (saturation remix)',
+        'Zylot - Paint Spill (Music Reactive Paint Mix)',
+        'Flexi - predator-prey-spirals',
+        'Rovastar + Loadus + Geiss - FractalDrop (Triple Mix)',
+        'Flexi, fishbrain, Geiss + Martin - tokamak witchery',
+    ];
+    const BC_DEFAULT_BANS = [
+        'martin - mucus cervix',
+        'Goody - The Wild Vort',
+        'martin - extreme heat',
+        'Unchained - Rewop',
+        'high-altitude basket unraveling - singh grooves nitrogen argon nz+',
+        '$$$ Royal - Mashup (197)',
+        '$$$ Royal - Mashup (431)',
+        'suksma - uninitialized variabowl (hydroponic chronic)',
+        'shifter - dark tides bdrv mix 2',
+        '_Mig_049',
+    ];
+    const _bcFavorites = new Set();
+    const _bcBanned = new Set();
+    let _bcListsLoaded = false;
+    function _bcLoadLists() {
+        if (_bcListsLoaded) return; _bcListsLoaded = true;
+        try { (JSON.parse(localStorage.getItem('viz3d_favorites') || '[]') || []).forEach((n) => _bcFavorites.add(n)); } catch (e) {}
+        try { (JSON.parse(localStorage.getItem('viz3d_banned') || '[]') || []).forEach((n) => _bcBanned.add(n)); } catch (e) {}
+        let seeded = false;
+        try { seeded = !!localStorage.getItem('viz3d_seeded'); } catch (e) {}
+        if (!seeded) {
+            BC_DEFAULT_FAVORITES.forEach((n) => _bcFavorites.add(n));
+            BC_DEFAULT_BANS.forEach((n) => _bcBanned.add(n));
+            try { localStorage.setItem('viz3d_seeded', '1'); } catch (e) {}
+            _bcSaveLists();
+        }
+    }
+    function _bcSaveLists() {
+        try { localStorage.setItem('viz3d_favorites', JSON.stringify([..._bcFavorites])); } catch (e) {}
+        try { localStorage.setItem('viz3d_banned', JSON.stringify([..._bcBanned])); } catch (e) {}
+    }
+    // Re-add the bundled defaults anytime (merges; a default-fav un-bans, a default-ban un-favs).
+    function _bcRestoreDefaults() {
+        BC_DEFAULT_FAVORITES.forEach((n) => { _bcBanned.delete(n); _bcFavorites.add(n); });
+        BC_DEFAULT_BANS.forEach((n) => { _bcFavorites.delete(n); _bcBanned.add(n); });
+        try { localStorage.setItem('viz3d_seeded', '1'); } catch (e) {}
+        _bcSaveLists(); _bcUpdatePanelPreset(); _bcRenderList();
+    }
+    let _bcPrimary = null;
+    let _bcPane = null, _bcListEl = null, _bcFilterEl = null, _bcPaneOpen = false, _bcCollapsed = false;
+
+    function _bcStatusMark(name) {
+        return _bcFavorites.has(name) ? '★ ' : (_bcBanned.has(name) ? '🚫 ' : '');
+    }
+    function _bcSetHold(v) {
+        const s = _bcLoadSettings();
+        s.hold = !!v; _bcSaveSettings();
+        const b = _bcPanel && _bcPanel.querySelector('#vz-hold');
+        if (b) b.textContent = s.hold ? '▶ Resume' : '⏸ Hold';
+    }
+    // Drives both panels off the right edge. Order when both open (L→R):
+    //   visualizer panel → preset pane → window edge. Pane lives off-screen by
+    //   default; opening it shoves the panel LEFT to make room.
+    function _bcLayout() {
+        if (_bcPanel) {
+            let tx = 0;
+            if (_bcCollapsed) tx = 210;        // tuck the whole panel off the right edge
+            else if (_bcPaneOpen) tx = -248;   // slide panel LEFT to make room for the pane
+            _bcPanel.style.transform = 'translateX(' + tx + 'px) translateY(-50%)';
+        }
+        if (_bcPane) {
+            _bcPane.style.transform = (_bcPaneOpen && !_bcCollapsed) ? 'translateX(0) translateY(-50%)' : 'translateX(calc(100% + 16px)) translateY(-50%)';
+        }
+    }
+    function _bcSetPane(open) {
+        _bcPaneOpen = !!open && !_bcCollapsed;
+        const b = _bcPanel && _bcPanel.querySelector('#vz-listbtn');
+        if (b) b.textContent = _bcPaneOpen ? '>>' : '<<';
+        if (_bcPaneOpen) _bcRenderList();
+        _bcLayout();
+    }
+    function _bcRenderList() {
+        if (!_bcListEl) return;
+        const ctrl = _bcPrimary;
+        const keys = (ctrl && ctrl.keys) ? ctrl.keys : [];
+        const filt = ((_bcFilterEl && _bcFilterEl.value) || '').toLowerCase();
+        const cur = ctrl && ctrl.curName;
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < keys.length; i++) {
+            const name = keys[i];
+            if (filt && name.toLowerCase().indexOf(filt) === -1) continue;
+            const row = document.createElement('div');
+            row.textContent = _bcStatusMark(name) + name;
+            row.title = name;
+            row.style.cssText = 'padding:3px 7px;border-radius:4px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;' +
+                (name === cur ? 'background:rgba(110,160,255,.28);' : '') + (_bcBanned.has(name) ? 'opacity:.55;' : '');
+            row.addEventListener('click', () => {
+                if (!_bcPrimary) return;
+                _bcPrimary.loadByName(name, 1.0);
+                _bcSetHold(true); // picked from the list → sit on it
+            });
+            frag.appendChild(row);
+        }
+        _bcListEl.innerHTML = '';
+        _bcListEl.appendChild(frag);
+    }
+    function _bcUpdatePanelPreset() {
+        if (!_bcPanel) return;
+        const name = _bcPrimary ? (_bcPrimary.curName || null) : null;
+        const nameEl = _bcPanel.querySelector('#vz-pname');
+        const favBtn = _bcPanel.querySelector('#vz-fav');
+        const banBtn = _bcPanel.querySelector('#vz-ban');
+        const cntEl = _bcPanel.querySelector('#vz-pcount');
+        if (nameEl) { nameEl.textContent = (name ? _bcStatusMark(name) : '') + (name || '—'); nameEl.title = name ? (name + ' — click for full list') : ''; }
+        if (favBtn) favBtn.textContent = (name && _bcFavorites.has(name)) ? '★ Favorited' : '☆ Favorite';
+        if (banBtn) banBtn.textContent = (name && _bcBanned.has(name)) ? '🚫 Banned' : '🚫 Ban';
+        if (cntEl) cntEl.textContent = '★ ' + _bcFavorites.size + '   🚫 ' + _bcBanned.size;
+        if (_bcPaneOpen) _bcRenderList();
+    }
+
+    let _bcPanel = null, _bcPanelKeyBound = false;
+    function _bcEnsurePanel(host) {
+        if (_bcPanel && _bcPanel.isConnected) {
+            // Singleton panel: follow the active highway. If it's still parented
+            // to a different wrap (e.g. another mounted highway instance such as
+            // Virtuoso's embedded one), move it — and the pane — to this wrap so
+            // it appears on whichever highway is currently on-screen.
+            if (host && _bcPanel.parentNode !== host) {
+                host.appendChild(_bcPanel);
+                if (_bcPane) host.appendChild(_bcPane);
+            }
+            return _bcPanel;
+        }
+        const s = _bcLoadSettings();
+        const p = document.createElement('div');
+        p.id = 'viz3d-panel';
+        p.style.cssText = 'position:absolute;top:50%;right:10px;z-index:100000;pointer-events:auto;font:12px/1.45 system-ui,sans-serif;' +
+            'color:#cfe3ff;background:rgba(8,10,20,0.82);padding:9px 11px;border-radius:8px;width:186px;' +
+            'box-shadow:0 2px 12px rgba(0,0,0,0.5);user-select:none;transition:transform 0.28s ease;';
+        p.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px"><span style="font-weight:600">🌀 Visualizer</span><button id="vz-listbtn" title="Show / hide full preset list" style="' + BC_BTN + ';padding:1px 7px">&lt;&lt;</button></div>' +
+            // On/off + opacity/dim/chart/tint/gain controls now live in the
+            // plugin's Settings panel (settings.html). This in-canvas panel is
+            // only the LIVE preset browser (pick / favorite / ban / cycle).
+            '<div style="opacity:.55;font-size:11px;margin:2px 0 6px">Background &amp; reactivity options are in Settings ▸ 3D Highway.</div>' +
+            '<div style="display:flex;align-items:center;gap:6px;margin:4px 0">' +
+              '<button id="vz-prev" style="' + BC_BTN + '">◀</button>' +
+              '<div id="vz-pname" style="flex:1;text-align:center;font-size:11px;opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" title="">—</div>' +
+              '<button id="vz-next" style="' + BC_BTN + '">▶</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;margin:4px 0">' +
+              '<button id="vz-fav" style="' + BC_BTN + ';flex:1">♡ Favorite</button>' +
+              '<button id="vz-ban" style="' + BC_BTN + ';flex:1">🚫 Ban</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;align-items:flex-end;margin:6px 0">' +
+              '<label style="flex:1">Cycle <select id="vz-cyc" style="width:100%;background:#11141f;color:#cfe3ff;border:1px solid rgba(255,255,255,.15);border-radius:5px;padding:3px"><option value="all">All</option><option value="favorites">Favorites</option><option value="bans">Bans</option></select></label>' +
+              '<button id="vz-hold" style="' + BC_BTN + '">⏸ Hold</button>' +
+            '</div>' +
+            '<div style="margin:5px 0 4px;font-size:11px;opacity:.75"><span id="vz-pcount">★ 0   🚫 0</span></div>' +
+            '<div id="vz-meter" style="opacity:.65;margin-top:6px;font:11px/1.3 monospace">gtr —  ·  song —</div>' +
+            '<div style="opacity:.45;margin-top:4px;font-size:11px">` or ‹‹ to hide</div>';
+        (host || document.body).appendChild(p);
+
+        // Slide handle (<< / >>) so the panel can tuck off the right edge and stop
+        // covering the Now / Up-Next labels.
+        const tab = document.createElement('button');
+        tab.textContent = '>>';
+        tab.title = 'Hide / show controls';
+        tab.style.cssText = 'position:absolute;top:6px;left:-23px;width:23px;height:28px;border:none;cursor:pointer;' +
+            'background:rgba(8,10,20,0.82);color:#cfe3ff;border-radius:7px 0 0 7px;font:12px/1 monospace;padding:0;';
+        p.appendChild(tab);
+        tab.addEventListener('click', () => {
+            _bcCollapsed = !_bcCollapsed;
+            if (_bcCollapsed) _bcPaneOpen = false; // collapsing the panel hides the pane too
+            tab.textContent = _bcCollapsed ? '<<' : '>>';
+            const lb = p.querySelector('#vz-listbtn'); if (lb) lb.textContent = _bcPaneOpen ? '>>' : '<<';
+            _bcLayout();
+        });
+
+        // Sliding preset-list pane (sits to the LEFT of the control panel)
+        const pane = document.createElement('div');
+        pane.id = 'viz3d-listpane';
+        pane.style.cssText = 'position:absolute;top:50%;right:10px;z-index:99999;pointer-events:auto;width:236px;max-height:74vh;display:flex;flex-direction:column;' +
+            'background:rgba(8,10,20,0.93);border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,0.55);color:#cfe3ff;' +
+            'font:12px system-ui,sans-serif;overflow:hidden;transform:translateX(calc(100% + 16px)) translateY(-50%);transition:transform 0.28s ease;';
+        pane.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 9px 7px 10px;font-weight:600;border-bottom:1px solid rgba(255,255,255,.1)"><span>Presets</span><button id="vz-defaults" title="Restore the bundled default favorites + bans" style="' + BC_BTN + ';font-weight:400">↺ defaults</button></div>' +
+            '<input id="vz-filter" placeholder="filter…" spellcheck="false" style="margin:8px 9px 6px;padding:4px 7px;background:#11141f;color:#cfe3ff;border:1px solid rgba(255,255,255,.15);border-radius:5px;outline:none">' +
+            '<div id="vz-list" style="overflow-y:auto;padding:0 4px 8px"></div>';
+        (host || document.body).appendChild(pane);
+        _bcPane = pane;
+        _bcListEl = pane.querySelector('#vz-list');
+        _bcFilterEl = pane.querySelector('#vz-filter');
+        _bcFilterEl.addEventListener('input', _bcRenderList);
+        pane.querySelector('#vz-defaults').addEventListener('click', _bcRestoreDefaults);
+
+        const q = (id) => p.querySelector(id);
+        _bcPanel = p;
+
+        // Preset curation wiring (favorites / bans / cycle / reset)
+        _bcLoadLists();
+        const cyc = q('#vz-cyc');
+        cyc.value = s.cyclePool || 'all';
+        // Read fresh: settings.html writes can replace _bcSettings, so the `s`
+        // captured at panel creation may be stale by the time this fires.
+        cyc.addEventListener('change', () => { _bcLoadSettings().cyclePool = cyc.value; _bcSaveSettings(); });
+        _bcSetHold(!!s.hold); // sync the Hold button label to the saved state
+        q('#vz-hold').addEventListener('click', () => _bcSetHold(!_bcLoadSettings().hold));
+        q('#vz-listbtn').addEventListener('click', () => _bcSetPane(!_bcPaneOpen));
+        q('#vz-pname').addEventListener('click', () => _bcSetPane(!_bcPaneOpen));
+        q('#vz-prev').addEventListener('click', () => { if (_bcPrimary) _bcPrimary.step(-1); });
+        q('#vz-next').addEventListener('click', () => { if (_bcPrimary) _bcPrimary.step(1); });
+        q('#vz-fav').addEventListener('click', () => { if (_bcPrimary) _bcPrimary.toggleFav(); });
+        q('#vz-ban').addEventListener('click', () => { if (_bcPrimary) _bcPrimary.banCur(); });
+        _bcSetPane(false); // start collapsed; sets the list-button label
+        _bcUpdatePanelPreset();
+
+        // Live level readout — proves the song (not just guitar) is driving things.
+        // Self-stops when the panel is removed (_bcPanel !== p).
+        (function meterLoop() {
+            if (_bcPanel !== p) return;
+            const m = p.querySelector('#vz-meter');
+            if (m) m.textContent = 'gtr ' + _bcMeters.gtr.toFixed(2) + '  ·  song ' + _bcMeters.song.toFixed(2);
+            setTimeout(meterLoop, 150);
+        })();
+
+        if (!_bcPanelKeyBound) {
+            _bcPanelKeyBound = true;
+            window.addEventListener('keydown', (e) => {
+                if (e.key !== '`' || e.metaKey || e.ctrlKey || !_bcPanel) return;
+                const tag = (e.target && e.target.tagName) || '';
+                if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+                const reveal = _bcPanel.style.display === 'none';
+                _bcPanel.style.display = reveal ? '' : 'none';
+                if (_bcPane) _bcPane.style.display = reveal ? '' : 'none';
+            });
+        }
+        return _bcPanel;
+    }
+
+    // Create a Butterchurn background controller bound to a wrap element.
+    function _bcCreateController(wrap, sizeProvider, audioProvider) {
+        const ctrl = { viz: null, actx: null, guitar: null, map: null, keys: [], cycle: 0, dead: false, lastW: -1, lastH: -1, canvas: null, backdrop: null, scrim: null, tint: null, wrap: wrap };
+        // Layered DOM in the wrap, all BEHIND the transparent 3D highway:
+        //   backdrop(z-4 dark) → bc canvas(z-3) → tint(z-2 instrument color) → scrim(z-1 lane dim)
+        const mkLayer = (cls, css) => { const d = document.createElement('div'); d.className = cls; d.style.cssText = css; wrap.appendChild(d); return d; };
+        const backdrop = mkLayer('viz3d-backdrop', 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:-4;background:#070710;pointer-events:none;');
+        const canvas = document.createElement('canvas');
+        canvas.className = 'viz3d-bc';
+        canvas.style.cssText = 'position:absolute;top:0;left:0;z-index:-3;pointer-events:none;';
+        wrap.appendChild(canvas);
+        const tint = mkLayer('viz3d-tint', 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:-2;pointer-events:none;mix-blend-mode:overlay;background:transparent;');
+        const scrim = mkLayer('viz3d-scrim', 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:-1;pointer-events:none;');
+        ctrl.canvas = canvas; ctrl.backdrop = backdrop; ctrl.scrim = scrim; ctrl.tint = tint;
+
+        ctrl.applySettings = function () {
+            const s = _bcLoadSettings();
+            canvas.style.display = s.enabled ? '' : 'none';
+            canvas.style.opacity = String(s.enabled ? s.opacity : 0);
+            if (s.laneDim) {
+                const a = Math.max(0, Math.min(1, s.laneDimStrength)).toFixed(3);
+                scrim.style.display = '';
+                scrim.style.background = 'linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,' + a +
+                    ') 30%, rgba(0,0,0,' + a + ') 70%, rgba(0,0,0,0) 100%)';
+            } else {
+                scrim.style.display = 'none';
+            }
+        };
+
+        // ── Preset curation (favorites / bans / cycle mode) ──
+        ctrl.curName = null; ctrl.lastManual = 0;
+        ctrl.allList = () => (ctrl.keys || []).filter((k) => !_bcBanned.has(k));
+        ctrl.pool = () => {
+            const mode = _bcLoadSettings().cyclePool || 'all';
+            if (mode === 'bans') return (ctrl.keys || []).filter((k) => _bcBanned.has(k));
+            if (mode === 'favorites') {
+                const f = (ctrl.keys || []).filter((k) => _bcFavorites.has(k) && !_bcBanned.has(k));
+                if (f.length) return f;
+            }
+            return ctrl.allList();
+        };
+        ctrl.browseArr = () => ctrl.keys || []; // ◀▶ and the list pane walk the full preset list
+        ctrl.loadByName = (name, blend) => {
+            if (!ctrl.viz || !name || !ctrl.map || !ctrl.map[name]) return;
+            try { ctrl.viz.loadPreset(ctrl.map[name], blend || 0); ctrl.curName = name; } catch (e) {}
+            _bcUpdatePanelPreset();
+        };
+        ctrl.autoTick = () => {
+            if (ctrl.dead || _bcLoadSettings().hold) return;
+            if (performance.now() - ctrl.lastManual < 8000) return;
+            const pool = ctrl.pool();
+            if (!pool.length) return;
+            let name = pool[(Math.random() * pool.length) | 0];
+            if (pool.length > 1 && name === ctrl.curName) name = pool[(pool.indexOf(name) + 1) % pool.length];
+            ctrl.loadByName(name, 2.7);
+        };
+        ctrl.step = (dir) => {
+            const list = ctrl.browseArr();
+            if (!list.length) return;
+            let i = list.indexOf(ctrl.curName); if (i < 0) i = (dir > 0 ? -1 : 0);
+            i = (i + dir + list.length) % list.length;
+            ctrl.lastManual = performance.now();
+            ctrl.loadByName(list[i], 1.5);
+        };
+        ctrl.toggleFav = () => {
+            if (!ctrl.curName) return;
+            if (_bcFavorites.has(ctrl.curName)) _bcFavorites.delete(ctrl.curName);
+            else { _bcFavorites.add(ctrl.curName); _bcBanned.delete(ctrl.curName); }
+            _bcSaveLists(); _bcUpdatePanelPreset();
+        };
+        ctrl.banCur = () => {
+            if (!ctrl.curName) return;
+            if (_bcBanned.has(ctrl.curName)) {           // un-ban (two-way) — stay on it
+                _bcBanned.delete(ctrl.curName);
+                _bcSaveLists(); _bcUpdatePanelPreset();
+            } else {                                     // ban + advance off it
+                _bcBanned.add(ctrl.curName); _bcFavorites.delete(ctrl.curName);
+                _bcSaveLists(); ctrl.step(1);
+            }
+        };
+        _bcPrimary = ctrl;
+
+        _bcControllers.add(ctrl);
+        _bcEnsurePanel(wrap);
+        ctrl.applySettings();
+
+        _bcLoadLib().then(() => {
+            if (ctrl.dead) return;
+            const bc = _bcResolve();
+            if (!bc || typeof bc.createVisualizer !== 'function') { console.warn('[viz3d] Butterchurn global missing'); return; }
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            const sz = (sizeProvider && sizeProvider()) || { w: 1280, h: 720 };
+            // Browser (Docker/web app): REUSE the highway's existing shared
+            // analyser (the fog scenery's #audio / stems tap) via audioProvider,
+            // and build Butterchurn on that SAME AudioContext so connectAudio()
+            // doesn't fail cross-context. Desktop uses its own context fed by the
+            // guitar/mic input. `ownsActx` tracks whether WE created the context
+            // (so destroy() closes only contexts we own, never the shared one).
+            const fogAudio = _bcIsDesktop() ? null : (audioProvider ? audioProvider() : null);
+            ctrl.ownsActx = !(fogAudio && fogAudio.ctx);
+            ctrl.actx = (fogAudio && fogAudio.ctx) || new Ctx();
+            if (ctrl.actx.state === 'suspended' && ctrl.actx.resume) ctrl.actx.resume().catch(() => {});
+            ctrl.viz = bc.createVisualizer(ctrl.actx, canvas, {
+                width: sz.w || 1280, height: sz.h || 720,
+                pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5), textureRatio: 1,
+            });
+            if (_bcIsDesktop()) {
+                try {
+                    ctrl.guitar = _bcGuitarFeed(ctrl.actx, (srcNode) => { try { if (ctrl.viz) ctrl.viz.connectAudio(srcNode); } catch (e) {} });
+                    console.log('[viz3d] bg: feeding GUITAR input into Butterchurn');
+                } catch (e) { console.warn('[viz3d] guitar feed failed', e); }
+            } else if (fogAudio && fogAudio.analyser) {
+                // The shared AnalyserNode is a passthrough — connecting it onward
+                // to Butterchurn's internal analyser doesn't disturb the fog's reads.
+                try { ctrl.viz.connectAudio(fogAudio.analyser); console.log('[viz3d] browser: Butterchurn tapping shared analyser (' + (fogAudio.source || 'core') + ')'); }
+                catch (e) { console.warn('[viz3d] shared-analyser connect failed', e); }
+            }
+            _bcLoadLists();
+            const presets = _bcPresets();
+            if (presets && typeof presets.getPresets === 'function') { ctrl.map = presets.getPresets(); ctrl.keys = Object.keys(ctrl.map); }
+            const pool0 = ctrl.pool();
+            ctrl.loadByName(pool0.length ? pool0[(Math.random() * pool0.length) | 0] : (ctrl.keys[0] || null), 0.0);
+            ctrl.cycle = setInterval(() => ctrl.autoTick(), 30000);
+            ctrl.connectedAnalyser = (fogAudio && fogAudio.analyser) || null;
+            console.log('[viz3d] Butterchurn ready, presets:', ctrl.keys.length);
+        }).catch((e) => {
+            // Async init failed (lib load, WebGL/context creation, etc.). Clean up
+            // the half-mounted controller so we don't leak an owned AudioContext /
+            // DOM layers, and mark it dead so _bcSyncMode can retry on a later
+            // mount instead of seeing a live-looking but non-functional bcCtrl.
+            console.error('[viz3d] Butterchurn load/init failed', e);
+            try { _bcReleaseCanvasGL(ctrl.canvas); } catch (_) {}
+            try { if (ctrl.guitar) { ctrl.guitar.stop(); ctrl.guitar = null; } } catch (_) {}
+            try { [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => { if (el && el.parentNode) el.parentNode.removeChild(el); }); } catch (_) {}
+            if (ctrl.ownsActx && ctrl.actx && typeof ctrl.actx.close === 'function') { try { ctrl.actx.close(); } catch (_) {} }
+            ctrl.actx = null; ctrl.viz = null; ctrl.dead = true;
+            _bcControllers.delete(ctrl);
+        });
+        return {
+            applySettings() { ctrl.applySettings(); },
+            dead() { return ctrl.dead; },
+            ready() { return !!ctrl.viz; },
+            boundAnalyser() { return ctrl.connectedAnalyser || null; },
+            audioCtx() { return ctrl.actx; },
+            // Re-bind audio when the shared analyser changes (e.g. a stems song
+            // swap replaces the analyser). Same context → cheap reconnect; the
+            // caller handles a context change with a full rebuild (cross-context
+            // connectAudio is impossible — the visualizer is bound to one ctx).
+            reconnectAudio(a) {
+                if (!a || !a.analyser || !ctrl.viz) return false;
+                if (a.analyser === ctrl.connectedAnalyser) return true;
+                if (a.ctx && a.ctx !== ctrl.actx) return false; // needs rebuild
+                try { ctrl.viz.connectAudio(a.analyser); ctrl.connectedAnalyser = a.analyser; return true; } catch (e) { return false; }
+            },
+            chart(v) { if (ctrl.guitar && ctrl.guitar.setChart) ctrl.guitar.setChart(v); },
+            tint(hex, alpha) {
+                if (!ctrl.tint) return;
+                if (hex == null) { ctrl.tint.style.background = 'transparent'; return; }
+                const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
+                ctrl.tint.style.background = 'rgba(' + r + ',' + g + ',' + b + ',' + (alpha || 0).toFixed(3) + ')';
+            },
+            render() {
+                const s = _bcLoadSettings();
+                if (!ctrl.viz || !s.enabled) return; // skip GPU work when the bg is off
+                const sz = sizeProvider && sizeProvider();
+                if (sz && sz.w > 0 && sz.h > 0 && (sz.w !== ctrl.lastW || sz.h !== ctrl.lastH)) {
+                    ctrl.lastW = sz.w; ctrl.lastH = sz.h;
+                    const wpx = sz.w + 'px', hpx = sz.h + 'px';
+                    // Confine ALL layers to exactly the highway-canvas rect so the opaque
+                    // backdrop can't bleed over the transport bar above the highway.
+                    [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => {
+                        if (el) { el.style.width = wpx; el.style.height = hpx; el.style.right = 'auto'; el.style.bottom = 'auto'; }
+                    });
+                    try { ctrl.viz.setRendererSize(sz.w, sz.h); } catch (e) {}
+                }
+                try { ctrl.viz.render(); } catch (e) {}
+            },
+            resize(w, h) { if (ctrl.viz && ctrl.viz.setRendererSize) { try { ctrl.viz.setRendererSize(w, h); } catch (e) {} ctrl.lastW = w; ctrl.lastH = h; } },
+            destroy() {
+                ctrl.dead = true;
+                _bcControllers.delete(ctrl);
+                if (_bcPrimary === ctrl) { _bcPrimary = _bcControllers.values().next().value || null; _bcUpdatePanelPreset(); }
+                if (ctrl.cycle) { clearInterval(ctrl.cycle); ctrl.cycle = 0; }
+                if (ctrl.guitar) { ctrl.guitar.stop(); ctrl.guitar = null; }
+                // Release the Butterchurn WebGL context deterministically (don't
+                // wait for GC) so repeated mounts/toggles can't exhaust the
+                // browser's WebGL context cap (~16). Do it before removing the
+                // canvas from the DOM.
+                _bcReleaseCanvasGL(ctrl.canvas);
+                [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => { if (el && el.parentNode) el.parentNode.removeChild(el); });
+                ctrl.viz = null; ctrl.connectedAnalyser = null;
+                // Close the AudioContext only if we own it (desktop, or the
+                // browser fallback). The browser path normally reuses the
+                // highway's shared context, which the fog system owns — never
+                // close that. Without this, desktop leaks a new AudioContext per
+                // mount and hits the browser's ~6-context cap after a few toggles.
+                if (ctrl.ownsActx && ctrl.actx && typeof ctrl.actx.close === 'function') {
+                    try { ctrl.actx.close(); } catch (e) {}
+                }
+                ctrl.actx = null;
+                if (_bcControllers.size === 0) {
+                    if (_bcPanel && _bcPanel.parentNode) _bcPanel.parentNode.removeChild(_bcPanel);
+                    if (_bcPane && _bcPane.parentNode) _bcPane.parentNode.removeChild(_bcPane);
+                    _bcPanel = null; _bcPane = null; _bcListEl = null; _bcFilterEl = null; _bcPaneOpen = false;
+                } else if (_bcPrimary && _bcPrimary.wrap) {
+                    // Splitscreen: a controller other than this one is still
+                    // alive. The singleton panel was parented to THIS (now
+                    // destroyed) wrap, so re-home it onto the surviving primary's
+                    // wrap — otherwise the panel is orphaned on the dead wrap and
+                    // the surviving highway is left with no visualizer controls
+                    // (_bcEnsurePanel only runs at controller creation). It moves
+                    // the existing panel+pane when connected, or rebuilds them on
+                    // the survivor if this wrap was already detached.
+                    try { _bcEnsurePanel(_bcPrimary.wrap); _bcUpdatePanelPreset(); } catch (e) {}
+                }
+            },
+        };
+    }
+
     // Selectable per-string color palettes (issue #10). Each palette has
     // 8 entries to match MAX_RENDER_STRINGS so 6/7/8-string arrangements
     // all index safely. Default is the canonical chart-format classic
@@ -1123,14 +1768,91 @@
         return _bgBandsCache;
     }
 
-    const BG_DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', showFretOnNote: true, fretNumberGhostScope: 'chords', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
+    const BG_DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', bgTheme: 'default', hwTheme: 'default', showFretOnNote: true, fretNumberGhostScope: 'chords', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
     // User-selectable, persistable bg styles — must mirror settings.html's
     // VALID_STYLES. 'venue' is deliberately NOT here: it is an internal effective
     // style reached only via _venueSceneOverride (the viz-picker Venue flow), so
     // _bgCoerce must reject a stored h3d_bg_style='venue' — otherwise venue could
     // mount outside that flow and settings.html (which can't represent 'venue')
     // would be unable to switch back. BG_STYLES still has a 'venue' renderer entry.
-    const BG_STYLE_IDS = ['off', 'particles', 'silhouettes', 'lights', 'geometric', 'image', 'video'];
+    const BG_STYLE_IDS = ['off', 'particles', 'silhouettes', 'lights', 'geometric', 'butterchurn', 'image', 'video'];
+    // Scene color themes — TWO INDEPENDENT AXES sharing one palette family.
+    // The combined `BG_THEMES` table below is the single source of truth; each
+    // entry carries the colors for BOTH axes, but the two axes are selected and
+    // applied SEPARATELY (two dropdowns, two settings keys):
+    //   • BACKGROUND axis (setting key `bgTheme`) owns:
+    //       clear — WebGL clear color (the empty background behind everything)
+    //       fog   — distance fog tint (kept === clear so the horizon dissolves
+    //               cleanly instead of showing a seam)
+    //   • HIGHWAY axis (setting key `hwTheme`) owns:
+    //       board   — the fretboard / highway-surface plane color
+    //       lane    — the lit highway lane strip under the gems (optional)
+    //       laneDim — the lane's dimmer alternating row (optional)
+    // Because both axes read from the SAME id-set (the keys of this table), ANY
+    // background id can mix with ANY highway id (e.g. Deep Focus background +
+    // Cathode Green highway); picking the SAME id in both gives the original
+    // "matched" combined look. _bgBackgroundColors()/_bgHighwayColors() below
+    // are the per-axis accessors; both fall back to 'default' for unknown ids.
+    // 'default' reproduces the original look byte-for-byte on BOTH axes, so
+    // existing users (and anyone who never touches either setting) see no
+    // change. A migration in _bgLoadSettings() makes an existing single-`bgTheme`
+    // pick drive BOTH axes until the user diverges them, so upgrades are
+    // visually identical too. All themes keep the board very dark and the
+    // background dark so the bright per-string note gems, lane, and labels
+    // retain contrast. NOTE: settings.html mirrors these ids in its
+    // VALID_BG_THEMES set (shared by both dropdowns) — keep them in sync.
+    // Optional `lane` / `laneDim` fields retint the lit highway lane strip + its
+    // dimmer alternating row. A theme that omits them falls back to the stock
+    // blue lane (HWY_LANE_STRIPE_ODD_HEX / _EVEN_HEX); only 'default' relies on
+    // that fallback (so its output stays byte-identical). Every other theme sets
+    // its own lane so the Highway axis is visibly distinct entry-to-entry — the
+    // near-black neutral boards alone aren't separable, so the lane carries it.
+    // See _applyBgTheme().
+    const BG_THEMES = {
+        default:    { clear: 0x101820, fog: 0x101820, board: 0x08080e },
+        // Cool navy surface + a brighter pure-blue lane, so it reads distinct
+        // from 'default' (neutral board + stock teal-blue lane) on the Highway axis.
+        midnight:   { clear: 0x0a0e1a, fog: 0x0a0e1a, board: 0x080d1c, lane: 0x244fae, laneDim: 0x122a5e },
+        // Lighter NEUTRAL-grey surface + a steel-grey lane — the only mid-dark
+        // neutral board, so the surface itself is visibly different from the
+        // near-black neutrals around it (board kept dark enough for gem contrast).
+        charcoal:   { clear: 0x16181c, fog: 0x16181c, board: 0x141417, lane: 0x525a66, laneDim: 0x282d34 },
+        deeppurple: { clear: 0x140a1e, fog: 0x140a1e, board: 0x0b0610, lane: 0x3a1f6e, laneDim: 0x1f1040 },
+        forest:     { clear: 0x0a1614, fog: 0x0a1614, board: 0x06100c, lane: 0x15602a, laneDim: 0x0a3318 },
+        // Warm dark neutral (espresso/umber) — the first non-cool scene.
+        warmslate:  { clear: 0x1c130b, fog: 0x1c130b, board: 0x0e0805, lane: 0x5e3a12, laneDim: 0x341f0a },
+        // Recessive near-black neutral (a hair above #000000, ~zero chroma) —
+        // maximizes gem-vs-board contrast; a clean stage/stream look. Purest-dark
+        // board + a clean steel-cyan lane (brighter/cooler than 'default's muted
+        // teal-blue) so the Highway axis reads clearly distinct from default.
+        deepfocus:  { clear: 0x0c0c0d, fog: 0x0c0c0d, board: 0x060606, lane: 0x2f7fa0, laneDim: 0x163c4e },
+        // Calm dark teal — blue-dominant so it reads distinct from the navy
+        // 'midnight' and the green 'forest'.
+        deepsea:    { clear: 0x06222b, fog: 0x06222b, board: 0x03141a, lane: 0x0e5a63, laneDim: 0x063338 },
+        // Retro CRT glow — a warm AMBER phosphor cast (the classic amber
+        // terminal). Amber rather than green so a phosphor board can't crush
+        // green/teal gems, and so it stays clearly distinct from 'forest' and
+        // 'deepsea'. Board stays very dark / low-chroma to keep gems popping.
+        cathode:    { clear: 0x140b03, fog: 0x140b03, board: 0x0c0702, lane: 0x6e4a0e, laneDim: 0x3a2806 },
+        // Retro CRT GREEN phosphor — leaned more saturated / cyan-green than
+        // 'forest' so it reads as a terminal, not woodland (dRGB 35 vs forest,
+        // 32 vs deepsea). Phosphor-green board + green lane. Verified to keep
+        // green/teal gems legible (green-on-green floor CR ~2.2).
+        cathodegreen: { clear: 0x07301a, fog: 0x07301a, board: 0x031a0c, lane: 0x0e6e2a, laneDim: 0x073a18 },
+        // Warm hearth — the first warm-RED scene, pairs with the Ember/Sunrise
+        // strings. Deep red, pushed away from the amber 'cathode'/'warmslate'
+        // (dRGB ~26 from cathode). Ember-red lane.
+        hearth:     { clear: 0x280806, fog: 0x280806, board: 0x1a0606, lane: 0x7a2410, laneDim: 0x3f1409 },
+    };
+    const BG_THEME_IDS = Object.keys(BG_THEMES);
+    // Shared lookup for the combined entry (both axes are keyed by the same id
+    // set, so a single id list / coerce check validates either axis).
+    function _bgThemeColors(id) { return BG_THEMES[id] || BG_THEMES.default; }
+    // Per-axis accessors. Background reads clear/fog; highway reads
+    // board/lane/laneDim. They alias the same table — splitting at read-time
+    // keeps one source of truth while letting the two dropdowns pick freely.
+    function _bgBackgroundColors(id) { return _bgThemeColors(id); }
+    function _bgHighwayColors(id) { return _bgThemeColors(id); }
     const VENUE_SCENE_ASSET_BASE = '/static/assets/venue/themes/small-club/';
     const VENUE_BG_PLATE_PNG = 'bg-plate.png';
     const VENUE_BG_PLATE_WEBP = 'bg-plate.webp';
@@ -1412,6 +2134,9 @@
         if (_BG_BOOL_KEYS.has(key)) return _bgCoerceBool(val, BG_DEFAULTS[key]);
         if (key === 'style') return BG_STYLE_IDS.includes(val) ? val : BG_DEFAULTS.style;
         if (key === 'palette') return (PALETTE_IDS.includes(val) || val === 'custom') ? val : BG_DEFAULTS.palette;
+        if (key === 'bgTheme') return BG_THEME_IDS.includes(val) ? val : BG_DEFAULTS.bgTheme;
+        // Highway axis shares the same id-set as the background axis.
+        if (key === 'hwTheme') return BG_THEME_IDS.includes(val) ? val : BG_DEFAULTS.hwTheme;
         if (key === 'chordDiagramPosition')
             return CHORD_DIAG_POSITION_IDS.includes(val) ? val : BG_DEFAULTS.chordDiagramPosition;
         if (key === 'sectionHudPosition')
@@ -1483,6 +2208,20 @@
     window.h3dBgSetIntensity = (v) => _bgWriteGlobal('intensity', v);
     window.h3dBgSetReactive = (v) => _bgWriteGlobal('reactive', !!v);
     window.h3dBgSetPalette = (v) => _bgWriteGlobal('palette', v);
+    // BACKGROUND scene-color axis (clear + fog only). Validated against
+    // BG_THEME_IDS in _bgCoerce; the listener re-applies clear/fog live and
+    // independently of the highway axis.
+    window.h3dBgSetBgTheme = (v) => {
+        const s = String(v);
+        _bgWriteGlobal('bgTheme', BG_THEME_IDS.includes(s) ? s : BG_DEFAULTS.bgTheme);
+    };
+    // HIGHWAY scene-color axis (board + lane + laneDim). Same id-set as the
+    // background axis, so any highway can mix with any background. The listener
+    // re-applies the board plane + lane live and independently.
+    window.h3dBgSetHwTheme = (v) => {
+        const s = String(v);
+        _bgWriteGlobal('hwTheme', BG_THEME_IDS.includes(s) ? s : BG_DEFAULTS.hwTheme);
+    };
     // Apply a user-defined per-string color set (core theming UI). `hexArray`
     // is up to 8 hex strings; invalid/missing entries fall back to the default
     // palette per index. Writes the colors, then flips the palette to 'custom'
@@ -2479,6 +3218,9 @@
         // ── Per-instance Three.js state ───────────────────────────────────
         let scene = null, cam = null, ren = null;
         let wrap = null;
+        let bcCtrl = null; // Butterchurn audio-reactive background (the 'butterchurn' bg-style)
+        let _chartEnv = 0, _chartPrevT = -1, _bcBeatIdx = 0, _bcNoteIdx = 0, _bcChordIdx = 0, _bcTintTarget = null;
+        let _tintR = 20, _tintG = 24, _tintB = 40; // smoothed instrument-color tint for the bg
         // highway:visibility listener (feedBack#246). Hides the .h3d-wrap
         // overlay when feedBack's canvas is display:none'd (splitscreen
         // case). Without this, the wrap is a *sibling* of #highway so
@@ -2738,6 +3480,13 @@
         let bgGroup = null, bgStage = null, bgState = null;
         let bgMountedStyleId = null;
         let bgStyleId = 'particles', bgIntensity = 0.5, bgReactive = true;
+        // Active scene color theme (background + highway surface). Read in
+        // _bgLoadSettings, applied by _applyBgTheme (clear + fog + board plane).
+        let bgThemeId = 'default';   // BACKGROUND axis (clear + fog)
+        let hwThemeId = 'default';   // HIGHWAY axis (board + lane + laneDim)
+        // Board (fretboard/highway-surface) plane material — kept so the theme
+        // can recolor it live without rebuilding the board. Set in buildBoard().
+        let _boardPlaneMat = null;
         // Per-render opt-out for plugins borrowing the highway as a viz: when the
         // mount bundle sets bgReactive === false, suppress the audio-reactive
         // background for THIS instance only (no shared h3d_bg_* write). Captured
@@ -5143,9 +5892,9 @@
             // steers GPU selection to the dGPU; on single-dGPU desktops it
             // requests the high-performance power profile. (It does not by
             // itself force NVIDIA's utilisation-driven clock ramp on Linux.)
-            ren = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            ren = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', alpha: true });
             _probe = new T.Vector3();
-            ren.setClearColor(0x101820);
+            ren.setClearColor(0x101820, _bcActive() ? 0 : 1);
             wrap.appendChild(ren.domElement);
 
             lyricsCanvas = document.createElement('canvas');
@@ -6220,6 +6969,11 @@
 
             _bgLoadSettings();
             buildBoard();
+            // Apply the scene color theme now that settings + board exist. Sets
+            // the clear color + fog tint (board plane was themed in buildBoard).
+            // For the default theme this is identical to the hardcoded values
+            // initScene seeded above, so nothing changes for existing users.
+            _applyBgTheme();
 
             // Background animations (#13). Read settings keyed by this
             // panel and mount the active style's meshes. Subscribe to
@@ -6335,6 +7089,17 @@
                     _bgLoadSettings();
                     if (fretG) buildBoard();
                     if (bgStyleId === 'lights') _bgRebuild();
+                    return;
+                }
+                if (changedKey === 'bgTheme' || changedKey === 'hwTheme') {
+                    // A scene-color axis changed (background = bgTheme:
+                    // clear+fog; highway = hwTheme: board plane + lane). Recolor
+                    // in place — no mesh rebuild needed (the board plane material
+                    // is mutated via _boardPlaneMat, the lane via mLaneOdd/Even).
+                    // _applyBgTheme reapplies both axes from their own keys, so
+                    // changing one dropdown retints only its half.
+                    _bgLoadSettings();
+                    _applyBgTheme();
                     return;
                 }
                 if (changedKey === 'customImageDataUrl') {
@@ -6518,6 +7283,7 @@
             // setting without writing it back. Re-applied here so it sticks across
             // setting reloads.
             if (_bgReactiveOptOut) bgReactive = false;
+            if (bgStyleId === 'butterchurn') bgReactive = false; // Butterchurn owns the <audio> tap
             const newPaletteId = _bgReadSetting(panelKey, 'palette');
             let newPalette;
             if (newPaletteId === 'custom') {
@@ -6542,6 +7308,25 @@
                 activePalette = newPalette;
                 _bgPaletteSig = newSig;
                 _applyPaletteToMaterials();
+            }
+            bgThemeId = _bgReadSetting(panelKey, 'bgTheme');
+            // Highway axis. ONE-TIME BACKWARD-COMPAT BACKFILL: the first time we
+            // load with no stored hwTheme (pre-split installs, or anyone who only
+            // ever touched the old single "Scene colors" control), seed hwTheme
+            // FROM the background pick AND PERSIST it, so an existing 'cathode'
+            // selection looks byte-identical right after the upgrade. Persisting
+            // immediately (rather than re-inheriting on every read) is what keeps
+            // the two axes truly INDEPENDENT thereafter: once hwTheme is stored,
+            // changing the Background dropdown no longer drags the Highway
+            // surface along, and the settings UI's Highway value can never
+            // disagree with what's rendered. Written without _bgEmitChange so the
+            // backfill can't re-enter the change listener.
+            if (_bgHasStored(panelKey, 'hwTheme')) {
+                hwThemeId = _bgReadSetting(panelKey, 'hwTheme');
+            } else {
+                hwThemeId = bgThemeId;
+                _bgMemFallback.hwTheme = String(bgThemeId);
+                try { localStorage.setItem('h3d_bg_hwTheme', String(bgThemeId)); } catch (_) { /* storage blocked — mem fallback still seeds the read */ }
             }
             showFretOnNote = _bgReadSetting(panelKey, 'showFretOnNote');
             fretNumberGhostScope = _bgReadSetting(panelKey, 'fretNumberGhostScope');
@@ -6816,6 +7601,31 @@
         function _bgEffectiveStyleId() {
             return _venueSceneOverride ? 'venue' : bgStyleId;
         }
+        // The 'butterchurn' bg-style renders a WebGL MilkDrop canvas BEHIND a
+        // transparent highway via the self-contained _bc* controller (top of file),
+        // NOT a Three.js fog-scenery style (its scenery falls back to 'off'). Mount
+        // is idempotent and driven by the bg-style dropdown through _bgMountStyle.
+        function _bcActive() { return bgStyleId === 'butterchurn'; }
+        function _bcSyncMode() {
+            if (_bcActive()) {
+                // Recreate when there's no controller, or the last one died during
+                // async init (lib/WebGL failure) — a dead controller self-cleaned,
+                // so retry here instead of leaving the style permanently broken.
+                if ((!bcCtrl || (bcCtrl.dead && bcCtrl.dead())) && wrap) {
+                    if (bcCtrl) bcCtrl = null;
+                    // audioProvider reuses this instance's shared analyser (the
+                    // fog scenery's #audio / stems tap) so the browser path never
+                    // opens a second createMediaElementSource on #audio.
+                    try { bcCtrl = _bcCreateController(wrap, () => canvasSize(highwayCanvas), () => { try { return _bgGetAnalyser(); } catch (e) { return null; } }); }
+                    catch (e) { console.warn('[3D-Hwy] Butterchurn init failed', e); }
+                }
+                if (ren) ren.setClearColor(0x101820, 0); // transparent so the visualizer shows through
+            } else if (bcCtrl) {
+                try { bcCtrl.destroy(); } catch (e) {}
+                bcCtrl = null;
+                _applyBgTheme(); // restore the opaque themed clear
+            }
+        }
         function _bgMountStyle() {
             const effectiveId = _bgEffectiveStyleId();
             const style = BG_STYLES[effectiveId] || BG_STYLES.off;
@@ -6851,6 +7661,7 @@
             bgStage = stage;
             bgState = result;
             bgMountedStyleId = effectiveId;
+            _bcSyncMode();
         }
         function _bgUnmountStyle() {
             const mountedId = bgMountedStyleId || _bgEffectiveStyleId();
@@ -6913,15 +7724,57 @@
                 scene.fog.color.setHex(0x080c12);
                 scene.fog.near = FOG_START * 0.98;
                 scene.fog.far = FOG_END * 0.98;
-                if (ren) ren.setClearColor(0x080c12);
+                // Keep the clear transparent while Butterchurn is active so the
+                // venue scene doesn't occlude the visualizer behind the highway.
+                if (ren) ren.setClearColor(0x080c12, _bcActive() ? 0 : 1);
                 if (ambLight) ambLight.intensity = 0.68;
             } else {
-                scene.fog.color.setHex(0x101820);
+                // Restore the user's scene-color theme (clear + fog) rather than
+                // the old hardcoded gray, so deactivating venue doesn't wipe a
+                // chosen background theme. _applyBgTheme reads the current theme.
                 scene.fog.near = FOG_START * 0.8;
                 scene.fog.far = FOG_END * 1.2;
-                if (ren) ren.setClearColor(0x101820);
                 if (ambLight) ambLight.intensity = 0.85;
+                _applyBgTheme();
             }
+        }
+
+        // Apply BOTH scene-color axes, each from its own setting key:
+        //   • BACKGROUND (bgThemeId): the WebGL clear color + the distance-fog
+        //     tint. Skipped while the venue scene is active (venue owns those —
+        //     see _bgApplyVenueSceneFog).
+        //   • HIGHWAY (hwThemeId): the fretboard/highway-surface plane + the lit
+        //     highway lane strip (the bright quad under the gems) + its dimmer
+        //     alternating row. Always themed; venue doesn't touch them.
+        // The two axes are independent, so picking a different id in each mixes
+        // freely. Safe to call any time; called from initScene, buildBoard, and
+        // the scene-theme listener (so a live switch of EITHER dropdown retints
+        // only its half immediately).
+        //
+        // The lane fields are OPTIONAL on a highway theme: one that omits `lane`
+        // / `laneDim` falls back to the stock lit/dim lane hexes, so every
+        // existing/neutral highway theme stays byte-identical (default blue lane
+        // unchanged). Only colored highway themes opt into a coordinated lane.
+        function _applyBgTheme() {
+            // --- Background axis: clear + fog ---
+            const bg = _bgBackgroundColors(bgThemeId);
+            if (!_venueSceneOverride) {
+                if (scene && scene.fog) scene.fog.color.setHex(bg.fog);
+                if (ren) ren.setClearColor(bg.clear, _bcActive() ? 0 : 1);
+            }
+            // --- Highway axis: board plane + lane ---
+            const hw = _bgHighwayColors(hwThemeId);
+            if (_boardPlaneMat) _boardPlaneMat.color.setHex(hw.board);
+            // Lit lane strip + its dimmer alternating row. Fall back to the
+            // hardcoded stock lane colors when the highway theme omits them.
+            const laneLit = (typeof hw.lane === 'number') ? hw.lane : HWY_LANE_STRIPE_ODD_HEX;
+            const laneDim = (typeof hw.laneDim === 'number') ? hw.laneDim : HWY_LANE_STRIPE_EVEN_HEX;
+            if (mLaneOdd) mLaneOdd.color.setHex(laneLit);
+            if (mLaneEven) mLaneEven.color.setHex(laneDim);
+            // Keep the (otherwise vestigial) lane target color in sync with the
+            // lit lane so any future lane-blend consumer reads the themed value.
+            if (_laneTargetColor) _laneTargetColor.setHex(laneLit);
+            else _laneTargetColor = new T.Color(laneLit);
         }
 
         /* ── Fretboard (static geometry) ────────────────────────────────── */
@@ -6967,7 +7820,12 @@
             // spawn horizon (-AHEAD * TS), so the far edge aligns with AHEAD.
             const blAhead = TS * AHEAD;
             const pg = new T.PlaneGeometry(bw, blAhead);
-            const pm = new T.MeshLambertMaterial({ color: 0x08080e, transparent: true, opacity: 0.6 });
+            // Board (highway-surface) color comes from the active HIGHWAY scene
+            // theme (default theme = the original 0x08080e). Kept on
+            // _boardPlaneMat so _applyBgTheme can recolor it live without
+            // rebuilding the board.
+            const pm = new T.MeshLambertMaterial({ color: _bgHighwayColors(hwThemeId).board, transparent: true, opacity: 0.6 });
+            _boardPlaneMat = pm;
             const p = new T.Mesh(pg, pm);
             p.rotation.x = -Math.PI / 2;
             p.position.set(board.center, S_BASE - NH / 2 - 2 * K, -blAhead / 2);
@@ -13044,6 +13902,7 @@
             _fxElemSeen = new WeakSet();
             _fxRingMs = _fxBreakMs = -1e9;
             _chordVerdicts = new Map();
+            if (bcCtrl) { try { bcCtrl.destroy(); } catch (e) {} bcCtrl = null; }
             _bgUnmountStyle();
             bgGroup = null; _bgLastT = 0;
             _diagChord = null; _diagPrev = null; _diagPrevOpacity = 0; _diagPrevStartOpacity = 0; _diagPrevStartT = null;
@@ -13156,7 +14015,7 @@
             if (ren) { ren.dispose(); ren = null; }
             scene = cam = noteG = beatG = lblG = fretG = tuningLblG = null;
             ambLight = dirLight = null;
-            mStr = []; mGlow = []; mSus = []; mStrHitOutline = []; mAccentOutline = []; mAccentCore = []; mAccentHaloNear = []; mAccentHaloMid = []; mAccentHaloFar = []; _accentShellsByString = []; mWhiteOutline = mSusOutline = null; mMissOutline = null; mHitSusOutline = null; stringLines = []; stringLineGlows = []; fretWireMats = []; fretTubeGeo?.dispose?.(); fretTubeGeo = null;
+            mStr = []; mGlow = []; mSus = []; mStrHitOutline = []; mAccentOutline = []; mAccentCore = []; mAccentHaloNear = []; mAccentHaloMid = []; mAccentHaloFar = []; _accentShellsByString = []; mWhiteOutline = mSusOutline = null; mMissOutline = null; mHitSusOutline = null; stringLines = []; stringLineGlows = []; _boardPlaneMat = null; fretWireMats = []; fretTubeGeo?.dispose?.(); fretTubeGeo = null;
             for (const m of _inlayMats) m?.dispose?.(); _inlayMats = []; _inlayLabels = [];
             // mTapChevron: dispose explicitly — if no tap marker ever
             // spawned a pooled mesh, the scene.traverse() pass above never
@@ -13407,6 +14266,77 @@
                     }
                 }
 
+                // Browser: the shared analyser can change between songs (a sloppak
+                // stems swap replaces it, often on a new context) — or may not have
+                // existed when the controller mounted. Keep the visualizer bound to
+                // the LIVE analyser by comparing against what the controller
+                // actually bound (boundAnalyser()), not a separately-tracked guess:
+                // cheap reconnect when it's the same context, full controller
+                // rebuild when the context changed (cross-context connectAudio is
+                // impossible). Only act once the viz is ready (ready()), so we
+                // don't thrash a controller that's still loading async. Done before
+                // the render block so a rebuild this frame just skips one bc frame
+                // (bcCtrl goes null) without affecting the highway's own render.
+                if (bcCtrl && !_bcIsDesktop() && bcCtrl.ready && bcCtrl.ready()) {
+                    let a = null;
+                    try { a = _bgGetAnalyser(); } catch (e) { a = null; }
+                    const an = a && a.analyser;
+                    const bound = bcCtrl.boundAnalyser ? bcCtrl.boundAnalyser() : null;
+                    if (an && an !== bound) {
+                        if (!(bcCtrl.reconnectAudio && bcCtrl.reconnectAudio(a))) {
+                            // Context changed (or reconnect failed) — rebuild via the
+                            // proven destroy/create paths so the new context binds.
+                            try { bcCtrl.destroy(); } catch (e) {}
+                            bcCtrl = null;
+                            _bcSyncMode();
+                        }
+                    }
+                }
+                if (bcCtrl) {
+                    const cfg = _bcLoadSettings();
+                    const _ct = bundle.currentTime || 0;
+                    if (cfg.chartAccents) {
+                        if (_ct < _chartPrevT - 0.08 || _ct - _chartPrevT > 1.0) {
+                            _bcBeatIdx = _bcFfIdx(bundle.beats, _ct, 'time');
+                            _bcNoteIdx = _bcFfIdx(bundle.notes, _ct, 't');
+                            _bcChordIdx = _bcFfIdx(bundle.chords, _ct, 't');
+                        }
+                        const _beats = bundle.beats || [];
+                        while (_bcBeatIdx < _beats.length && _beats[_bcBeatIdx].time <= _ct) {
+                            const strong = _beats[_bcBeatIdx].measure !== undefined && _beats[_bcBeatIdx].measure !== -1;
+                            _chartEnv = Math.max(_chartEnv, strong ? 1.0 : 0.6);
+                            _bcBeatIdx++;
+                        }
+                        const _notes = bundle.notes || [];
+                        let _tintS = -1;
+                        while (_bcNoteIdx < _notes.length && _notes[_bcNoteIdx].t <= _ct) {
+                            _chartEnv = Math.max(_chartEnv, 0.6);
+                            _tintS = _notes[_bcNoteIdx].s;
+                            _bcNoteIdx++;
+                        }
+                        const _chords = bundle.chords || [];
+                        while (_bcChordIdx < _chords.length && _chords[_bcChordIdx].t <= _ct) {
+                            _chartEnv = Math.max(_chartEnv, 0.95);
+                            _bcChordIdx++;
+                        }
+                        if (_tintS >= 0 && activePalette && activePalette.length) {
+                            _bcTintTarget = activePalette[((_tintS % activePalette.length) + activePalette.length) % activePalette.length];
+                        }
+                        _chartPrevT = _ct;
+                        _chartEnv *= 0.86;
+                        bcCtrl.chart(_chartEnv * (cfg.chartStrength != null ? cfg.chartStrength : 1));
+                    } else {
+                        bcCtrl.chart(0);
+                    }
+                    if (cfg.colorTint && _bcTintTarget != null) {
+                        const tr = (_bcTintTarget >> 16) & 255, tg = (_bcTintTarget >> 8) & 255, tb = _bcTintTarget & 255;
+                        _tintR += (tr - _tintR) * 0.06; _tintG += (tg - _tintG) * 0.06; _tintB += (tb - _tintB) * 0.06;
+                        bcCtrl.tint((Math.round(_tintR) << 16) | (Math.round(_tintG) << 8) | Math.round(_tintB), cfg.tintStrength != null ? cfg.tintStrength : 0.65);
+                    } else {
+                        bcCtrl.tint(null, 0);
+                    }
+                    bcCtrl.render();
+                }
                 pbBeg(6); ren.render(scene, cam); pbEnd(6);
                 if (lyricsCtx && lyricsCanvas) {
                     lyricsCtx.clearRect(0, 0, lyricsCanvas.width, lyricsCanvas.height);

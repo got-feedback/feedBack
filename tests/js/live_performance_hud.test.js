@@ -67,6 +67,64 @@ test('reset counters via bindRuntime song lifecycle', () => {
     assert.deepEqual(runtime.getCounters(), { hits: 0, misses: 0, streak: 0, bestStreak: 0 });
 });
 
+test('backward song:seek rebuilds the tally to the new position', () => {
+    const listeners = new Map();
+    const sm = {
+        on(event, fn) { const l = listeners.get(event) || []; l.push(fn); listeners.set(event, l); },
+        emit(event, detail) { (listeners.get(event) || []).forEach((fn) => fn({ detail })); },
+    };
+    const runtime = hud.bindRuntime(sm);
+    sm.emit('song:loading', { filename: 'song.archive' });
+
+    // Notes judged at t = 1..5 (miss at t=4), each carried on the event detail.
+    sm.emit('note:hit', { noteTime: 1 });
+    sm.emit('note:hit', { noteTime: 2 });
+    sm.emit('note:hit', { noteTime: 3 });
+    sm.emit('note:miss', { noteTime: 4 });
+    sm.emit('note:hit', { noteTime: 5 });
+    assert.equal(runtime.getCounters().hits, 4);
+    assert.equal(runtime.getCounters().misses, 1);
+
+    // Restart-style backward seek to t=3 → keep only t=1,2 (both hits).
+    sm.emit('song:seek', { from: 5, to: 3, reason: 'song-restart' });
+    assert.equal(runtime.getCounters().hits, 2);
+    assert.equal(runtime.getCounters().misses, 0);
+    assert.equal(runtime.getCounters().streak, 2);
+
+    // Restart to the very top → 0 notes.
+    sm.emit('song:seek', { from: 3, to: 0, reason: 'song-restart' });
+    assert.deepEqual(runtime.getCounters(), { hits: 0, misses: 0, streak: 0, bestStreak: 0 });
+});
+
+test('a FORWARD song:seek does not roll back the tally', () => {
+    const listeners = new Map();
+    const sm = {
+        on(event, fn) { const l = listeners.get(event) || []; l.push(fn); listeners.set(event, l); },
+        emit(event, detail) { (listeners.get(event) || []).forEach((fn) => fn({ detail })); },
+    };
+    const runtime = hud.bindRuntime(sm);
+    sm.emit('song:loading', { filename: 'song.archive' });
+    sm.emit('note:hit', { noteTime: 1 });
+    sm.emit('note:hit', { noteTime: 2 });
+    sm.emit('song:seek', { from: 2, to: 30, reason: 'seek-by' });
+    assert.equal(runtime.getCounters().hits, 2, 'forward seek keeps earlier hits');
+});
+
+test('loop-wrap seek is ignored (drill mode keeps accumulating)', () => {
+    const listeners = new Map();
+    const sm = {
+        on(event, fn) { const l = listeners.get(event) || []; l.push(fn); listeners.set(event, l); },
+        emit(event, detail) { (listeners.get(event) || []).forEach((fn) => fn({ detail })); },
+    };
+    const runtime = hud.bindRuntime(sm);
+    sm.emit('song:loading', { filename: 'song.archive' });
+    sm.emit('note:hit', { noteTime: 11 });
+    sm.emit('note:hit', { noteTime: 12 });
+    // A-B drill loop wraps backward to loopA — must NOT reset the tally.
+    sm.emit('song:seek', { from: 12, to: 10, reason: 'loop-wrap' });
+    assert.equal(runtime.getCounters().hits, 2, 'loop-wrap leaves the cumulative tally intact');
+});
+
 test('DOM text updates after hit and miss events', () => {
     class El {
         constructor(id) {

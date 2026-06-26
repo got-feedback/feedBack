@@ -108,9 +108,19 @@ Each entry names the function or banner you should grep for, plus key sub-blocks
 - **Beat lines** (downbeats highlighted) → `update()`, `// ── Beat lines ──` block. `mBeatM` (full opacity 0.25) for measure starts, `mBeatQ` (0.07) for other beats.
 - **Section labels** → `update()`, `// ── Section labels ──` block. Cyan (`#00cccc`) sprite at fret 12, above the highest string.
 
+### Scene colors (two independent axes: Background + Highway)
+- **Scene-color themes** → `BG_THEMES` table near the top of `createFactory()`. One combined table is the single source of truth, but it drives **two independent axes that share the same id-set**:
+  - **Background axis** — setting key `bgTheme`, setter `window.h3dBgSetBgTheme`, state `bgThemeId`. Owns `clear` (WebGL clear color) + `fog`.
+  - **Highway axis** — setting key `hwTheme`, setter `window.h3dBgSetHwTheme`, state `hwThemeId`. Owns `board` (fretboard/highway-surface plane) + optional `lane`/`laneDim` (the lit lane strip).
+  Any background id can mix with any highway id; picking the same id in both gives the original "matched" look. Per-axis accessors are `_bgBackgroundColors(id)` / `_bgHighwayColors(id)` (both alias `_bgThemeColors`). Both axes default to `'default'` (byte-identical to the original look).
+- **Applying a theme** → `_applyBgTheme()`. Background half sets clear+fog from `bgThemeId` (skipped under the venue scene); highway half sets the board plane + lane materials (`mLaneOdd`/`mLaneEven`) from `hwThemeId`. Re-run on init, `buildBoard()`, and the settings listener (which fires for **both** `bgTheme` and `hwTheme`), so changing either dropdown retints only its half live.
+- **Backward-compat migration** → `_bgLoadSettings()`: the first time it loads with no stored `hwTheme` (`_bgHasStored` false), it seeds `hwThemeId` from `bgThemeId` **and persists `hwTheme` once** (a one-time backfill, written without `_bgEmitChange`). So a pre-split single-`bgTheme` pick is byte-identical right after the upgrade, and from then on the two axes are fully independent — changing the Background dropdown never drags the Highway surface, and the settings UI's Highway value can't disagree with what's rendered. settings.html shows the same first-load value via `storedHwTheme == null ? bgTheme : coerceHwTheme(...)`.
+- **Adding/removing a theme** → edit `BG_THEMES` (the colors) AND `settings.html`'s `SCENE_THEMES` array (the `{id,label}` list — the single source the two dropdowns' `<option>`s and the `VALID_BG_THEMES` validator are both generated from). Keep the two id-sets aligned.
+
 ### Highway lane (the highlighted strip under active frets)
 - **Lane drawing** → `update()`, `// ── Dynamic highway lane ──` block. `pLane` is a single quad on the fretboard plane; `pLaneDivider` is thin vertical lines at each fret inside the lane. Width keys off the active-fret range; min width ≈ 4 frets.
-- **Lane intensity** → `highwayIntensity` accumulated from upcoming notes (further notes dim it, near notes light it). `_laneTargetColor = 0x4488ff` (set in `initScene()`) is the "lit" color, blended toward from `0x112233`.
+- **Lane intensity** → `highwayIntensity` accumulated from upcoming notes (further notes dim it, near notes light it).
+- **Lane color** → the lit quad color is `mLaneOdd.color` (stock `HWY_LANE_STRIPE_ODD_HEX = 0x103B5C`), the dimmer alternating row `mLaneEven.color` (`HWY_LANE_STRIPE_EVEN_HEX = 0x08283C`). These are now **theme-aware**: `_applyBgTheme()` recolors them from the active HIGHWAY theme's optional `lane`/`laneDim` fields, falling back to the stock hexes when a highway theme omits them. (`_laneTargetColor`, set in `initScene()`, is kept in sync with the lit color but has no live consumer today.)
 
 ### Lyrics & overlays
 - **Lyrics overlay** → `drawLyrics()`. 2D canvas, top centre, semi-transparent rounded background, syllable-level highlighting (current syllable in white, played in muted, upcoming in dim).
@@ -201,7 +211,7 @@ The eight-color palette `S_COL` is the single source of truth for per-string col
 
 If a planned color-palette feature lands (issue #10), expect it to swap the palette source array but keep this single-array indirection. Anything that hardcodes color today will break that swap; flag it during review.
 
-Non-string colors (lane target `0x4488ff`, fret-row label colors `#ffe84d` / `#9ab8cc`, fret-dot color `0x556677`, lyrics box rgba, chord-name gold `#e8d080`, etc.) are scattered as literals — that's intentional for now, since they're scene-wide accents rather than per-string. Pulling them into named constants is fine if you're already in that area.
+Non-string colors (the stock lane hexes `HWY_LANE_STRIPE_ODD_HEX`/`_EVEN_HEX` — now overridable per Highway theme, see "Scene colors" above; fret-row label colors `#ffe84d` / `#9ab8cc`, fret-dot color `0x556677`, lyrics box rgba, chord-name gold `#e8d080`, etc.) are scattered as literals — that's intentional for now, since they're scene-wide accents rather than per-string. Pulling them into named constants is fine if you're already in that area.
 
 ## Tweaking text-sprite styling
 

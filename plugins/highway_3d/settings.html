@@ -14,6 +14,15 @@
         <button type="button" onclick="window.hwcSaveTheme?.()" class="bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300">Save as…</button>
         <button type="button" onclick="window.hwcDeleteTheme?.()" class="bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-400">Delete</button>
     </div>
+    <!-- One-click presets: apply a whole named palette to every string at once.
+         Buttons are generated from window.feedBack.highwayColors.presets so the
+         list stays in sync with core (app.js HWC_PRESETS). Each calls
+         applyPreset(id), which persists + applies to both highways and refreshes
+         the pickers below. Older core without the presets API leaves this empty. -->
+    <div class="mb-3">
+        <span class="text-xs text-gray-500 mb-1 block">Quick presets</span>
+        <div id="hwc-presets" class="flex flex-wrap gap-2"></div>
+    </div>
     <div id="hwc-pickers" class="mb-3" style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;"></div>
     <div class="flex items-center gap-2 mb-2">
         <button type="button" onclick="window.hwcReset?.()" class="bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300">Reset to defaults</button>
@@ -36,6 +45,33 @@
             if (typeof window.hwcInitSettingsUI === 'function') {
                 try { window.hwcInitSettingsUI(); } catch (e) { console.warn('[3D-Hwy] hwcInitSettingsUI failed', e); }
             }
+            // Render the one-click preset buttons from core's preset list.
+            try {
+                const api = window.feedBack && window.feedBack.highwayColors;
+                const host = document.getElementById('hwc-presets');
+                if (api && Array.isArray(api.presets) && host) {
+                    host.innerHTML = '';
+                    // Slot order low → high for the preview swatch (bass-side first).
+                    const order = ['lowE', 'A', 'D', 'G', 'B', 'highE'];
+                    for (const p of api.presets) {
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'flex items-center gap-2 bg-dark-700 border border-gray-800 rounded-lg px-2 py-1 text-xs text-gray-300';
+                        const sw = document.createElement('span');
+                        const stops = order.map((k) => p.colors[k]).filter(Boolean).join(',');
+                        sw.style.cssText = 'width:2.5rem;height:0.85rem;border-radius:3px;border:1px solid #0006;'
+                            + 'background:linear-gradient(90deg,' + stops + ');';
+                        btn.appendChild(sw);
+                        const txt = document.createElement('span');
+                        txt.textContent = p.label;
+                        btn.appendChild(txt);
+                        btn.addEventListener('click', function () {
+                            try { api.applyPreset(p.id); } catch (e) { console.warn('[3D-Hwy] applyPreset failed', e); }
+                        });
+                        host.appendChild(btn);
+                    }
+                }
+            } catch (e) { console.warn('[3D-Hwy] preset render failed', e); }
         })();
     </script>
 </div>
@@ -88,10 +124,144 @@
             <option value="silhouettes">Silhouettes (parallax)</option>
             <option value="lights">Lights (stage glows)</option>
             <option value="geometric">Geometric (rotating shapes)</option>
+            <option value="butterchurn">Butterchurn (visualizer)</option>
             <option value="image" disabled>Custom image (none uploaded)</option>
             <option value="video" disabled>Custom video (none uploaded)</option>
         </select>
     </div>
+
+    <!-- Scene colors — TWO independent axes sharing one palette family:
+         Background (clear + fog) and Highway (board surface + lit lane). Same
+         id-set in both, so any background can mix with any highway; picking the
+         same in both gives the original "matched" look. "Default" is the
+         original look on both. -->
+    <div class="mt-3">
+        <label for="h3d-bg-theme" class="text-xs font-medium text-gray-400 mb-1 block">Background</label>
+        <!-- Options are populated from SCENE_THEMES (the single id+label source)
+             in the hydration script below, so the two dropdowns can't drift. -->
+        <select id="h3d-bg-theme"
+            onchange="window.h3dBgSetBgTheme && window.h3dBgSetBgTheme(this.value)"
+            class="w-full bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 outline-none">
+        </select>
+        <p class="text-[10px] text-gray-500 mt-1">
+            Tints the background + distance fog. Applies to the 3D highway immediately.
+        </p>
+    </div>
+    <div class="mt-3">
+        <label for="h3d-hw-theme" class="text-xs font-medium text-gray-400 mb-1 block">Highway (surface + lane)</label>
+        <!-- Options populated from SCENE_THEMES (see below), same source as the
+             Background dropdown so the two stay in lockstep. -->
+        <select id="h3d-hw-theme"
+            onchange="window.h3dBgSetHwTheme && window.h3dBgSetHwTheme(this.value)"
+            class="w-full bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 outline-none">
+        </select>
+        <p class="text-[10px] text-gray-500 mt-1">
+            Tints the fretboard surface + the lit lane. Applies to the 3D highway immediately.
+        </p>
+    </div>
+
+    <!-- Butterchurn (visualizer) options. These drive the 'butterchurn'
+         Background style. They used to live in a floating in-canvas panel; the
+         on/off + slider controls now live here in the standard settings UI.
+         The live preset browser (pick / favorite / ban / cycle) stays in-canvas.
+         Persisted in the 'viz3d_settings' localStorage blob (shared with the
+         in-canvas preset controls); window.h3dBcApplySettings() pushes changes
+         to a mounted highway live. -->
+    <div id="h3d-bc-section" class="mt-4">
+        <h3 class="text-sm font-medium text-gray-400 mb-2">Butterchurn (visualizer)</h3>
+        <p class="text-xs text-gray-500 mb-2">Active when Background style is set to <em>Butterchurn (visualizer)</em>.</p>
+        <div class="flex items-center gap-3 mt-3">
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+                <input type="checkbox" id="h3d-bc-enabled" class="accent-accent"> Background on
+            </label>
+        </div>
+        <div class="mt-3">
+            <label for="h3d-bc-opacity" class="text-xs font-medium text-gray-400 mb-1 block">Opacity: <span id="h3d-bc-opacity-label">100%</span></label>
+            <input type="range" id="h3d-bc-opacity" min="0" max="100" class="w-full accent-accent">
+        </div>
+        <div class="flex items-center gap-3 mt-3">
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+                <input type="checkbox" id="h3d-bc-laneDim" class="accent-accent"> Dim behind lane
+            </label>
+        </div>
+        <div class="mt-3">
+            <label for="h3d-bc-laneDimStrength" class="text-xs font-medium text-gray-400 mb-1 block">Dim strength</label>
+            <input type="range" id="h3d-bc-laneDimStrength" min="0" max="100" class="w-full accent-accent">
+        </div>
+        <div class="flex items-center gap-3 mt-3">
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+                <input type="checkbox" id="h3d-bc-chartAccents" class="accent-accent"> Chart accents
+            </label>
+        </div>
+        <div class="mt-3">
+            <label for="h3d-bc-chartStrength" class="text-xs font-medium text-gray-400 mb-1 block">Chart strength</label>
+            <input type="range" id="h3d-bc-chartStrength" min="0" max="200" class="w-full accent-accent">
+        </div>
+        <div class="flex items-center gap-3 mt-3">
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+                <input type="checkbox" id="h3d-bc-colorTint" class="accent-accent"> Color tint
+            </label>
+        </div>
+        <div class="mt-3">
+            <label for="h3d-bc-tintStrength" class="text-xs font-medium text-gray-400 mb-1 block">Tint strength</label>
+            <input type="range" id="h3d-bc-tintStrength" min="0" max="100" class="w-full accent-accent">
+        </div>
+        <div class="mt-3">
+            <label for="h3d-bc-guitarGain" class="text-xs font-medium text-gray-400 mb-1 block">Guitar gain: <span id="h3d-bc-guitarGain-label">×6</span></label>
+            <input type="range" id="h3d-bc-guitarGain" min="1" max="12" step="0.5" class="w-full accent-accent">
+        </div>
+        <div class="mt-3">
+            <label for="h3d-bc-songGain" class="text-xs font-medium text-gray-400 mb-1 block">Song gain: <span id="h3d-bc-songGain-label">×1.8</span></label>
+            <input type="range" id="h3d-bc-songGain" min="0" max="5" step="0.1" class="w-full accent-accent">
+        </div>
+    </div>
+    <script>
+        // Self-contained Butterchurn settings wiring. Reads/writes the same
+        // 'viz3d_settings' blob the in-canvas preset controls use (read-modify-
+        // write preserves cyclePool/hold and the favorites/bans lists), then
+        // calls window.h3dBcApplySettings() so a mounted highway applies the
+        // change live. Guarded so it no-ops if the section isn't present.
+        (function () {
+            const BC_LS = 'viz3d_settings';
+            const BC_DEFAULTS = { enabled: true, opacity: 1.0, laneDim: true, laneDimStrength: 0.45, chartAccents: true, colorTint: true, chartStrength: 1.0, tintStrength: 0.65, guitarGain: 6, songGain: 1.8 };
+            function readBlob() { let s = {}; try { s = JSON.parse(localStorage.getItem(BC_LS) || '{}') || {}; } catch (e) {} return s; }
+            function patch(p) {
+                const s = readBlob();
+                Object.assign(s, p);
+                try { localStorage.setItem(BC_LS, JSON.stringify(s)); } catch (e) {}
+                try { if (typeof window.h3dBcApplySettings === 'function') window.h3dBcApplySettings(); } catch (e) {}
+            }
+            const s = Object.assign({}, BC_DEFAULTS, readBlob());
+            const $ = (id) => document.getElementById(id);
+            const en = $('h3d-bc-enabled');
+            if (!en) return;
+            const op = $('h3d-bc-opacity'), opv = $('h3d-bc-opacity-label');
+            const ld = $('h3d-bc-laneDim'), lds = $('h3d-bc-laneDimStrength');
+            const ca = $('h3d-bc-chartAccents'), cs = $('h3d-bc-chartStrength');
+            const ct = $('h3d-bc-colorTint'), ts = $('h3d-bc-tintStrength');
+            const gg = $('h3d-bc-guitarGain'), ggv = $('h3d-bc-guitarGain-label');
+            const sg = $('h3d-bc-songGain'), sgv = $('h3d-bc-songGain-label');
+            // Hydrate from saved settings.
+            en.checked = !!s.enabled;
+            op.value = Math.round((s.opacity != null ? s.opacity : 1) * 100); if (opv) opv.textContent = op.value + '%';
+            ld.checked = !!s.laneDim; lds.value = Math.round((s.laneDimStrength != null ? s.laneDimStrength : 0.45) * 100);
+            ca.checked = !!s.chartAccents; cs.value = Math.round((s.chartStrength != null ? s.chartStrength : 1) * 100);
+            ct.checked = !!s.colorTint; ts.value = Math.round((s.tintStrength != null ? s.tintStrength : 0.65) * 100);
+            gg.value = s.guitarGain != null ? s.guitarGain : 6; if (ggv) ggv.textContent = '×' + gg.value;
+            sg.value = s.songGain != null ? s.songGain : 1.8; if (sgv) sgv.textContent = '×' + sg.value;
+            // Wire changes (read-modify-write + live apply).
+            en.addEventListener('change', () => patch({ enabled: en.checked }));
+            op.addEventListener('input', () => { if (opv) opv.textContent = op.value + '%'; patch({ opacity: op.value / 100 }); });
+            ld.addEventListener('change', () => patch({ laneDim: ld.checked }));
+            lds.addEventListener('input', () => patch({ laneDimStrength: lds.value / 100 }));
+            ca.addEventListener('change', () => patch({ chartAccents: ca.checked }));
+            cs.addEventListener('input', () => patch({ chartStrength: cs.value / 100 }));
+            ct.addEventListener('change', () => patch({ colorTint: ct.checked }));
+            ts.addEventListener('input', () => patch({ tintStrength: ts.value / 100 }));
+            gg.addEventListener('input', () => { if (ggv) ggv.textContent = '×' + gg.value; patch({ guitarGain: parseFloat(gg.value) }); });
+            sg.addEventListener('input', () => { if (sgv) sgv.textContent = '×' + sg.value; patch({ songGain: parseFloat(sg.value) }); });
+        })();
+    </script>
 
     <!-- Intensity -->
     <div class="mt-3">
@@ -712,8 +882,27 @@
          no-selection / NaN state. -->
     <script>
         (function () {
-            const DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', showFretOnNote: true, fretNumberGhostScope: 'chords', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
-            const VALID_STYLES = new Set(['off', 'particles', 'silhouettes', 'lights', 'geometric', 'image', 'video']);
+            const DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', bgTheme: 'default', hwTheme: 'default', showFretOnNote: true, fretNumberGhostScope: 'chords', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
+            const VALID_STYLES = new Set(['off', 'particles', 'silhouettes', 'lights', 'geometric', 'butterchurn', 'image', 'video']);
+            // Scene color themes — the single id+label source for BOTH the
+            // Background and Highway dropdowns AND the validator below. The
+            // <option>s are generated from this list (see hydration), so the two
+            // dropdowns can't drift from each other or from VALID_BG_THEMES.
+            // Mirror these ids with screen.js BG_THEMES (the color table).
+            const SCENE_THEMES = [
+                { id: 'default',      label: 'Default (blue-black)' },
+                { id: 'midnight',     label: 'Midnight (deep blue)' },
+                { id: 'charcoal',     label: 'Charcoal (neutral gray)' },
+                { id: 'deeppurple',   label: 'Deep purple' },
+                { id: 'forest',       label: 'Forest (dark green)' },
+                { id: 'warmslate',    label: 'Warm Slate (espresso)' },
+                { id: 'deepfocus',    label: 'Deep Focus (near-black)' },
+                { id: 'deepsea',      label: 'Deep Sea (dark teal)' },
+                { id: 'cathode',      label: 'Cathode (amber CRT)' },
+                { id: 'cathodegreen', label: 'Cathode Green (green CRT)' },
+                { id: 'hearth',       label: 'Hearth (warm red)' },
+            ];
+            const VALID_BG_THEMES = new Set(SCENE_THEMES.map((t) => t.id));
             const VALID_CAMERA_MODES = new Set(['steady', 'lookahead']);
             // Chord diagram is top-only (bl/br removed).
             const VALID_CHORD_DIAG_POSITIONS = new Set(['tl', 'tr']);
@@ -771,6 +960,9 @@
             const VIDEO_UPLOAD_URL = '/api/plugins/highway_3d/files';
 
             function coerceStyle(v) { return VALID_STYLES.has(v) ? v : DEFAULTS.style; }
+            function coerceBgTheme(v) { return VALID_BG_THEMES.has(v) ? v : DEFAULTS.bgTheme; }
+            // Highway axis shares the same valid id-set as the background axis.
+            function coerceHwTheme(v) { return VALID_BG_THEMES.has(v) ? v : DEFAULTS.hwTheme; }
             function coerceCameraMode(v) {
                 if (v === 'classic') v = 'steady';
                 return VALID_CAMERA_MODES.has(v) ? v : DEFAULTS.cameraMode;
@@ -812,7 +1004,7 @@
                 return fallback;
             }
 
-            let storedStyle = null, storedI = null, storedR = null, storedFretOnNote = null, storedFretNumberGhostScope = null;
+            let storedStyle = null, storedBgTheme = null, storedHwTheme = null, storedI = null, storedR = null, storedFretOnNote = null, storedFretNumberGhostScope = null;
             let storedCameraSmoothing = null;
             let storedCameraMode = null;
             let storedCustomImageDataUrl = null, storedCustomImageName = null;
@@ -848,6 +1040,8 @@
             let storedSlideArrowChainPreviewVisible = null;
             try {
                 storedStyle = localStorage.getItem('h3d_bg_style');
+                storedBgTheme = localStorage.getItem('h3d_bg_bgTheme');
+                storedHwTheme = localStorage.getItem('h3d_bg_hwTheme');
                 storedI = localStorage.getItem('h3d_bg_intensity');
                 storedR = localStorage.getItem('h3d_bg_reactive');
                 storedFretOnNote = localStorage.getItem('h3d_bg_showFretOnNote');
@@ -889,6 +1083,15 @@
             } catch (_) { /* storage blocked */ }
 
             const style = coerceStyle(storedStyle);
+            const bgTheme = coerceBgTheme(storedBgTheme);
+            // Highway axis. BACKWARD-COMPAT: when hwTheme was never written
+            // (pre-split installs, or the panel opened before the highway has
+            // mounted and run its one-time backfill), show the background pick —
+            // exactly the value screen.js will persist on first load — so the
+            // dropdown matches what's rendered. Once hwTheme is stored (which the
+            // renderer's backfill or any explicit pick does) it reads
+            // independently and the two axes no longer track each other.
+            const hwTheme = (storedHwTheme == null) ? bgTheme : coerceHwTheme(storedHwTheme);
             const intensity = coerceIntensity(storedI);
             const reactive = coerceBool(storedR, DEFAULTS.reactive);
             const showFretOnNote = coerceBool(storedFretOnNote, DEFAULTS.showFretOnNote);
@@ -959,6 +1162,20 @@
             const customVideoName    = (typeof storedCustomVideoName === 'string')    ? storedCustomVideoName    : DEFAULTS.customVideoName;
 
             const sel = document.getElementById('h3d-bg-style');
+            const bgThemeSel = document.getElementById('h3d-bg-theme');
+            const hwThemeSel = document.getElementById('h3d-hw-theme');
+            // Populate both scene-theme dropdowns from the single SCENE_THEMES
+            // source so they can't drift. (Values are selected further below.)
+            for (const selEl of [bgThemeSel, hwThemeSel]) {
+                if (!selEl) continue;
+                selEl.innerHTML = '';
+                for (const t of SCENE_THEMES) {
+                    const opt = document.createElement('option');
+                    opt.value = t.id;
+                    opt.textContent = t.label;
+                    selEl.appendChild(opt);
+                }
+            }
             const sli = document.getElementById('h3d-bg-intensity');
             const lbl = document.getElementById('h3d-bg-intensity-label');
             const rea = document.getElementById('h3d-bg-reactive');
@@ -1200,6 +1417,8 @@
                     sel.value = style;
                 }
             }
+            if (bgThemeSel) bgThemeSel.value = bgTheme;
+            if (hwThemeSel) hwThemeSel.value = hwTheme;
 
             if (fileInput) {
                 fileInput.addEventListener('change', function () {

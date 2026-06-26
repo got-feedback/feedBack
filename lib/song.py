@@ -1090,6 +1090,20 @@ def parse_arrangement(xml_path: str) -> Arrangement:
         while el.get(f"string{i}") is not None:
             tuning.append(_int(el, f"string{i}"))
             i += 1
+        # Authoritative string count, written by the GP/RS serializer
+        # (gp2rs._build_xml). The schema pads `<tuning>` to 6 slots, which
+        # erases the 4-vs-5-vs-6-string distinction for standard tunings;
+        # when the real count was recorded, trim the padded tail so
+        # arrangement_string_count / the editor see 4 or 5 instead of 6.
+        # Absent (archive / legacy sources) → leave the 6-slot tuning as-is.
+        sc = el.get("stringCount")
+        if sc is not None:
+            try:
+                n = int(sc)
+            except (TypeError, ValueError):
+                n = 0
+            if 1 <= n <= len(tuning):
+                tuning = tuning[:n]
 
     # Capo
     capo = 0

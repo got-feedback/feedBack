@@ -118,6 +118,14 @@
         // "Waiting for notes" overlay for the whole song.
         let revealed = false;
         let counters = createCounters();
+        // Position-aware ledger: { t: chart-note time, hit } per judged note,
+        // so a BACKWARD reposition (Restart button / scrub-back) can rebuild the
+        // visible tally to reflect only the notes up to the new playhead instead
+        // of keeping the stale cumulative total. Mirrors the notedetect HUD's own
+        // ledger (note:hit/note:miss carry the judgment, incl. noteTime). The
+        // running `counters` stay incremental for the live path; the ledger is
+        // only replayed on a seek.
+        let ledger = [];
         const els = domEls || {
             root: typeof document !== 'undefined' ? document.getElementById('v3-live-performance-hud') : null,
             percent: typeof document !== 'undefined' ? document.getElementById('v3-live-performance-percent') : null,
@@ -134,6 +142,39 @@
 
         function resetCounters() {
             counters = createCounters();
+            ledger = [];
+        }
+
+        // Chart-note time for a judgment event, or null when unknown (argless
+        // test calls, or a judgment without timing). note:hit/note:miss carry
+        // the notedetect judgment object as `detail`.
+        function judgmentTime(e) {
+            const d = e && e.detail;
+            if (!d) return null;
+            if (Number.isFinite(d.noteTime)) return d.noteTime;
+            if (d.chartNote && Number.isFinite(d.chartNote.t)) return d.chartNote.t;
+            return null;
+        }
+
+        // Rebuild counters from the ledger up to (excluding) chart time `t`.
+        // Drop judgments at/after `t` so replaying forward re-counts them, then
+        // replay survivors in time order through the same hit/streak rules.
+        function rebuildToPosition(t) {
+            if (!Number.isFinite(t)) return;
+            ledger = ledger.filter((e) => !(Number.isFinite(e.t) && e.t >= t));
+            const sorted = ledger.slice().sort((a, b) => (a.t == null ? -Infinity : a.t) - (b.t == null ? -Infinity : b.t));
+            counters = createCounters();
+            for (const e of sorted) {
+                if (e.hit) {
+                    counters.hits++;
+                    counters.streak++;
+                    if (counters.streak > counters.bestStreak) counters.bestStreak = counters.streak;
+                } else {
+                    counters.misses++;
+                    counters.streak = 0;
+                }
+            }
+            paint();
         }
 
         function currentStats() {
@@ -180,18 +221,20 @@
             paint();
         }
 
-        function onHit() {
+        function onHit(e) {
             if (!active) return;
             reveal();
+            ledger.push({ t: judgmentTime(e), hit: true });
             counters.hits++;
             counters.streak++;
             if (counters.streak > counters.bestStreak) counters.bestStreak = counters.streak;
             paint();
         }
 
-        function onMiss() {
+        function onMiss(e) {
             if (!active) return;
             reveal();
+            ledger.push({ t: judgmentTime(e), hit: false });
             counters.misses++;
             counters.streak = 0;
             paint();
@@ -207,6 +250,22 @@
         sm.on('song:ended', () => { hideSession(); });
         sm.on('note:hit', onHit);
         sm.on('note:miss', onMiss);
+        // Restart / scrub-back: rebuild the tally to the new playhead. song:seek
+        // is core's single repositioning funnel ({ from, to, reason }). Only a
+        // BACKWARD jump recomputes; a forward seek leaves earlier notes counted.
+        // Skip loop-wrap (drill mode) so a practiced A-B loop keeps accumulating,
+        // matching the notedetect HUD.
+        sm.on('song:seek', (e) => {
+            if (!active) return;
+            const d = (e && e.detail) || {};
+            if (d.reason === 'loop-wrap') return;
+            const to = Number(d.to);
+            if (!Number.isFinite(to)) return;
+            const from = Number(d.from);
+            const movedBack = Number.isFinite(from) ? (to < from - 0.05) : true;
+            if (!movedBack) return;
+            rebuildToPosition(to);
+        });
 
         return {
             getCounters: () => ({ ...counters }),
@@ -216,6 +275,7 @@
             hideSession,
             onHit,
             onMiss,
+            rebuildToPosition,
             paint,
             els,
         };

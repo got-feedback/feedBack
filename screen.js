@@ -2196,6 +2196,8 @@
      * ====================================================================== */
 
     window.slopsmithViz_keys_highway_3d = createFactory;
+    // slopsmith→feedBack rename: host viz picker looks up `window.feedBackViz_<id>`.
+    window.feedBackViz_keys_highway_3d = window.slopsmithViz_keys_highway_3d;
     // Static contextType so core can make canvas-swap decisions before
     // constructing a renderer instance (and gate Auto on WebGL2).
     window.slopsmithViz_keys_highway_3d.contextType = 'webgl2';

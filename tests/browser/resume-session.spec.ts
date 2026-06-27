@@ -46,6 +46,13 @@ async function openPlayerWithMockSong(page) {
 
 test.describe('Resume last session', () => {
   test.beforeEach(async ({ page }) => {
+    // Suppress the first-run onboarding overlay (a modal that intercepts
+    // pointer/keyboard events) so the player isn't covered.
+    await page.route('**/api/profile', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ json: { display_name: 'Test', player_hash: 'test', onboarded: true } });
+      } else { await route.continue(); }
+    });
     await page.goto('/');
     await page.waitForSelector('.screen.active', { timeout: 10000 });
     await page.evaluate((k) => localStorage.removeItem(k), RESUME_KEY);

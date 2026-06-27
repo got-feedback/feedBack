@@ -41,6 +41,13 @@ async function openPlayerWithMockSong(page) {
 
 test.describe('Exit-confirm toggle', () => {
   test.beforeEach(async ({ page }) => {
+    // Suppress the first-run onboarding overlay (a modal that intercepts
+    // pointer/keyboard events) so Escape reaches the player, not the overlay.
+    await page.route('**/api/profile', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ json: { display_name: 'Test', player_hash: 'test', onboarded: true } });
+      } else { await route.continue(); }
+    });
     await page.goto('/');
     await page.waitForSelector('.screen.active', { timeout: 10000 });
     await page.evaluate((k) => localStorage.removeItem(k), CONFIRM_KEY);

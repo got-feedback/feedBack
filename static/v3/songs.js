@@ -495,6 +495,7 @@
         menu.className = 'v3-card-menu absolute top-10 right-2 z-30 min-w-[10rem] bg-fb-card border border-fb-border/60 rounded-lg shadow-xl py-1 text-sm';
         const rows = [
             { id: '__play', label: 'Play', run: () => { _saveLibraryScrollSnapshot(); window.playSong && window.playSong(enc(song.filename)); } },
+            { id: '__playlist', label: 'Add to playlist' },
             ...items.map((a) => ({ id: a.id, label: a.label, destructive: a.destructive, enabled: a.enabled, plugin: a.pluginId })),
         ];
         menu.innerHTML = rows.map((r) =>
@@ -514,6 +515,7 @@
             const id = b.getAttribute('data-act');
             closeMenu();
             if (id === '__play') { playCard(song); return; }
+            if (id === '__playlist') { await addFilenamesToPlaylist([song.filename]); return; }
             if (reg) await reg.run(id, song, { source: 'v3-songs' });
         }));
         setTimeout(() => document.addEventListener('click', closer), 0);
@@ -612,26 +614,42 @@
         finishBatch();
     }
 
-    async function batchAddToPlaylist() {
+    // Prompt for a target playlist (pick a listed number, or type a new name to
+    // create it) and add the given song filenames to it. Shared by the
+    // select-mode batch bar and the per-card ⋮ menu's single-song add. Returns
+    // the playlist id (or null if cancelled).
+    async function addFilenamesToPlaylist(filenames) {
+        const fns = Array.from(filenames || []);
+        if (!fns.length) return null;
         const lists = (await jget('/api/playlists')) || [];
         const choices = lists.filter((p) => !p.system_key);
         const labels = choices.map((p, i) => (i + 1) + '. ' + p.name).join('   ');
         const ans = ((await window.uiPrompt({
-            title: 'Add ' + state.selected.size + ' song(s) to a playlist',
+            title: 'Add ' + fns.length + ' song' + (fns.length === 1 ? '' : 's') + ' to a playlist',
             label: (labels ? labels + ' ' : '') + 'Type a number above, or a new playlist name:',
             okLabel: 'Add',
             placeholder: 'Number or new playlist name',
         })) || '').trim();
-        if (!ans) return;
+        if (!ans) return null;
         let pid = null;
         const num = parseInt(ans, 10);
         if (!isNaN(num) && choices[num - 1]) pid = choices[num - 1].id;
         else { const created = await jsend('POST', '/api/playlists', { name: ans }); pid = created && created.id; }
-        if (!pid) return;
-        for (const fn of state.selected) {
+        if (!pid) return null;
+        for (const fn of fns) {
             try { await fetch('/api/playlists/' + pid + '/songs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: fn }) }); } catch (e) { /* */ }
         }
-        finishBatch();
+        if (window.v3Playlists) { try { window.v3Playlists.refresh(); } catch (e) { /* */ } }
+        return pid;
+    }
+
+    async function batchAddToPlaylist() {
+        const pid = await addFilenamesToPlaylist(state.selected);
+        // Only tear down the multi-select when the add actually happened. A
+        // cancelled or failed picker returns null — preserve the selection (and
+        // skip the reload) so the user can retry, matching the pre-refactor
+        // behaviour where !ans / !pid returned early before finishBatch().
+        if (pid) finishBatch();
     }
 
     function finishBatch() {

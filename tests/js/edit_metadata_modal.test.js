@@ -37,6 +37,17 @@ test('openEditModal renders a Year field bound to songData.y', () => {
     assert.match(src, /_escAttr\(songData\.y\)/, 'year input must be populated from songData.y');
 });
 
+test('Save button wires via data-edit-save, not an inline onclick that embeds the filename', () => {
+    // encodeURIComponent does NOT escape `'`, so embedding the filename in a
+    // single-quoted inline `saveEditModal('…')` handler breaks the save for a
+    // song whose filename contains an apostrophe (e.g. `Bob's Song.sloppak`).
+    // The Save button must use the data-attr + JS-listener pattern instead.
+    const src = extractFunction(readApp(), 'function openEditModal');
+    assert.doesNotMatch(src, /onclick="saveEditModal\('/, 'Save must not embed the filename in an inline onclick');
+    assert.match(src, /data-edit-save/, 'Save button must carry the data-edit-save hook');
+    assert.match(src, /querySelector\('\[data-edit-save\]'\)/, 'Save must be wired via addEventListener');
+});
+
 test('saveEditModal includes year in the metadata POST body', async () => {
     const calls = [];
     const values = {

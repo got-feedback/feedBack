@@ -9771,7 +9771,7 @@ function openEditModal(songData, openerEl) {
                 </div>
             </div>
             <div class="flex gap-3 mt-5">
-                <button onclick="saveEditModal('${encodeURIComponent(songData.f)}')"
+                <button data-edit-save
                     class="flex-1 bg-accent hover:bg-accent-light px-4 py-2 rounded-xl text-sm font-semibold text-white transition">Save</button>
                 <button data-edit-close
                     class="px-4 py-2 bg-dark-600 hover:bg-dark-500 rounded-xl text-sm text-gray-300 transition">Cancel</button>
@@ -9806,6 +9806,16 @@ function openEditModal(songData, openerEl) {
     document.getElementById('edit-art-wrapper').addEventListener('click', () => {
         document.getElementById('edit-art-file').click();
     });
+
+    // Save — wired in JS (not an inline onclick) so the filename never has to
+    // survive embedding in a single-quoted attribute string. encodeURIComponent
+    // does NOT escape `'`, so a filename like `Bob's Song.sloppak` used to break
+    // the inline `saveEditModal('…')` handler and silently fail the save. The
+    // raw filename lives in the closure; encode it here for saveEditModal.
+    const saveBtn = modal.querySelector('[data-edit-save]');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', () => saveEditModal(encodeURIComponent(songData.f)));
+    }
 
     const deleteBtn = modal.querySelector('[data-delete-filename]');
     if (deleteBtn) {

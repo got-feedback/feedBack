@@ -3325,6 +3325,42 @@
         let _fpsEma = 0;
         let _fpsDisplay = 0;
         let _fpsLastSampleT = 0;
+        // The FPS readout is pinned top-right of the highway overlay — the same
+        // corner the v3 player chrome stacks its persistent "Up Next" pill and
+        // live-performance HUD into, on a higher layer that paints over the
+        // canvas. So out of the box the readout sits *behind* that chrome and
+        // can't be read (exactly when you've turned it on to judge perf). Rather
+        // than relocate it (testers look top-right), we drop it just BELOW
+        // whichever of that chrome is showing. Refs are resolved once and cached
+        // — never a per-frame querySelector (see CLAUDE.md "never run DOM queries
+        // on a per-frame path") — and re-resolved only when a node detaches.
+        let _v3HudEls = null;
+        // Returns the bottom edge (in overlay-canvas px, which are 1:1 CSS px on
+        // this overlay) of the lowest visible top-right v3 chrome element, or 0
+        // when none apply (classic v2 UI, or all hidden). Only called while the
+        // FPS readout is actually drawn, so the layout reads cost nothing in the
+        // common (counter-off) case.
+        function _v3TopRightChromeBottom() {
+            if (typeof document === 'undefined' || !highwayCanvas) return 0;
+            // Only the v3 chrome stacks persistent HUD elements over the canvas's
+            // top-right. Gate on the documented detector so this is a strict no-op
+            // in classic v2 (where 'hud-time' also exists but sits elsewhere).
+            if (!(window.feedBack && window.feedBack.uiVersion === 'v3')) return 0;
+            if (!_v3HudEls || _v3HudEls.some((el) => el && !el.isConnected)) {
+                _v3HudEls = ['v3-upnext', 'v3-live-performance-hud', 'hud-time']
+                    .map((id) => document.getElementById(id));
+            }
+            const top = highwayCanvas.getBoundingClientRect().top;
+            let maxBottom = 0;
+            for (const el of _v3HudEls) {
+                // offsetParent === null ⇒ display:none (a `.hidden` pill/HUD) or
+                // not laid out — don't duck under something that isn't shown.
+                if (!el || el.offsetParent === null) continue;
+                const b = el.getBoundingClientRect().bottom - top;
+                if (b > maxBottom) maxBottom = b;
+            }
+            return maxBottom;
+        }
         let _diagChord            = null;
         // Chord diagram render cache. Keys: static layout inputs joined as a
         // string. Values: OffscreenCanvas (or <canvas>) rendered at opacity=1
@@ -14557,7 +14593,13 @@
                         const _fpsBoxW = Math.ceil(_fpsMetrics.width) + _fpsPadX * 2;
                         const _fpsBoxH = 14 + _fpsPadY * 2;
                         const _fpsE = 8;
-                        const _fpsBaseY = Math.round(Math.max(_fpsE + H * 0.06, lyricsBottom + _fpsE));
+                        // Keep it top-right but below the v3 Up Next pill / live HUD
+                        // (whichever is showing) so the readout is never occluded.
+                        const _fpsBaseY = Math.round(Math.max(
+                            _fpsE + H * 0.06,
+                            lyricsBottom + _fpsE,
+                            _v3TopRightChromeBottom() + _fpsE,
+                        ));
                         const _fpsX = W - 8 - _fpsBoxW;
                         const _fpsY = _fpsBaseY + cornerStack['tr'];
                         lyricsCtx.fillStyle = 'rgba(0,0,0,0.55)';

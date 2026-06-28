@@ -24,3 +24,14 @@ test('batch and single-song add share addFilenamesToPlaylist()', () => {
     assert.match(SONGS, /async function addFilenamesToPlaylist\(filenames\)/);
     assert.match(SONGS, /async function batchAddToPlaylist\(\)[\s\S]{0,120}addFilenamesToPlaylist\(state\.selected\)/);
 });
+
+test('batch only finishes (clears selection) when the add succeeded, not on cancel', () => {
+    // addFilenamesToPlaylist returns null on a cancelled/failed picker; the
+    // batch caller must capture it and gate finishBatch() on a truthy pid, so
+    // cancelling preserves the multi-select (regression guard for the
+    // extract-helper refactor — previously finishBatch ran unconditionally).
+    assert.match(SONGS, /const pid = await addFilenamesToPlaylist\(state\.selected\)/,
+        'batch must capture the returned playlist id');
+    assert.match(SONGS, /if \(pid\) finishBatch\(\)/,
+        'finishBatch must be gated on a successful add (truthy pid)');
+});

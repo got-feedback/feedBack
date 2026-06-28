@@ -624,8 +624,12 @@
     }
 
     async function batchAddToPlaylist() {
-        await addFilenamesToPlaylist(state.selected);
-        finishBatch();
+        const pid = await addFilenamesToPlaylist(state.selected);
+        // Only tear down the multi-select when the add actually happened. A
+        // cancelled or failed picker returns null — preserve the selection (and
+        // skip the reload) so the user can retry, matching the pre-refactor
+        // behaviour where !ans / !pid returned early before finishBatch().
+        if (pid) finishBatch();
     }
 
     function finishBatch() {

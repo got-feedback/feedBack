@@ -4517,6 +4517,9 @@ async function rescanLibrary() {
             _treeStats = null;
             _tuningNames = null;  // re-fetch on next drawer open
             loadLibrary();
+            // Tell the v3 Songs grid the library changed so it reloads instead of
+            // keeping a cached (e.g. pre-DLC, empty) grid until an app restart.
+            if (window.feedBack) window.feedBack.emit('library:changed', { reason: 'rescan' });
         }
     }, 1000);
 }
@@ -4545,6 +4548,9 @@ async function fullRescanLibrary() {
             _treeStats = null;
             _tuningNames = null;  // re-fetch on next drawer open
             loadLibrary();
+            // Tell the v3 Songs grid the library changed so it reloads instead of
+            // keeping a cached (e.g. pre-DLC, empty) grid until an app restart.
+            if (window.feedBack) window.feedBack.emit('library:changed', { reason: 'rescan' });
         }
     }, 1000);
 }

@@ -324,6 +324,12 @@
     // tracks filenames scored while the library was off-screen, applied on enter.
     const _dirtyScores = new Set();
 
+    // Set when a library scan / DLC-folder change happened while this screen was
+    // off (or showing a stale, e.g. pre-DLC empty, grid). The grid's cached DOM /
+    // snapshot would otherwise survive a sidebar return, so we force a full
+    // re-fetch on the next entry. (feedBack — "No DLC until restart".)
+    let _libraryDirty = false;
+
     function repaintAccuracy(key) {
         const apply = (el, variant) => {
             if (el.getAttribute('data-fn') !== key) return;
@@ -1035,6 +1041,10 @@
     }
 
     async function onV3SongsScreenEnter() {
+        // A library scan / DLC-folder change marked the grid stale — re-fetch
+        // from scratch instead of restoring a cached (possibly empty, pre-DLC)
+        // snapshot. Must win over every fast-path below.
+        if (_libraryDirty) { _libraryDirty = false; await reload(); return; }
         // Pull in any scores recorded while the library was off-screen (the usual
         // play→return flow) before the fast-paths below restore the cached DOM,
         // so the just-played song's badge is current. The full render() path
@@ -1181,6 +1191,17 @@
             // the set, so repainting against a hidden grid would drop the update).
             const active = document.querySelector('.screen.active');
             if (active && active.id === 'v3-songs') applyScoreRefresh();
+        });
+        // A library scan (rescan / full rescan from Settings, or a DLC-folder
+        // change) can add or remove songs while this grid is cached — the
+        // Settings rescan only refreshed the classic library, so the v3 grid
+        // stayed on its pre-scan (e.g. empty, pre-DLC) state until an app
+        // restart. Reload now if we're showing; otherwise mark dirty so the next
+        // entry re-fetches instead of restoring the stale snapshot.
+        sm.on('library:changed', () => {
+            const active = document.querySelector('.screen.active');
+            if (active && active.id === 'v3-songs') { _libraryDirty = false; reload(); }
+            else _libraryDirty = true;
         });
     }
 })();

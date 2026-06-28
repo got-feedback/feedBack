@@ -248,6 +248,7 @@ function createHighway() {
     let _frameMsEMA = 0;            // smoothed frame interval (for the HUD)
     let _lastFramePerf = 0;
     let _lastAutoAdjustAt = 0;
+    let _lastUpscaleAt = 0;          // separate, longer clock for UPscaling (lazy)
     let _perfHud = null;
     let _hudOn = false;       // cached highwayPerfHud flag (re-read ~2x/sec, not per-frame)
     let _hudFlagAt = 0;
@@ -266,6 +267,11 @@ function createHighway() {
         return Number.isFinite(v) ? Math.max(_AUTO_SCALE_MIN, Math.min(1, v)) : _AUTO_SCALE_MIN;
     })();
     const _AUTO_ADJUST_COOLDOWN_MS = 600;
+    // Upscaling is deliberately LAZY (longer cooldown than the downscale path) so
+    // the resolution doesn't visibly hunt up/down on passages that hover near the
+    // budget — testers saw "quality going up and down" as parts got busier (#618
+    // charrette). Downscale stays prompt to protect the frame rate.
+    const _AUTO_UPSCALE_COOLDOWN_MS = 2500;
     let _inverted = localStorage.getItem('invertHighway') === 'true';
     let _lefty = localStorage.getItem('lefty') === '1';
     let _lastChordOnFretLine = null;  // chord object currently shown on fret line
@@ -1291,9 +1297,22 @@ function createHighway() {
         const eff = _effectiveRenderScale();
         let next = _autoScale;
         if (_drawMsEMA > _DRAW_BUDGET_HI_MS && eff > _autoScaleMin) {
+            // Over budget — downscale promptly to protect the frame rate, and reset
+            // the upscale clock so we don't immediately bounce back up.
             next = _autoScale * 0.85;
-        } else if (_drawMsEMA < _DRAW_BUDGET_LO_MS && eff < 1) {
-            next = _autoScale * 1.1;
+            _lastUpscaleAt = nowP;
+        } else if (_drawMsEMA < _DRAW_BUDGET_LO_MS && eff < 1
+                   && nowP - _lastUpscaleAt >= _AUTO_UPSCALE_COOLDOWN_MS) {
+            // Headroom — upscale LAZILY: a smaller step on a longer cooldown, and
+            // only when the projected cost AFTER the step (cost scales ~with the
+            // pixel count, i.e. step²) still clears the high budget. That predictive
+            // guard is what stops the up→over-budget→down ping-pong testers saw: the
+            // scale settles just inside the deadband instead of oscillating across it.
+            const step = 1.06;
+            if (_drawMsEMA * step * step < _DRAW_BUDGET_HI_MS) {
+                next = _autoScale * step;
+                _lastUpscaleAt = nowP;
+            }
         }
         // Clamp so _renderScale * _autoScale stays within [_autoScaleMin, 1].
         // Cap `lo` at 1: when the floor exceeds the manual ceiling (e.g. quality

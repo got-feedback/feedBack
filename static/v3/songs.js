@@ -15,6 +15,20 @@
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const enc = encodeURIComponent;
+    // Inverse of `enc` for matching a played song's filename back to a library
+    // card. The `stats:recorded` event (like `song:loading`) carries the
+    // filename exactly as it was handed to `playSong` — i.e. encodeURIComponent'd
+    // (see `playCard`, and the highway WS which decodeURIComponent's it). But
+    // cards key on the DECODED library filename (`cardKey` → `localFilename`),
+    // and `/api/stats/best` is server-canonicalized to that same decoded key, so
+    // an encoded filename matches no card and the post-play badge repaint silently
+    // no-ops. Decode to land in the card/`state.accuracy` key space. Idempotent
+    // for already-decoded names (no '%'); on malformed input falls back to the
+    // original so a real filename containing a literal '%' is never corrupted.
+    function decFn(fn) {
+        if (typeof fn !== 'string' || fn.indexOf('%') === -1) return fn || '';
+        try { return decodeURIComponent(fn); } catch (_) { return fn; }
+    }
 
     const SORTS = [
         ['artist', 'Artist A–Z'], ['artist-desc', 'Artist Z–A'],
@@ -324,6 +338,12 @@
     // tracks filenames scored while the library was off-screen, applied on enter.
     const _dirtyScores = new Set();
 
+    // Set when a library scan / DLC-folder change happened while this screen was
+    // off (or showing a stale, e.g. pre-DLC empty, grid). The grid's cached DOM /
+    // snapshot would otherwise survive a sidebar return, so we force a full
+    // re-fetch on the next entry. (feedBack — "No DLC until restart".)
+    let _libraryDirty = false;
+
     function repaintAccuracy(key) {
         const apply = (el, variant) => {
             if (el.getAttribute('data-fn') !== key) return;
@@ -475,6 +495,7 @@
         menu.className = 'v3-card-menu absolute top-10 right-2 z-30 min-w-[10rem] bg-fb-card border border-fb-border/60 rounded-lg shadow-xl py-1 text-sm';
         const rows = [
             { id: '__play', label: 'Play', run: () => { _saveLibraryScrollSnapshot(); window.playSong && window.playSong(enc(song.filename)); } },
+            { id: '__playlist', label: 'Add to playlist' },
             ...items.map((a) => ({ id: a.id, label: a.label, destructive: a.destructive, enabled: a.enabled, plugin: a.pluginId })),
         ];
         menu.innerHTML = rows.map((r) =>
@@ -494,6 +515,7 @@
             const id = b.getAttribute('data-act');
             closeMenu();
             if (id === '__play') { playCard(song); return; }
+            if (id === '__playlist') { await addFilenamesToPlaylist([song.filename]); return; }
             if (reg) await reg.run(id, song, { source: 'v3-songs' });
         }));
         setTimeout(() => document.addEventListener('click', closer), 0);
@@ -592,26 +614,42 @@
         finishBatch();
     }
 
-    async function batchAddToPlaylist() {
+    // Prompt for a target playlist (pick a listed number, or type a new name to
+    // create it) and add the given song filenames to it. Shared by the
+    // select-mode batch bar and the per-card ⋮ menu's single-song add. Returns
+    // the playlist id (or null if cancelled).
+    async function addFilenamesToPlaylist(filenames) {
+        const fns = Array.from(filenames || []);
+        if (!fns.length) return null;
         const lists = (await jget('/api/playlists')) || [];
         const choices = lists.filter((p) => !p.system_key);
         const labels = choices.map((p, i) => (i + 1) + '. ' + p.name).join('   ');
         const ans = ((await window.uiPrompt({
-            title: 'Add ' + state.selected.size + ' song(s) to a playlist',
+            title: 'Add ' + fns.length + ' song' + (fns.length === 1 ? '' : 's') + ' to a playlist',
             label: (labels ? labels + ' ' : '') + 'Type a number above, or a new playlist name:',
             okLabel: 'Add',
             placeholder: 'Number or new playlist name',
         })) || '').trim();
-        if (!ans) return;
+        if (!ans) return null;
         let pid = null;
         const num = parseInt(ans, 10);
         if (!isNaN(num) && choices[num - 1]) pid = choices[num - 1].id;
         else { const created = await jsend('POST', '/api/playlists', { name: ans }); pid = created && created.id; }
-        if (!pid) return;
-        for (const fn of state.selected) {
+        if (!pid) return null;
+        for (const fn of fns) {
             try { await fetch('/api/playlists/' + pid + '/songs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: fn }) }); } catch (e) { /* */ }
         }
-        finishBatch();
+        if (window.v3Playlists) { try { window.v3Playlists.refresh(); } catch (e) { /* */ } }
+        return pid;
+    }
+
+    async function batchAddToPlaylist() {
+        const pid = await addFilenamesToPlaylist(state.selected);
+        // Only tear down the multi-select when the add actually happened. A
+        // cancelled or failed picker returns null — preserve the selection (and
+        // skip the reload) so the user can retry, matching the pre-refactor
+        // behaviour where !ans / !pid returned early before finishBatch().
+        if (pid) finishBatch();
     }
 
     function finishBatch() {
@@ -1035,6 +1073,10 @@
     }
 
     async function onV3SongsScreenEnter() {
+        // A library scan / DLC-folder change marked the grid stale — re-fetch
+        // from scratch instead of restoring a cached (possibly empty, pre-DLC)
+        // snapshot. Must win over every fast-path below.
+        if (_libraryDirty) { _libraryDirty = false; await reload(); return; }
         // Pull in any scores recorded while the library was off-screen (the usual
         // play→return flow) before the fast-paths below restore the cached DOM,
         // so the just-played song's badge is current. The full render() path
@@ -1173,7 +1215,13 @@
         // If the library is visible right now, repaint immediately; otherwise
         // mark it dirty and onV3SongsScreenEnter applies it on return.
         sm.on('stats:recorded', (e) => {
-            const fn = e && e.detail && e.detail.filename;
+            // Decode to the library-card key space — the event carries the
+            // encodeURIComponent'd filename, but cards (data-fn) and
+            // state.accuracy key on the decoded library filename. Without this
+            // the repaint below (and applyScoreRefresh's repaintAccuracy) match
+            // no card, so a just-earned score stays invisible until a full
+            // render() (restart / search / re-enter), which is this bug.
+            const fn = decFn(e && e.detail && e.detail.filename);
             if (!fn) return;
             _dirtyScores.add(fn);
             // Only repaint now if the library is the active screen; otherwise
@@ -1181,6 +1229,17 @@
             // the set, so repainting against a hidden grid would drop the update).
             const active = document.querySelector('.screen.active');
             if (active && active.id === 'v3-songs') applyScoreRefresh();
+        });
+        // A library scan (rescan / full rescan from Settings, or a DLC-folder
+        // change) can add or remove songs while this grid is cached — the
+        // Settings rescan only refreshed the classic library, so the v3 grid
+        // stayed on its pre-scan (e.g. empty, pre-DLC) state until an app
+        // restart. Reload now if we're showing; otherwise mark dirty so the next
+        // entry re-fetches instead of restoring the stale snapshot.
+        sm.on('library:changed', () => {
+            const active = document.querySelector('.screen.active');
+            if (active && active.id === 'v3-songs') { _libraryDirty = false; reload(); }
+            else _libraryDirty = true;
         });
     }
 })();

@@ -577,6 +577,80 @@
                     <span>Glowy</span>
                 </div>
             </div>
+
+            <div class="mt-4">
+                <label for="h3d-hitfx" class="text-xs font-medium text-gray-400 mb-1 block">
+                    Hit feedback intensity: <span id="h3d-hitfx-label">0.70</span>
+                </label>
+                <input type="range" id="h3d-hitfx" min="0" max="1" step="0.05" value="0.70"
+                    oninput="document.getElementById('h3d-hitfx-label').textContent = parseFloat(this.value).toFixed(2); window.h3dBgSetHitFx && window.h3dBgSetHitFx(this.value)"
+                    onchange="window.h3dBgSetHitFx && window.h3dBgSetHitFx(this.value)"
+                    class="w-full accent-accent">
+                <p class="text-[10px] text-gray-500 mt-1">
+                    How much "juice" a nailed note gets — the strike-line flash and the
+                    spark burst at the hit line. <em>0</em> = colour verdict only (no sparks).
+                </p>
+            </div>
+
+            <div class="mt-3 flex items-start justify-between gap-3">
+                <label for="h3d-sparks" class="text-xs font-medium text-gray-400">
+                    Hit sparks
+                    <span class="block text-[10px] text-gray-500 font-normal">The particle burst that pops off a note the instant it's detected as a hit. Turn off for a calmer highway — the strike-line flash and colour verdict stay.</span>
+                </label>
+                <input type="checkbox" id="h3d-sparks" checked
+                    onchange="window.h3dBgSetSparks && window.h3dBgSetSparks(this.checked)"
+                    class="accent-accent mt-0.5">
+            </div>
+
+            <div class="mt-3 flex items-start justify-between gap-3">
+                <label for="h3d-cinematic" class="text-xs font-medium text-gray-400">
+                    Cinematic lighting
+                    <span class="block text-[10px] text-gray-500 font-normal">Darker stage so the glowing notes pop against it. Turn off for the brighter, flatter look.</span>
+                </label>
+                <input type="checkbox" id="h3d-cinematic" checked
+                    onchange="window.h3dBgSetCinematic && window.h3dBgSetCinematic(this.checked)"
+                    class="accent-accent mt-0.5">
+            </div>
+
+            <div class="mt-3 flex items-start justify-between gap-3">
+                <label for="h3d-streakfx" class="text-xs font-medium text-gray-400">
+                    Streak feedback
+                    <span class="block text-[10px] text-gray-500 font-normal">A clean run quietly "heats up" — bigger sparks the longer you stay accurate. Eases back on a miss.</span>
+                </label>
+                <input type="checkbox" id="h3d-streakfx" checked
+                    onchange="window.h3dBgSetStreakFx && window.h3dBgSetStreakFx(this.checked)"
+                    class="accent-accent mt-0.5">
+            </div>
+
+            <div class="mt-3 flex items-start justify-between gap-3">
+                <label for="h3d-verdictmarks" class="text-xs font-medium text-gray-400">
+                    Accessible verdict marks (✓ / ✗)
+                    <span class="block text-[10px] text-gray-500 font-normal">Adds a shape mark to each hit/miss so the result doesn't rely on the green/red colour pair alone.</span>
+                </label>
+                <input type="checkbox" id="h3d-verdictmarks" checked
+                    onchange="window.h3dBgSetVerdictMarks && window.h3dBgSetVerdictMarks(this.checked)"
+                    class="accent-accent mt-0.5">
+            </div>
+
+            <div class="mt-3 flex items-start justify-between gap-3">
+                <label for="h3d-bloom" class="text-xs font-medium text-gray-400">
+                    Glow bloom
+                    <span class="block text-[10px] text-gray-500 font-normal">Real light-bleed around the glowing notes and hit flash (higher fidelity). Turns itself off in split-screen. If your machine struggles, turn this off first.</span>
+                </label>
+                <input type="checkbox" id="h3d-bloom" checked
+                    onchange="window.h3dBgSetBloom && window.h3dBgSetBloom(this.checked)"
+                    class="accent-accent mt-0.5">
+            </div>
+
+            <div class="mt-3 flex items-start justify-between gap-3">
+                <label for="h3d-timingfx" class="text-xs font-medium text-gray-400">
+                    Timing feedback
+                    <span class="block text-[10px] text-gray-500 font-normal">Colours a hit by your timing — on-time green, a touch <span style="color:#35d6ff">early (cyan)</span> or <span style="color:#ffb84d">late (amber)</span> — so you can feel where you sit in the beat.</span>
+                </label>
+                <input type="checkbox" id="h3d-timingfx" checked
+                    onchange="window.h3dBgSetTimingFx && window.h3dBgSetTimingFx(this.checked)"
+                    class="accent-accent mt-0.5">
+            </div>
         </div>
     </details>
 </div>
@@ -1298,6 +1372,35 @@
             if (thpos) thpos.value  = toneHudPosition;
             if (thsi)  thsi.value   = String(toneHudSize);
             if (thslbl) thslbl.textContent = toneHudSize.toFixed(2);
+
+            // Hit-feedback "juice" controls — hydrate from saved state so the
+            // panel reflects persistence on reopen (the renderer already reads
+            // these via _bgReadSetting; without this the controls always showed
+            // their default markup, misrepresenting a saved non-default). Reads
+            // h3d_bg_* directly; defaults mirror BG_DEFAULTS (all bools on,
+            // hitFx 0.70) and the _bgCoerceBool 'true'/'1' vs 'false'/'0' rules.
+            try {
+                const _bgBool = (k, def) => {
+                    const v = localStorage.getItem('h3d_bg_' + k);
+                    return v == null ? def : !(v === 'false' || v === '0');
+                };
+                const _setChk = (id, on) => { const el = document.getElementById(id); if (el) el.checked = on; };
+                _setChk('h3d-sparks',       _bgBool('sparks', true));
+                _setChk('h3d-cinematic',    _bgBool('cinematic', true));
+                _setChk('h3d-streakfx',     _bgBool('streakFx', true));
+                _setChk('h3d-verdictmarks', _bgBool('verdictMarks', true));
+                _setChk('h3d-bloom',        _bgBool('bloom', true));
+                _setChk('h3d-timingfx',     _bgBool('timingFx', true));
+                const _hf = document.getElementById('h3d-hitfx');
+                if (_hf) {
+                    let v = parseFloat(localStorage.getItem('h3d_bg_hitFx'));
+                    if (!isFinite(v)) v = 0.70;
+                    v = Math.max(0, Math.min(1, v));
+                    _hf.value = String(v);
+                    const _hfl = document.getElementById('h3d-hitfx-label');
+                    if (_hfl) _hfl.textContent = v.toFixed(2);
+                }
+            } catch (_) { /* storage blocked — controls keep their default markup */ }
 
             // (3D Highway palette picker removed — string colors are now set
             // via the core "Highway String Colors" UI above, which drives both

@@ -220,6 +220,8 @@ _DEMO_BLOCKED: list[tuple[str, re.Pattern]] = [
     ("POST",   re.compile(r"^/api/playlists/[^/]+/songs$")),
     ("DELETE", re.compile(r"^/api/playlists/[^/]+/songs/.+$")),
     ("POST",   re.compile(r"^/api/playlists/[^/]+/reorder$")),
+    ("POST",   re.compile(r"^/api/playlists/[^/]+/cover$")),
+    ("DELETE", re.compile(r"^/api/playlists/[^/]+/cover$")),
     ("POST",   re.compile(r"^/api/saved/toggle$")),
     # Progression (spec 010) write endpoints — demo mode stays read-only.
     ("POST",   re.compile(r"^/api/progression/paths$")),
@@ -1323,14 +1325,30 @@ class MetadataDB:
         return None
 
     def list_playlists(self) -> list[dict]:
+        from urllib.parse import quote
         rows = self.conn.execute(
             "SELECT id, name, system_key, created_at, updated_at FROM playlists "
             "ORDER BY (system_key IS NULL), name COLLATE NOCASE"
         ).fetchall()
-        return [{
-            "id": r[0], "name": r[1], "system_key": r[2],
-            "created_at": r[3], "updated_at": r[4], "count": self._playlist_count(r[0]),
-        } for r in rows]
+        out = []
+        for r in rows:
+            pid = r[0]
+            # First few still-present songs (in order) → art URLs, for a
+            # content-dependent playlist cover (single art / 2x2 mosaic). The
+            # JOIN drops dead songs, matching get_playlist's visibility.
+            arts = self.conn.execute(
+                "SELECT ps.filename FROM playlist_songs ps "
+                "JOIN songs s ON s.filename = ps.filename "
+                "WHERE ps.playlist_id = ? ORDER BY ps.position LIMIT 4",
+                (pid,),
+            ).fetchall()
+            out.append({
+                "id": pid, "name": r[1], "system_key": r[2],
+                "created_at": r[3], "updated_at": r[4],
+                "count": self._playlist_count(pid),
+                "art_urls": [f"/api/song/{quote(a[0])}/art" for a in arts],
+            })
+        return out
 
     def create_playlist(self, name: str, system_key: str | None = None) -> dict:
         with self._lock:
@@ -5149,9 +5167,33 @@ def api_song_stats(filename: str):
 
 # ── Playlists / Saved for Later / Continue-Playing (fee[dB]ack v0.3.0) ────────
 
+def _playlist_cover_path(pid) -> Path | None:
+    """Filesystem path of a playlist's optional custom cover image (PNG),
+    stored under CONFIG_DIR. Returns None for a non-integer id."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    return CONFIG_DIR / "playlist_covers" / f"{pid}.png"
+
+
+def _playlist_cover_url(pid) -> str | None:
+    cover = _playlist_cover_path(pid)
+    if not cover or not cover.exists():
+        return None
+    try:
+        mt = int(cover.stat().st_mtime)
+    except OSError:
+        mt = 0
+    return f"/api/playlists/{pid}/cover?v={mt}"
+
+
 @app.get("/api/playlists")
 def api_list_playlists():
-    return meta_db.list_playlists()
+    lists = meta_db.list_playlists()
+    for pl in lists:
+        pl["cover_url"] = _playlist_cover_url(pl["id"])
+    return lists
 
 
 @app.post("/api/playlists")
@@ -5167,6 +5209,7 @@ def api_get_playlist(pid: int):
     pl = meta_db.get_playlist(pid)
     if pl is None:
         return JSONResponse({"error": "not found"}, status_code=404)
+    pl["cover_url"] = _playlist_cover_url(pid)
     return pl
 
 
@@ -5193,6 +5236,12 @@ def api_delete_playlist(pid: int):
         return JSONResponse({"error": "System playlists cannot be deleted."}, status_code=400)
     if not meta_db.delete_playlist(pid):   # vanished under us (concurrent delete)
         return JSONResponse({"error": "not found"}, status_code=404)
+    cover = _playlist_cover_path(pid)       # drop any custom cover with the playlist
+    if cover and cover.exists():
+        try:
+            cover.unlink()
+        except OSError:
+            pass
     return {"ok": True}
 
 
@@ -5237,6 +5286,57 @@ def api_reorder_playlist(pid: int, data: dict):
         )
     meta_db.reorder_playlist(pid, order)
     return meta_db.get_playlist(pid)
+
+
+@app.post("/api/playlists/{pid}/cover")
+async def api_set_playlist_cover(pid: int, data: dict):
+    """Set a playlist's custom cover from a base64 / data-URL image (PNG/JPG).
+    Overrides the content-dependent (song-art) cover. Stored as a small PNG
+    thumbnail under CONFIG_DIR/playlist_covers/."""
+    if meta_db.get_playlist(pid) is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    import base64
+    import io
+    b64 = data.get("image", "")
+    if "," in b64:
+        b64 = b64.split(",", 1)[1]
+    if not b64:
+        return JSONResponse({"error": "No image data"}, status_code=400)
+    try:
+        img_data = base64.b64decode(b64)
+    except Exception:
+        return JSONResponse({"error": "Invalid base64"}, status_code=400)
+    cover = _playlist_cover_path(pid)
+    cover.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(img_data)).convert("RGB")
+        img.thumbnail((640, 640))                  # covers stay small
+        tmp = cover.with_suffix(".png.tmp")
+        img.save(str(tmp), "PNG")
+        tmp.replace(cover)
+    except Exception as e:
+        return JSONResponse({"error": f"Invalid image: {e}"}, status_code=400)
+    return {"ok": True, "cover_url": _playlist_cover_url(pid)}
+
+
+@app.get("/api/playlists/{pid}/cover")
+def api_get_playlist_cover(pid: int):
+    cover = _playlist_cover_path(pid)
+    if not cover or not cover.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(str(cover), media_type="image/png")
+
+
+@app.delete("/api/playlists/{pid}/cover")
+def api_delete_playlist_cover(pid: int):
+    cover = _playlist_cover_path(pid)
+    if cover and cover.exists():
+        try:
+            cover.unlink()
+        except OSError:
+            pass
+    return {"ok": True}
 
 
 @app.post("/api/saved/toggle")

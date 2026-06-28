@@ -106,3 +106,59 @@ def test_playlist_hides_dead_songs_when_library_populated(client, server):
     names = [s["filename"] for s in pl["songs"]]
     assert "live.archive" in names and "ghost.archive" not in names
     assert [p for p in client.get("/api/playlists").json() if p["id"] == pid][0]["count"] == 1
+
+
+# ── Playlist covers (content-dependent art + custom upload) ──────────────────
+
+def _png_b64():
+    """A tiny base64 PNG with the data-URL prefix, like the browser sends."""
+    import base64
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (200, 30, 60)).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def test_list_includes_song_art_urls_for_content_cover(client, server):
+    for fn in ("x.archive", "y.archive"):
+        server.meta_db.put(fn, 0, 0, {})
+    pid = client.post("/api/playlists", json={"name": "Arts"}).json()["id"]
+    client.post(f"/api/playlists/{pid}/songs", json={"filename": "x.archive"})
+    client.post(f"/api/playlists/{pid}/songs", json={"filename": "y.archive"})
+    pl = [p for p in client.get("/api/playlists").json() if p["id"] == pid][0]
+    assert pl["art_urls"] == ["/api/song/x.archive/art", "/api/song/y.archive/art"]
+    assert pl["cover_url"] is None   # no custom cover yet
+
+
+def test_custom_cover_roundtrip(client):
+    pid = client.post("/api/playlists", json={"name": "Cover"}).json()["id"]
+    r = client.post(f"/api/playlists/{pid}/cover", json={"image": _png_b64()})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert r.json()["cover_url"].startswith(f"/api/playlists/{pid}/cover")
+    # list + detail both report it
+    assert [p for p in client.get("/api/playlists").json() if p["id"] == pid][0]["cover_url"]
+    assert client.get(f"/api/playlists/{pid}").json()["cover_url"]
+    # served as a real PNG
+    img = client.get(f"/api/playlists/{pid}/cover")
+    assert img.status_code == 200 and img.headers["content-type"] == "image/png"
+    assert img.content[:8] == b"\x89PNG\r\n\x1a\n"
+    # removed
+    assert client.delete(f"/api/playlists/{pid}/cover").json() == {"ok": True}
+    assert client.get(f"/api/playlists/{pid}/cover").status_code == 404
+    assert client.get(f"/api/playlists/{pid}").json()["cover_url"] is None
+
+
+def test_cover_rejects_non_image(client):
+    pid = client.post("/api/playlists", json={"name": "Bad"}).json()["id"]
+    assert client.post(f"/api/playlists/{pid}/cover",
+                       json={"image": "data:text/plain;base64,bm90IGFuIGltYWdl"}).status_code == 400
+    assert client.post(f"/api/playlists/{pid}/cover", json={"image": ""}).status_code == 400
+
+
+def test_deleting_playlist_removes_custom_cover(client, server):
+    pid = client.post("/api/playlists", json={"name": "Doomed"}).json()["id"]
+    client.post(f"/api/playlists/{pid}/cover", json={"image": _png_b64()})
+    assert server._playlist_cover_path(pid).exists()
+    client.delete(f"/api/playlists/{pid}")
+    assert not server._playlist_cover_path(pid).exists()

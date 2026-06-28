@@ -28,6 +28,22 @@
         } catch (e) { return null; }
     }
 
+    // Content-dependent playlist cover: a custom uploaded cover wins; otherwise
+    // the playlist's own song art — the icon when empty, one cover for a few
+    // songs, a 2×2 mosaic at 4+. `art_urls` / `cover_url` come from /api/playlists.
+    function playlistCoverHtml(p) {
+        const box = 'w-full aspect-square rounded-lg overflow-hidden bg-fb-bg/50 mb-3';
+        const img = (u, cls) => '<img src="' + esc(u) + '" alt="" class="' + cls + '" onerror="this.style.visibility=\'hidden\'">';
+        if (p.cover_url) return '<div class="' + box + '">' + img(p.cover_url, 'w-full h-full object-cover') + '</div>';
+        const arts = Array.isArray(p.art_urls) ? p.art_urls : [];
+        if (!arts.length) {
+            return '<div class="' + box + ' flex items-center justify-center text-5xl text-fb-textDim">' + (p.system_key ? '🔖' : '🎵') + '</div>';
+        }
+        if (arts.length < 4) return '<div class="' + box + '">' + img(arts[0], 'w-full h-full object-cover') + '</div>';
+        return '<div class="' + box + ' grid grid-cols-2 grid-rows-2 gap-px">' +
+            arts.slice(0, 4).map((u) => img(u, 'w-full h-full object-cover')).join('') + '</div>';
+    }
+
     function songRow(s, opts) {
         opts = opts || {};
         const handle = opts.draggable
@@ -96,8 +112,7 @@
             (lists.length
                 ? '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">' + lists.map((p) =>
                     '<button data-pl="' + p.id + '" class="text-left bg-fb-card/80 backdrop-blur rounded-xl p-4 border border-fb-border/50 hover:border-fb-primary/40 transition">' +
-                    '<div class="w-full aspect-square rounded-lg bg-fb-bg/50 mb-3 flex items-center justify-center text-fb-textDim">' +
-                    (p.system_key ? '🔖' : '🎵') + '</div>' +
+                    playlistCoverHtml(p) +
                     '<div class="text-sm font-medium text-fb-text truncate">' + esc(p.name) + '</div>' +
                     '<div class="text-xs text-fb-textDim">' + p.count + ' song' + (p.count === 1 ? '' : 's') + '</div>' +
                     '</button>').join('') + '</div>'
@@ -126,8 +141,11 @@
             '<h2 class="text-3xl font-bold text-fb-text truncate">' + esc(pl.name) + '</h2>' +
             (isSystem ? '' :
                 '<div class="flex gap-2 shrink-0">' +
+                '<button id="v3-pl-cover" class="text-sm text-fb-textDim hover:text-fb-text px-2">Cover</button>' +
+                (pl.cover_url ? '<button id="v3-pl-cover-rm" class="text-sm text-fb-textDim hover:text-fb-accent px-2">Remove cover</button>' : '') +
                 '<button id="v3-pl-rename" class="text-sm text-fb-textDim hover:text-fb-text px-2">Rename</button>' +
-                '<button id="v3-pl-delete" class="text-sm text-fb-textDim hover:text-fb-accent px-2">Delete</button></div>') +
+                '<button id="v3-pl-delete" class="text-sm text-fb-textDim hover:text-fb-accent px-2">Delete</button>' +
+                '<input type="file" id="v3-pl-cover-file" accept="image/*" class="hidden"></div>') +
             '</div>' +
             (pl.songs.length
                 ? '<ul id="v3-pl-songs" class="space-y-1">' + pl.songs.map((s) => songRow(s, { draggable: !isSystem })).join('') + '</ul>'
@@ -146,6 +164,25 @@
             if (!window.confirm('Delete "' + pl.name + '"?')) return;
             await fetch('/api/playlists/' + pid, { method: 'DELETE' });
             renderPlaylists();
+        });
+        // Custom cover: pick an image → upload as a data URL → the playlist card
+        // shows it (overriding the song-art cover). Re-render the detail so the
+        // Remove-cover button appears; the grid picks up the new cover on return.
+        const coverFile = root.querySelector('#v3-pl-cover-file');
+        root.querySelector('#v3-pl-cover')?.addEventListener('click', () => coverFile && coverFile.click());
+        coverFile?.addEventListener('change', () => {
+            const f = coverFile.files && coverFile.files[0];
+            if (!f) return;
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                await jsend('POST', '/api/playlists/' + pid + '/cover', { image: e.target.result });
+                renderPlaylistDetail(pid);
+            };
+            reader.readAsDataURL(f);
+        });
+        root.querySelector('#v3-pl-cover-rm')?.addEventListener('click', async () => {
+            await fetch('/api/playlists/' + pid + '/cover', { method: 'DELETE' });
+            renderPlaylistDetail(pid);
         });
     }
 

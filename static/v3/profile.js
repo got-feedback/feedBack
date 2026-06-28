@@ -330,9 +330,16 @@
         const editing = !!opts.editing;
         document.getElementById('v3-onboarding')?.remove();
 
+        // The amp-sim opt-in step (step 5) only exists in the desktop app — the
+        // pure-web build has no native amp sims to monitor through, so the step
+        // is skipped there (calibration is the last step at index 5 on web, 6 on
+        // desktop). See feedBack-desktop#46.
+        const isDesktop = !!window.feedBackDesktop;
+        const lastStep = isDesktop ? 6 : 5;
+
         const stepDots = editing ? '' :
             '<div class="flex justify-center gap-1.5 mt-3" id="v3-ob-dots">' +
-            [1, 2, 3, 4, 5].map((n) => '<span data-dot="' + n + '" class="w-2 h-2 rounded-full bg-fb-border"></span>').join('') +
+            Array.from({ length: lastStep }, (_, i) => i + 1).map((n) => '<span data-dot="' + n + '" class="w-2 h-2 rounded-full bg-fb-border"></span>').join('') +
             '</div>';
 
         const overlay = document.createElement('div');
@@ -380,8 +387,20 @@
             '<label class="block text-xs uppercase tracking-wider text-fb-textDim mb-2">Pick your instrument path(s)</label>' +
             '<p class="text-sm text-fb-textDim mb-3">Each path levels up by completing challenges — together they make up your Mastery Rank. You can add more later.</p>' +
             '<div id="v3-ob-paths" class="grid grid-cols-3 gap-2"></div></div>' +
-            // Step 5 — calibration offer (first-run only).
+            // Step 5 — amp-sim opt-in (DESKTOP ONLY; default OFF / own-rig first).
+            // Hidden div is always present in the DOM; setStep only navigates to
+            // it on desktop. See feedBack-desktop#46.
             '<div id="v3-ob-step5" class="hidden">' +
+            '<label class="block text-xs uppercase tracking-wider text-fb-textDim mb-2">How do you want to hear yourself?</label>' +
+            '<p class="text-sm text-fb-textDim mb-3">fee[dB]ack can run your guitar through built-in <span class="text-fb-text">amp simulations</span> (NAM / IRs / plugins) so you hear a processed tone. If you already play through your <span class="text-fb-text">own amp or rig</span>, leave this off — you’ll get clean, silent monitoring and never an idle buzz.</p>' +
+            '<label class="flex items-start gap-3 cursor-pointer rounded-lg border border-fb-border/50 bg-fb-bg/40 p-3">' +
+            '<input type="checkbox" id="v3-ob-ampsims" class="mt-1 h-4 w-4 rounded border-gray-600 bg-gray-800 text-fb-primary focus:ring-fb-primary">' +
+            '<span class="text-sm text-fb-text">Use in-app amp simulations' +
+            '<span class="block text-xs text-fb-textDim mt-1">Loads your saved tone chain for monitoring. You can change this any time in the desktop Audio settings.</span></span>' +
+            '</label>' +
+            '<p class="text-xs text-fb-textDim mt-2">Leave it unticked if you monitor through your own gear. This is off by default.</p></div>' +
+            // Step 6 — calibration offer (first-run only).
+            '<div id="v3-ob-step6" class="hidden">' +
             '<label class="block text-xs uppercase tracking-wider text-fb-textDim mb-2">Calibration challenge</label>' +
             '<p class="text-sm text-fb-textDim">Prove your setup: play the <span class="text-fb-text">fee[dB]ack Diagnostic</span> with note detection and finish at <span class="text-fb-text font-semibold">100% accuracy</span> to reach <span class="text-fb-text font-semibold">Mastery Rank 1</span>.</p>' +
             '<p class="text-sm text-fb-textDim mt-2">Not ready? Skip it and you’ll start at Rank 1 anyway — you can still play it later from the Progress screen.</p></div>' +
@@ -441,7 +460,7 @@
         function setStep(n) {
             step = n;
             errEl.classList.add('hidden');
-            for (let i = 1; i <= 5; i++) {
+            for (let i = 1; i <= 6; i++) {
                 overlay.querySelector('#v3-ob-step' + i).classList.toggle('hidden', i !== n);
             }
             overlay.querySelectorAll('#v3-ob-dots [data-dot]').forEach((d) => {
@@ -454,12 +473,13 @@
                     : n === 2 ? 'Point us at your songs'
                     : n === 3 ? 'Feats of Power (optional)'
                     : n === 4 ? 'Choose your instrument paths'
+                    : n === 5 ? 'How do you want to monitor?'
                     : 'One last thing — calibrate your setup';
             }
-            submit.textContent = n === 5 ? 'Play it now' : 'Next';
+            submit.textContent = n === 6 ? 'Play it now' : 'Next';
             // Skip is offered on the song-directory step (configure later) and
-            // the calibration challenge.
-            skipBtn.classList.toggle('hidden', !(n === 2 || n === 5));
+            // the calibration challenge (the last step).
+            skipBtn.classList.toggle('hidden', !(n === 2 || n === 6));
             refreshSubmit();
         }
 
@@ -695,11 +715,29 @@
                     // New step: input-device selection + calibration, between
                     // path selection and the note-detect calibration challenge.
                     await runInputSetup(selectedPaths);
-                    setStep(5);
+                    setStep(isDesktop ? 5 : 6);
                 } catch (e) { showErr(e.message || 'Could not save profile.'); refreshSubmit(); }
                 return;
             }
-            // Step 5 — "Play it now": leave calibration pending (it completes
+            if (step === 5) {
+                // Step 5 (desktop only) — persist the amp-sim opt-in (default OFF
+                // / own-rig). Best-effort: a failed write must not block onboarding;
+                // it's settable later from the desktop Audio settings.
+                submit.disabled = true;
+                try {
+                    const ampEl = overlay.querySelector('#v3-ob-ampsims');
+                    const useAmpSims = !!(ampEl && ampEl.checked);
+                    try {
+                        await fetch('/api/settings', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ use_amp_sims: useAmpSims }),
+                        });
+                    } catch (e) { /* best-effort — settable later */ }
+                    setStep(6);
+                } finally { refreshSubmit(); }
+                return;
+            }
+            // Step 6 — "Play it now": leave calibration pending (it completes
             // through the normal scored-stats path) and launch the diagnostic.
             const target = diagnosticFilename;
             await finish({ launchingSong: !!target });
@@ -713,8 +751,8 @@
                 setStep(3);
                 return;
             }
-            // Step 5 — skip: Mastery Rank 1 immediately, calibration stays
-            // replayable from the Progress screen.
+            // Calibration step (last) — skip: Mastery Rank 1 immediately,
+            // calibration stays replayable from the Progress screen.
             skipBtn.disabled = true;
             try {
                 const res = await fetch('/api/progression/onboarding', {

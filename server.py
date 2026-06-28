@@ -5531,6 +5531,15 @@ def _default_settings():
         # until the user opts in. Read by the bundled achievements plugin to
         # gate its wall-sync enqueue.
         "achievements_enabled": False,
+        # Amp-sim opt-in (issue feedBack-desktop#46). Whether the desktop app may
+        # auto-load an in-app amp-sim / tone chain (NAM / IR / VST) for input
+        # monitoring. Default OFF — "own-rig first": players monitoring through
+        # their own external amp/rig never get a processed monitor (and never the
+        # idle distorted buzz) until they opt in. Set during onboarding (desktop
+        # only) and from the desktop Audio settings toggle; read by the desktop
+        # renderer to gate its saved-chain restore. Inert on the pure-web build,
+        # which has no native amp sims.
+        "use_amp_sims": False,
     }
 
 
@@ -5673,6 +5682,12 @@ def save_settings(data: dict):
             if not isinstance(raw, bool):
                 return {"error": "achievements_enabled must be a boolean"}
             updates["achievements_enabled"] = raw
+    if "use_amp_sims" in data:
+        raw = data["use_amp_sims"]
+        if raw is not None:
+            if not isinstance(raw, bool):
+                return {"error": "use_amp_sims must be a boolean"}
+            updates["use_amp_sims"] = raw
     if "miss_penalty" in data:
         raw = data["miss_penalty"]
         if raw is not None:
@@ -5763,7 +5778,7 @@ _RESETTABLE_SETTINGS_KEYS = frozenset({
     "default_arrangement", "demucs_server_url", "master_difficulty",
     "av_offset_ms", "countdown_before_song", "miss_penalty", "fail_behavior",
     "reference_pitch", "instrument", "string_count", "tuning",
-    "achievements_enabled",
+    "achievements_enabled", "use_amp_sims",
 })
 
 

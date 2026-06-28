@@ -51,6 +51,14 @@ async function openPlayerWithMockSong(page) {
 
 test.describe('Keyboard Shortcuts', () => {
   test.beforeEach(async ({ page }) => {
+    // Suppress the first-run onboarding overlay (#v3-onboarding) — a modal that
+    // intercepts pointer/keyboard events — so the app behaves like a returning
+    // user, which is the state these tests assume.
+    await page.route('**/api/profile', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ json: { display_name: 'Test', player_hash: 'test', onboarded: true } });
+      } else { await route.continue(); }
+    });
     await page.goto('/');
     await page.waitForSelector('.screen.active', { timeout: 10000 });
   });
@@ -776,6 +784,183 @@ test('should support condition callbacks', async ({ page }) => {
     expect(result.played).toBe(0);
     // …and Space activated the modal's focused button natively.
     expect(result.clicked).toBe(1);
+  });
+
+  // ── Escape = universal "Back" carve-out ──────────────────────────────────
+  // Escape must escape a focused non-modal control exactly like Space does,
+  // so a focused transport/rail button can't swallow it ("Escape in song not
+  // consistent"). These mirror the #593 Space tests above. Each registers an
+  // Escape spy in the relevant scope (which replaces the built-in handler for
+  // that composite key) so the assertion doesn't depend on showScreen teardown.
+
+  test('Escape exits the song when a player rail button is focused', async ({ page }) => {
+    await openPlayerWithMockSong(page);
+
+    // The bug: a focused <button> is an "interactive control", so Escape was
+    // blocked before reaching the dispatcher and the song wouldn't exit until
+    // the user clicked empty canvas to blur the control.
+    await page.evaluate(() => {
+      // @ts-ignore
+      window.__escBackCount = 0;
+      // @ts-ignore
+      window.registerShortcut({
+        key: 'Escape',
+        description: 'Back to library (test spy)',
+        scope: 'player',
+        // @ts-ignore
+        handler: () => { window.__escBackCount++; },
+      });
+      const btn = document.createElement('button');
+      btn.id = '__test-rail-btn';
+      btn.textContent = 'Restart';
+      document.getElementById('player')!.appendChild(btn);
+    });
+
+    await page.locator('#__test-rail-btn').focus();
+    await expect(page.locator('#__test-rail-btn')).toBeFocused();
+
+    await page.keyboard.press('Escape');
+
+    const backCount = await page.evaluate(() => (window as any).__escBackCount);
+    // Back-to-library fired despite the control button holding focus.
+    expect(backCount).toBe(1);
+  });
+
+  test('Escape in a player-screen text input does NOT exit the song', async ({ page }) => {
+    await openPlayerWithMockSong(page);
+
+    // The text-input exemption (_isTextInput) is checked before the Escape
+    // carve-out, so Escape in a field is the field's own concern (clear/blur),
+    // never a song exit.
+    await page.evaluate(() => {
+      // @ts-ignore
+      window.__escBackCount = 0;
+      // @ts-ignore
+      window.registerShortcut({
+        key: 'Escape',
+        description: 'Back to library (test spy)',
+        scope: 'player',
+        // @ts-ignore
+        handler: () => { window.__escBackCount++; },
+      });
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = '__test-player-input';
+      document.getElementById('player')!.appendChild(input);
+    });
+
+    await page.locator('#__test-player-input').focus();
+    await page.keyboard.press('Escape');
+
+    const backCount = await page.evaluate(() => (window as any).__escBackCount);
+    expect(backCount).toBe(0);
+  });
+
+  test('Escape inside a modal over the player closes the modal, not back-to-library', async ({ page }) => {
+    await openPlayerWithMockSong(page);
+
+    // A true modal (role="dialog" aria-modal="true" / .feedBack-modal) layered
+    // over the player is a focus trap: Escape there must NOT eject past it to
+    // exit the song — the modal owns Escape. The carve-out's modal-overlay
+    // guard keeps the player-back shortcut from firing.
+    await page.evaluate(() => {
+      // @ts-ignore
+      window.__escBackCount = 0;
+      // @ts-ignore
+      window.registerShortcut({
+        key: 'Escape',
+        description: 'Back to library (test spy)',
+        scope: 'player',
+        // @ts-ignore
+        handler: () => { window.__escBackCount++; },
+      });
+      const modal = document.createElement('div');
+      modal.id = '__test-modal';
+      modal.className = 'feedBack-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      const btn = document.createElement('button');
+      btn.id = '__test-modal-btn';
+      btn.textContent = 'Close';
+      modal.appendChild(btn);
+      document.body.appendChild(modal);
+    });
+
+    await page.locator('#__test-modal-btn').focus();
+    await expect(page.locator('#__test-modal-btn')).toBeFocused();
+
+    await page.keyboard.press('Escape');
+
+    const backCount = await page.evaluate(() => (window as any).__escBackCount);
+    // Playback is NOT exited behind the modal.
+    expect(backCount).toBe(0);
+  });
+
+  test('Escape does NOT exit the song while the Section Practice popover is open', async ({ page }) => {
+    await openPlayerWithMockSong(page);
+
+    // The Section Practice popover claims Escape earlier in
+    // _shortcutDispatchBlocked (line ~447, before the Escape carve-out), so an
+    // open popover suppresses the player-scope back-to-library Escape — the
+    // popover's own handler owns closing it. This locks that ordering guard.
+    await page.evaluate(() => {
+      // @ts-ignore
+      window.__escBackCount = 0;
+      // @ts-ignore
+      window.registerShortcut({
+        key: 'Escape',
+        description: 'Back to library (test spy)',
+        scope: 'player',
+        // @ts-ignore
+        handler: () => { window.__escBackCount++; },
+      });
+      let bar = document.getElementById('section-practice-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'section-practice-bar';
+        document.getElementById('player')!.appendChild(bar);
+      }
+      bar.classList.add('section-practice-bar--open');
+    });
+
+    await page.keyboard.press('Escape');
+
+    const backCount = await page.evaluate(() => (window as any).__escBackCount);
+    // Player-back did NOT fire while the popover was open.
+    expect(backCount).toBe(0);
+  });
+
+  test('Escape goes back from settings when a control is focused (twin-bug)', async ({ page }) => {
+    // The same focus bug existed on the settings screen (the carve-out was
+    // player-only). The fix covers settings too: Escape returns to the
+    // previous screen even when a settings control holds focus.
+    await page.evaluate(() => {
+      // @ts-ignore
+      window.__escSettingsBackCount = 0;
+      // @ts-ignore
+      window.registerShortcut({
+        key: 'Escape',
+        description: 'Go back from settings (test spy)',
+        scope: 'settings',
+        // @ts-ignore
+        handler: () => { window.__escSettingsBackCount++; },
+      });
+      // @ts-ignore
+      window.showScreen('settings');
+      const btn = document.createElement('button');
+      btn.id = '__test-settings-btn';
+      btn.textContent = 'Some setting';
+      document.getElementById('settings')!.appendChild(btn);
+    });
+
+    await page.waitForSelector('#settings.active', { timeout: 5000 });
+    await page.locator('#__test-settings-btn').focus();
+    await expect(page.locator('#__test-settings-btn')).toBeFocused();
+
+    await page.keyboard.press('Escape');
+
+    const backCount = await page.evaluate(() => (window as any).__escSettingsBackCount);
+    expect(backCount).toBe(1);
   });
 
   test('should warn on invalid scope', async ({ page }) => {

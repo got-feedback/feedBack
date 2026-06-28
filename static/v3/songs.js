@@ -15,6 +15,20 @@
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const enc = encodeURIComponent;
+    // Inverse of `enc` for matching a played song's filename back to a library
+    // card. The `stats:recorded` event (like `song:loading`) carries the
+    // filename exactly as it was handed to `playSong` — i.e. encodeURIComponent'd
+    // (see `playCard`, and the highway WS which decodeURIComponent's it). But
+    // cards key on the DECODED library filename (`cardKey` → `localFilename`),
+    // and `/api/stats/best` is server-canonicalized to that same decoded key, so
+    // an encoded filename matches no card and the post-play badge repaint silently
+    // no-ops. Decode to land in the card/`state.accuracy` key space. Idempotent
+    // for already-decoded names (no '%'); on malformed input falls back to the
+    // original so a real filename containing a literal '%' is never corrupted.
+    function decFn(fn) {
+        if (typeof fn !== 'string' || fn.indexOf('%') === -1) return fn || '';
+        try { return decodeURIComponent(fn); } catch (_) { return fn; }
+    }
 
     const SORTS = [
         ['artist', 'Artist A–Z'], ['artist-desc', 'Artist Z–A'],
@@ -1173,7 +1187,13 @@
         // If the library is visible right now, repaint immediately; otherwise
         // mark it dirty and onV3SongsScreenEnter applies it on return.
         sm.on('stats:recorded', (e) => {
-            const fn = e && e.detail && e.detail.filename;
+            // Decode to the library-card key space — the event carries the
+            // encodeURIComponent'd filename, but cards (data-fn) and
+            // state.accuracy key on the decoded library filename. Without this
+            // the repaint below (and applyScoreRefresh's repaintAccuracy) match
+            // no card, so a just-earned score stays invisible until a full
+            // render() (restart / search / re-enter), which is this bug.
+            const fn = decFn(e && e.detail && e.detail.filename);
             if (!fn) return;
             _dirtyScores.add(fn);
             // Only repaint now if the library is the active screen; otherwise

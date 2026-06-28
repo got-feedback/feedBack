@@ -460,6 +460,25 @@ function _shortcutDispatchBlocked(e) {
           e.target.closest('[role="dialog"][aria-modal="true"], .feedBack-modal'))) {
         return false;
     }
+    // Escape is the universal "back" action and must fire like Space above even
+    // when a transport/rail control <button> holds keyboard focus after a click
+    // — otherwise a focused control swallows Esc and the user can't leave the
+    // song until they click empty canvas (feedBack — "Escape in song not
+    // consistent"). It applies on the player (exit the song) AND settings
+    // (return to the previous screen), both of which register an Escape=Back
+    // shortcut. The earlier guards still win: text inputs are exempted at the
+    // top (Esc there clears/blurs the field), and the Section Practice popover
+    // already claimed Esc above. A true modal layered over the screen still
+    // traps Esc — the modal-overlay check keeps Esc closing the modal rather
+    // than ejecting past it to the screen behind.
+    if (e.key === 'Escape') {
+        const ctx = _getCurrentContext();
+        if ((ctx.isPlayer || ctx.isSettings) &&
+            !(e.target && e.target.closest &&
+              e.target.closest('[role="dialog"][aria-modal="true"], .feedBack-modal'))) {
+            return false;
+        }
+    }
     return _isInsideInteractiveControl(e.target);
 }
 
@@ -1033,6 +1052,11 @@ async function showScreen(id) {
         const audio = document.getElementById('audio');
         const stopTime = _audioTime();
         const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || isPlaying;
+        // Snapshot where we were so leaving the player — especially by accident
+        // — is recoverable instead of dumping the user back at bar 1 next time.
+        // Must run BEFORE highway.stop()/audio unload, while getSongInfo() and
+        // the position (stopTime) are still live.
+        if (hadPlayableSong) _snapshotResumeSession(stopTime);
         highway.stop();
         // Cancel any queued seeks, in-flight shim closures, AND active
         // count-in timers before stopping playback so none of these paths
@@ -3394,6 +3418,8 @@ async function loadSettings() {
     if (autoplayExitEl) autoplayExitEl.checked = _autoplayExitEnabled();
     const showUpNextEl = document.getElementById('setting-show-upnext');
     if (showUpNextEl) showUpNextEl.checked = _showUpNextEnabled();
+    const confirmExitEl = document.getElementById('setting-confirm-exit');
+    if (confirmExitEl) confirmExitEl.checked = _exitConfirmEnabled();
     // Restore master-difficulty slider from persisted value (defaults
     // to 100 when the key is absent — no behaviour change for users
     // who've never touched the slider).
@@ -5971,6 +5997,201 @@ window.feedBack.on('song:ready', () => {
     }
 });
 
+// ── Resume last session ────────────────────────────────────────────────────
+// Leaving a song snapshots where you were — song, arrangement, position, and
+// speed — so an exit (especially an accidental one, now that Escape reliably
+// leaves regardless of focus) is recoverable instead of restarting from bar 1.
+// The snapshot is offered back through a non-blocking "Resume" pill; it never
+// gates, blocks, or auto-acts. Cleared on natural song-end and once consumed.
+// (This is the player-session slice; the broader nav/state-resume work — e.g.
+// returning to a song after wandering into Settings → Tone Builder — is a
+// separate, larger track.)
+const _RESUME_KEY = 'feedBack.resumeSession';
+const _RESUME_MAX_AGE_MS = 24 * 60 * 60 * 1000;   // a day-old snapshot is stale
+const _RESUME_MIN_POSITION_S = 3;                  // ignore barely-started songs
+const _RESUME_END_GUARD_S = 5;                      // ignore basically-finished songs
+let _pendingResume = null;                          // {position, speed}, consumed at song:ready
+let _resumePillDismissed = false;                   // per-session: user waved off the current snapshot
+
+function _curPlaybackSpeed() {
+    try {
+        return window._juceMode
+            ? ((window.jucePlayer && window.jucePlayer._speed) || 1)
+            : (document.getElementById('audio')?.playbackRate || 1);
+    } catch (_) { return 1; }
+}
+
+// Snapshot the live session. Called from showScreen()'s teardown before
+// highway.stop()/audio unload, while getSongInfo() + position are still valid.
+function _snapshotResumeSession(position) {
+    try {
+        if (!currentFilename) return;
+        const si = (window.highway && typeof highway.getSongInfo === 'function')
+            ? (highway.getSongInfo() || {}) : {};
+        const dur = Number(si.duration) || 0;
+        const pos = Number(position) || 0;
+        // Only worth resuming a song you were genuinely mid-way through — not a
+        // glance at the first seconds, and not one that already basically ended.
+        if (pos < _RESUME_MIN_POSITION_S) { _clearResumeSession(); return; }
+        if (dur && pos > dur - _RESUME_END_GUARD_S) { _clearResumeSession(); return; }
+        const snap = {
+            f: currentFilename,
+            a: (typeof si.arrangement_index === 'number' && si.arrangement_index >= 0)
+                ? si.arrangement_index : undefined,
+            t: pos,
+            sp: _curPlaybackSpeed(),
+            title: si.title || '',
+            artist: si.artist || '',
+            ts: Date.now(),
+        };
+        localStorage.setItem(_RESUME_KEY, JSON.stringify(snap));
+        // A fresh snapshot earns one offer — undo any earlier dismissal.
+        _resumePillDismissed = false;
+    } catch (_) { /* storage unavailable — resume is best-effort */ }
+}
+
+function _readResumeSession() {
+    try {
+        const raw = localStorage.getItem(_RESUME_KEY);
+        if (!raw) return null;
+        const snap = JSON.parse(raw);
+        if (!snap || !snap.f || !(Number(snap.t) > 0)) return null;
+        if (!snap.ts || Date.now() - snap.ts > _RESUME_MAX_AGE_MS) { _clearResumeSession(); return null; }
+        return snap;
+    } catch (_) { return null; }
+}
+
+function _clearResumeSession() {
+    try { localStorage.removeItem(_RESUME_KEY); } catch (_) {}
+}
+
+// Re-enter the snapshotted song and restore arrangement + position + speed.
+async function resumeLastSession() {
+    const snap = _readResumeSession();
+    if (!snap) { _hideResumePill(); return false; }
+    _hideResumePill();
+    try {
+        await playSong(snap.f, snap.a, {
+            resume: { position: Number(snap.t) || 0, speed: Number(snap.sp) || 1 },
+        });
+    } catch (err) {
+        // A transient load/connect failure must not strand the user: keep the
+        // snapshot so the pill can re-offer it on the next non-player screen,
+        // rather than consuming the only copy before the song actually loaded.
+        console.warn('[app] resume failed to load; keeping snapshot:', err);
+        _pendingResume = null;
+        return false;
+    }
+    _clearResumeSession();   // consumed only after a successful load
+    return true;
+}
+window.resumeLastSession = resumeLastSession;
+if (window.feedBack) window.feedBack.resumeLastSession = resumeLastSession;
+
+// Consume a pending resume once the chart is ready: restore speed, seek to the
+// saved position, then (if autoplay is on) start from there. playSong() does
+// NOT arm autostart for a resume load, so the two never fight over playback.
+window.feedBack.on('song:ready', () => {
+    const pend = _pendingResume;
+    if (!pend) return;
+    _pendingResume = null;
+    try {
+        if (pend.speed && pend.speed > 0) {
+            const slider = document.getElementById('speed-slider');
+            if (slider) slider.value = String(Math.round(pend.speed * 100));
+            setSpeed(pend.speed);
+        }
+    } catch (_) { /* speed restore is best-effort */ }
+    Promise.resolve(_audioSeek(Math.max(0, Number(pend.position) || 0), 'resume'))
+        .then(() => { if (_autoplayExitEnabled() && !isPlaying) return togglePlay(); })
+        .catch((err) => console.warn('[app] resume failed:', err));
+});
+
+// A song that finishes on its own has nothing to resume — and we never want to
+// offer "resume" for a song the user just completed.
+window.feedBack.on('song:ended', _clearResumeSession);
+
+// ── Resume pill (non-blocking "continue where you left off") ────────────────
+// Self-contained, inline-styled, body-appended so it works identically in the
+// classic (v2) and v3 shells with no Tailwind rebuild. It only ever appears off
+// the player screen, never blocks, and a dismiss forgets the current snapshot
+// for the session.
+function _hideResumePill() {
+    const el = document.getElementById('fb-resume-pill');
+    if (el) el.remove();
+}
+
+function _maybeShowResumePill() {
+    const active = document.querySelector('.screen.active');
+    if (active && active.id === 'player') { _hideResumePill(); return; }
+    if (_resumePillDismissed) return;
+    const snap = _readResumeSession();
+    if (!snap) { _hideResumePill(); return; }
+    if (document.getElementById('fb-resume-pill')) return;   // already shown
+
+    const label = (snap.title || decodeURIComponent(snap.f || 'your last song')).toString();
+    const pill = document.createElement('div');
+    pill.id = 'fb-resume-pill';
+    pill.setAttribute('role', 'status');
+    pill.style.cssText = [
+        'position:fixed', 'left:16px', 'bottom:16px', 'z-index:120',
+        'display:flex', 'align-items:center', 'gap:10px',
+        'max-width:min(90vw,360px)', 'padding:10px 12px',
+        'background:rgba(17,24,39,0.96)', 'color:#e5e7eb',
+        'border:1px solid rgba(148,163,184,0.25)', 'border-radius:10px',
+        'box-shadow:0 6px 24px rgba(0,0,0,0.4)',
+        'font:13px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif',
+    ].join(';');
+
+    const text = document.createElement('div');
+    text.style.cssText = 'flex:1;min-width:0';
+    const t1 = document.createElement('div');
+    t1.textContent = 'Resume practice';
+    t1.style.cssText = 'font-weight:600;color:#fff';
+    const t2 = document.createElement('div');
+    t2.textContent = label;
+    t2.style.cssText = 'opacity:0.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    text.appendChild(t1); text.appendChild(t2);
+
+    const resumeBtn = document.createElement('button');
+    resumeBtn.type = 'button';
+    resumeBtn.textContent = 'Resume ▸';
+    resumeBtn.style.cssText = 'flex:none;padding:6px 10px;border:0;border-radius:7px;background:#4080e0;color:#fff;font-weight:600;cursor:pointer';
+    resumeBtn.addEventListener('click', () => { resumeLastSession(); });
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.type = 'button';
+    dismissBtn.setAttribute('aria-label', 'Dismiss');
+    dismissBtn.textContent = '✕';
+    dismissBtn.style.cssText = 'flex:none;padding:4px 6px;border:0;border-radius:7px;background:transparent;color:#9ca3af;cursor:pointer;font-size:14px';
+    dismissBtn.addEventListener('click', () => { _resumePillDismissed = true; _hideResumePill(); });
+
+    pill.appendChild(text);
+    pill.appendChild(resumeBtn);
+    pill.appendChild(dismissBtn);
+    (document.body || document.documentElement).appendChild(pill);
+}
+if (window.feedBack) window.feedBack._maybeShowResumePill = _maybeShowResumePill;
+
+// Exposed for tests/debugging (mirrors window._panels / _getCurrentContext).
+window._snapshotResumeSession = _snapshotResumeSession;
+window._readResumeSession = _readResumeSession;
+window._clearResumeSession = _clearResumeSession;
+
+// Drive the pill off screen transitions (hide over the player, offer it
+// elsewhere) plus a one-shot check on first load for a prior-session snapshot.
+window.feedBack.on('screen:changed', (ev) => {
+    const id = (ev && ev.detail && ev.detail.id) || (ev && ev.id);
+    if (id === 'player') _hideResumePill();
+    else _maybeShowResumePill();
+});
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded',
+        () => { try { _maybeShowResumePill(); } catch (_) {} }, { once: true });
+} else {
+    try { _maybeShowResumePill(); } catch (_) {}
+}
+
 // Editor → Highway handoff (Editor ⇄ 3D Highway region round-trip). The
 // editor's "Loop in 3D" button stashes a pending loop + return context, then
 // calls playSong(). Once the chart is ready (playSong's own clearLoop() has
@@ -6124,8 +6345,17 @@ async function playSong(filename, arrangement, options) {
 
     currentFilename = filename;
     // A fresh load arms autoplay; a pending auto-exit from the previous
-    // song is no longer relevant.
-    _pendingAutostart = true;
+    // song is no longer relevant. A *resume* load (options.resume) instead
+    // arms _pendingResume — consumed at song:ready to restore speed + seek to
+    // the saved position, then start — so autostart and resume don't both try
+    // to begin playback from different positions.
+    if (options && options.resume && Number(options.resume.position) > 0) {
+        _pendingResume = options.resume;
+        _pendingAutostart = false;
+    } else {
+        _pendingResume = null;
+        _pendingAutostart = true;
+    }
     _clearAutoExit();
     // Remember which screen the player was launched from so Esc /
     // navigation back from the player (and auto-exit) returns the user
@@ -6396,6 +6626,135 @@ function closeCurrentSong() {
 }
 window.closeCurrentSong = closeCurrentSong;
 if (window.feedBack) window.feedBack.closeCurrentSong = closeCurrentSong;
+
+// ── "Ask before leaving a song" (Gameplay tab, default OFF) ────────────────
+// Client-only localStorage pref (`confirmExitSong`); absence = OFF. When ON, a
+// *user-initiated* exit (Escape, or the player ✕) opens a small confirm instead
+// of leaving immediately. Auto-exit on song-end and a results screen's own
+// Close never prompt — they call closeCurrentSong() directly, which stays the
+// unguarded actual-exit.
+function _exitConfirmEnabled() {
+    try { return localStorage.getItem('confirmExitSong') === '1'; } catch (_) { return false; }
+}
+// Settings checkbox setter (onchange="setConfirmExitSong(this.checked)").
+window.setConfirmExitSong = function (on) {
+    try { localStorage.setItem('confirmExitSong', on ? '1' : '0'); } catch (_) { /* private mode */ }
+    const el = document.getElementById('setting-confirm-exit');
+    if (el && el.checked !== !!on) el.checked = !!on;
+};
+
+let _exitConfirmOpen = false;   // guard against stacking confirm modals
+
+// User-initiated request to leave the player. Honors the confirm toggle; the
+// actual exit is always closeCurrentSong() (origin-aware teardown).
+function requestExitSong() {
+    if (!_exitConfirmEnabled()) { closeCurrentSong(); return; }
+    if (_exitConfirmOpen) return;   // already asking
+    _openExitConfirm();
+}
+window.requestExitSong = requestExitSong;
+if (window.feedBack) window.feedBack.requestExitSong = requestExitSong;
+
+// A *true* modal (role="dialog" aria-modal="true" + .feedBack-modal) so the
+// Escape/Space carve-outs classify it as a focus trap — they won't fire
+// player-back / play-pause while it's up. Opening it PAUSES the song so it
+// isn't running (or being scored) behind the prompt; Stay resumes exactly what
+// we paused. Escape matches every other modal (and the generic _confirmDialog):
+// it *dismisses* the prompt → Stay → drops you back into the (resumed) song —
+// so a second Escape does NOT leave. Leaving is the explicit, default-focused
+// "Leave" button, so Space/Enter (or click) is the keyboard "just get me out".
+function _openExitConfirm() {
+    _exitConfirmOpen = true;
+    // Freeze the song while the user decides: cancel any pending count-in (so it
+    // can't start playback behind the modal) and pause if we're playing. Stay
+    // resumes only what we paused (wasPlaying), and only if the same song is
+    // still live on the player — guarding a teardown/seek/end behind the prompt.
+    _cancelCountIn();
+    const _resumeGen = _audioSeekGen;
+    const _wasPlaying = isPlaying;
+    if (_wasPlaying) Promise.resolve(togglePlay()).catch(() => {});
+    const overlay = document.createElement('div');
+    overlay.id = 'fb-exit-confirm';
+    overlay.className = 'feedBack-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Leave this song?');
+    overlay.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:200', 'display:flex',
+        'align-items:center', 'justify-content:center',
+        'background:rgba(0,0,0,0.6)',
+        'font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif',
+    ].join(';');
+
+    const card = document.createElement('div');
+    card.style.cssText = [
+        'max-width:min(92vw,360px)', 'padding:18px 18px 14px',
+        'background:#111827', 'color:#e5e7eb',
+        'border:1px solid rgba(148,163,184,0.25)', 'border-radius:12px',
+        'box-shadow:0 12px 40px rgba(0,0,0,0.5)', 'text-align:left',
+    ].join(';');
+    const h = document.createElement('div');
+    h.textContent = 'Leave this song?';
+    h.style.cssText = 'font-size:16px;font-weight:700;color:#fff;margin-bottom:6px';
+    const p = document.createElement('div');
+    p.textContent = 'You can pick up where you left off from the Resume pill.';
+    p.style.cssText = 'opacity:0.75;margin-bottom:16px';
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+    const stayBtn = document.createElement('button');
+    stayBtn.type = 'button';
+    stayBtn.textContent = 'Stay';
+    stayBtn.style.cssText = 'padding:8px 14px;border:1px solid rgba(148,163,184,0.3);border-radius:8px;background:transparent;color:#e5e7eb;cursor:pointer';
+    const leaveBtn = document.createElement('button');
+    leaveBtn.type = 'button';
+    leaveBtn.textContent = 'Leave';
+    leaveBtn.style.cssText = 'padding:8px 14px;border:0;border-radius:8px;background:#4080e0;color:#fff;font-weight:600;cursor:pointer';
+
+    let settled = false;
+    function close(leave) {
+        if (settled) return;
+        settled = true;
+        _exitConfirmOpen = false;
+        document.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        if (leave) { closeCurrentSong(); return; }
+        // Stay → resume exactly what we paused, but only if the session is still
+        // the same live song on the player (not torn down / ended / seeked away
+        // behind the modal). If the user was already paused, leave them paused.
+        if (_wasPlaying && !isPlaying &&
+            _audioSeekGen === _resumeGen &&
+            document.querySelector('.screen.active')?.id === 'player') {
+            Promise.resolve(togglePlay()).catch(() => {});
+        }
+    }
+    // Capture-phase so this dialog owns Escape and it can't fall through to the
+    // player-scope back shortcut. Escape = Stay (dismiss the prompt and resume
+    // the song) — consistent with every other modal, so a second Escape does
+    // NOT leave. Space/Enter stay on native activation of the focused button
+    // (Leave by default), so the keyboard "leave" is Space/Enter.
+    function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close(false); }
+    }
+    document.addEventListener('keydown', onKey, true);
+    leaveBtn.addEventListener('click', () => close(true));
+    stayBtn.addEventListener('click', () => close(false));
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(false); });
+
+    row.appendChild(stayBtn);
+    row.appendChild(leaveBtn);
+    card.appendChild(h);
+    card.appendChild(p);
+    card.appendChild(row);
+    overlay.appendChild(card);
+    (document.body || document.documentElement).appendChild(overlay);
+    // Trap Tab within the dialog (Stay ↔ Leave) so focus can't fall back to the
+    // player controls underneath while it's open.
+    _trapFocusInModal(overlay);
+    // Default focus on "Leave" so Space/Enter leaves immediately.
+    leaveBtn.focus();
+}
+window._openExitConfirm = _openExitConfirm;   // exposed for tests/debugging
 
 const SPEED_PRESET_PCTS = [100, 90, 80, 75, 70, 60, 50];
 const SPEED_SNAP_THRESHOLD = 0.02;
@@ -9652,7 +10011,7 @@ registerShortcut({
     key: 'Escape',
     description: 'Back to library',
     scope: 'player',
-    handler: () => showScreen(_playerOriginScreen || 'home')
+    handler: () => requestExitSong()
 });
 
 registerShortcut({

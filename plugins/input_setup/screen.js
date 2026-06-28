@@ -186,8 +186,11 @@
                 const SIGNAL_THRESHOLD = 0.04;
                 let pollTimer = null;
                 let testing = false;
-                let weEnabled = false; // did WE turn detection on (so we restore it)?
+                // Detection on/off BEFORE we first opened the preview — captured once,
+                // so we restore it on exit even after device-change reopens.
+                let preTestEnabled = null;
                 let handingOff = false; // Calibrate owns the capture from here on
+                let testGen = 0; // invalidate in-flight startTest()s on change/exit
 
                 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
                 function resetGate() {
@@ -215,6 +218,7 @@
                     }, 100);
                 }
                 async function startTest() {
+                    const myGen = ++testGen; // a newer change/exit supersedes us
                     stopPoll();
                     resetGate();
                     if (meterWrap) meterWrap.classList.remove('hidden');
@@ -223,10 +227,15 @@
                     // must cycle disable→enable or the meter would read the stale
                     // device — false confidence, the exact bug this gate prevents.
                     await commitAudio(sel.value);
+                    if (myGen !== testGen) return;
                     try {
-                        if (nd.isEnabled()) { await nd.disable(); await nd.enable(); weEnabled = false; }
-                        else { await nd.enable(); weEnabled = true; }
+                        // Capture the pre-preview detection state ONCE so we restore it
+                        // on exit (a later reopen must not lose that we own the enable).
+                        if (preTestEnabled === null) preTestEnabled = !!nd.isEnabled();
+                        if (nd.isEnabled()) { await nd.disable(); if (myGen !== testGen) return; }
+                        await nd.enable();
                     } catch (_) { /* fail-soft: meter just won't move; Calibrate still works */ }
+                    if (myGen !== testGen) return;
                     testing = true;
                     startPoll();
                 }
@@ -251,8 +260,10 @@
                 _activeCleanup = () => {
                     stopPoll();
                     testing = false;
-                    if (weEnabled && !handingOff) { try { nd.disable(); } catch (_) {} }
-                    weEnabled = false;
+                    testGen++; // cancel any in-flight startTest()
+                    // Restore the pre-preview detection state unless the Calibration
+                    // Wizard has taken ownership of the capture.
+                    if (preTestEnabled === false && !handingOff) { try { nd.disable(); } catch (_) {} }
                 };
 
                 // Tell the tuner tables / note_detect which instrument this is.
@@ -264,6 +275,7 @@
                     // cleanup must not disable detection out from under it.
                     handingOff = true;
                     stopPoll();
+                    testGen++; // cancel any in-flight startTest() before handoff
                     if (hasDetector) {
                         // Hide our own full-screen overlay while note_detect's
                         // Calibration Wizard runs on top. That wizard goes
@@ -286,11 +298,9 @@
                             onCancel: () => {
                                 restore();
                                 // Back on this panel: reclaim cleanup ownership so a
-                                // later Skip/Continue still restores detection state.
-                                // The wizard's enable() may have left detection on; if
-                                // we didn't turn it on ourselves, leave it as-is.
+                                // later Skip/Continue still restores the pre-preview
+                                // detection state (preTestEnabled is unchanged).
                                 handingOff = false;
-                                if (nd && typeof nd.isEnabled === 'function') { try { weEnabled = weEnabled && nd.isEnabled(); } catch (_) {} }
                             },
                         });
                     } else {

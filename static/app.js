@@ -6070,10 +6070,19 @@ async function resumeLastSession() {
     const snap = _readResumeSession();
     if (!snap) { _hideResumePill(); return false; }
     _hideResumePill();
-    _clearResumeSession();   // consumed — don't re-offer the same snapshot
-    await playSong(snap.f, snap.a, {
-        resume: { position: Number(snap.t) || 0, speed: Number(snap.sp) || 1 },
-    });
+    try {
+        await playSong(snap.f, snap.a, {
+            resume: { position: Number(snap.t) || 0, speed: Number(snap.sp) || 1 },
+        });
+    } catch (err) {
+        // A transient load/connect failure must not strand the user: keep the
+        // snapshot so the pill can re-offer it on the next non-player screen,
+        // rather than consuming the only copy before the song actually loaded.
+        console.warn('[app] resume failed to load; keeping snapshot:', err);
+        _pendingResume = null;
+        return false;
+    }
+    _clearResumeSession();   // consumed only after a successful load
     return true;
 }
 window.resumeLastSession = resumeLastSession;

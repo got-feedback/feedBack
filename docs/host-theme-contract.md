@@ -94,11 +94,20 @@ On the existing `window.feedBack` bus:
 - `theme:changed` event → `{ id, tokens, capabilities }` (emitted at theme-core's existing
   apply chokepoint; analogous to `note_detect`'s `notedetect:skin`)
 
-**Reconciliation rule (ends the two-disconnected-systems problem):** a plugin skin
-**derives surface/text/border from host tokens** (`--nd-bg: var(--fb-card)`, etc.) and
-**owns only its accent + its devices**, selecting the device via the recipe. A host theme then
-pulls plugin chrome along (one truth for surfaces), while the plugin layers identity on top and
-never imposes a device the active theme neutralizes.
+**Reconciliation rule (ends the two-disconnected-systems problem) — depends on whether the
+plugin has its own identity:**
+
+- **A plugin *without* its own skin** should **derive surface/text/border from host tokens**
+  (`background: var(--fbv-card)`, etc.) and **own only its accent + its devices**, selecting the
+  device via the recipe. A host theme then pulls its chrome along — one truth for surfaces — and
+  it never imposes a device the active theme neutralizes. This is the common case.
+- **A plugin *with* deliberate skins** (e.g. `note_detect`'s neon / esports / metal, which are
+  full design languages) **owns its surfaces** — deriving them from the host theme would *erase*
+  the skin's identity (metal's brushed steel becomes a flat host colour). Such a plugin adopts the
+  **role + recipe *pattern*** (per-skin device tokens, `on-accent`, `focus-ring`, "off" is legal)
+  and verifies across **its own** skin matrix, but does not blindly inherit host surfaces.
+  *(Decided 2026-06-29: keep note_detect's skins self-owned + their current button text — so the
+  fix is the per-skin device pattern + the verification gate, not surface-derivation.)*
 
 ## 5. Consumption pattern (the rule for feature authors)
 

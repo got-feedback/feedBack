@@ -404,6 +404,98 @@
         const keys = Array.from(_dirtyScores);
         _dirtyScores.clear();
         keys.forEach(repaintAccuracy);
+        // A new score shifts the repertoire meter + the keep-practicing shelf.
+        renderLibraryHome();
+    }
+
+    // ── Practice-aware library home (repertoire meter + "Keep practicing") ─────
+    // Both read data we already have: state.accuracy (/api/stats/best =
+    // {filename: best_accuracy}) and /api/stats/recent. A song is "in your
+    // repertoire" at the same threshold the green accuracy badge uses (>= 0.9);
+    // a started song below that is "in progress". This is descriptive
+    // encouragement — it never gates content, decays, or nags (the goal-gradient
+    // / endowed-progress idea, kept healthy).
+    const MASTERY_ACCURACY = 0.9;
+
+    function _repertoireCounts() {
+        let mastered = 0, learning = 0;
+        for (const v of Object.values(state.accuracy || {})) {
+            if (typeof v !== 'number') continue;
+            if (v >= MASTERY_ACCURACY) mastered++; else learning++;
+        }
+        return { mastered, learning };
+    }
+
+    // The home block is the unfiltered "front door": shown on the grid view when
+    // the user isn't running a focused query (search / filter) or selecting.
+    function libHomeVisible() {
+        return state.view === 'grid' && !state.selectMode && !state.q && activeFilterCount() === 0;
+    }
+
+    async function renderLibraryHome() {
+        const host = document.getElementById('v3-lib-home');
+        if (!host) return;
+        if (!libHomeVisible()) { host.classList.add('hidden'); return; }
+        // Unfiltered library size for the meter denominator (the grid's
+        // state.total tracks the active filter; the meter is library-wide).
+        const stats = await jget('/api/library/stats?provider=' + enc(state.provider));
+        const total = (stats && (stats.total_songs ?? stats.total)) || 0;
+        // Recently played, not yet mastered, newest first → the shelf.
+        const recent = await jget('/api/stats/recent?limit=24');
+        const shelf = (Array.isArray(recent) ? recent : [])
+            .filter((r) => typeof r.best_accuracy === 'number' && r.best_accuracy < MASTERY_ACCURACY)
+            .slice(0, 8);
+        if (!libHomeVisible() || total <= 0) { host.classList.add('hidden'); return; } // changed mid-fetch / empty lib
+
+        const { mastered, learning } = _repertoireCounts();
+        const pct = Math.max(0, Math.min(100, Math.round((mastered / total) * 100)));
+        const meter =
+            '<div class="v3-rep-meter">' +
+              '<div class="flex items-baseline justify-between gap-3 mb-1">' +
+                '<span class="text-sm font-semibold text-fb-text">Repertoire</span>' +
+                '<span class="text-xs text-fb-textDim">' + mastered + ' of ' + total + ' song' + (total === 1 ? '' : 's') +
+                  (learning ? ' &middot; ' + learning + ' in progress' : '') + '</span>' +
+              '</div>' +
+              '<div class="v3-rep-track"><div class="v3-rep-fill" style="width:' + pct + '%"></div></div>' +
+            '</div>';
+
+        let shelfHtml = '';
+        if (shelf.length) {
+            const cards = shelf.map((r) =>
+                '<button class="v3-kp-card group text-left" data-kp="' + esc(r.filename) + '" data-arr="' + esc(r.arrangement != null ? r.arrangement : '') + '" title="' + esc(r.title) + '">' +
+                '<div class="relative aspect-square rounded-lg overflow-hidden bg-fb-card">' +
+                '<img src="' + esc(r.art_url) + '" alt="" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" onerror="this.style.visibility=\'hidden\'">' +
+                accuracyBadge(r.filename) +
+                '</div>' +
+                '<div class="mt-1 text-sm text-fb-text truncate">' + esc(r.title) + '</div>' +
+                '<div class="text-xs text-fb-textDim truncate">' + esc(r.artist) + '</div>' +
+                '</button>').join('');
+            shelfHtml =
+                '<section class="v3-kp-shelf mt-4">' +
+                '<h3 class="text-sm font-semibold text-fb-text mb-2">Keep practicing</h3>' +
+                '<div class="v3-kp-row">' + cards + '</div>' +
+                '</section>';
+        }
+
+        host.innerHTML = meter + shelfHtml;
+        host.classList.remove('hidden');
+        // Wire shelf cards → play (mirrors playCard's local path; recents are
+        // always local-library rows, so no provider sync is needed).
+        host.querySelectorAll('.v3-kp-card').forEach((btn) => btn.addEventListener('click', () => {
+            const fn = btn.getAttribute('data-kp');
+            const arr = btn.getAttribute('data-arr');
+            if (!fn || !window.playSong) return;
+            _saveLibraryScrollSnapshot();
+            window.playSong(enc(fn), arr === '' ? undefined : Number(arr));
+        }));
+    }
+
+    // Toggle/refresh the home block on view/sort/filter/search changes.
+    function updateLibraryHome() {
+        const host = document.getElementById('v3-lib-home');
+        if (!host) return;
+        if (!libHomeVisible()) { host.classList.add('hidden'); return; }
+        renderLibraryHome();
     }
 
     // Source format of a song — prefer the server's `format` field, fall back
@@ -1115,6 +1207,9 @@
         // Refresh the A–Z jump rail (shows only for the grid + alphabetical
         // sorts; hides itself otherwise). Independent of the grid load.
         refreshRail();
+        // Refresh the practice-aware home (repertoire meter + keep-practicing
+        // shelf); hides itself when searching/filtering/selecting or off-grid.
+        updateLibraryHome();
         { const _fc = document.getElementById('lib-folder-controls'); if (_fc) _fc.style.display = state.view === 'folder' ? 'flex' : 'none'; }
         if (state.view === 'folder') {
             _applyMainScrollTop(0);
@@ -1176,6 +1271,11 @@
             '<button id="v3-songs-select" class="' + ctrl + (state.selectMode ? ' bg-fb-primary text-white' : '') + '">Select</button>' +
             '<button id="v3-songs-upload" class="' + ctrl + '">Upload</button>' +
             '</div></div></div>' +
+            // Practice-aware library home: a repertoire progress meter + a
+            // "Keep practicing" shelf of started-but-not-mastered songs. Shown
+            // only on the grid view when not searching/filtering/selecting
+            // (renderLibraryHome + updateLibraryHome). Empty/absent → collapses.
+            '<div id="v3-lib-home" class="hidden mb-5"></div>' +
             '<div id="v3-songs-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4"></div>' +
             '<div id="v3-songs-tree" class="hidden"></div>' +
             '<div id="lib-folder-controls" style="display:none"></div>' +

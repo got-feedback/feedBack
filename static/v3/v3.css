@@ -1189,3 +1189,33 @@ html.fb-immersive #v3-main > .screen.active {
 @media (max-height: 640px) {
     .v3-azrail-letter { font-size: .55rem; padding: 0 4px; }
 }
+
+/* — Practice-aware library home: repertoire meter + "Keep practicing" shelf — */
+#v3-lib-home.hidden { display: none; }
+.v3-rep-meter { max-width: 30rem; }
+.v3-rep-track {
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, .22);   /* fb-textDim @ low alpha */
+    overflow: hidden;
+}
+.v3-rep-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: #0ea5e9;                     /* fb-primary */
+    transition: width .4s ease;
+}
+/* Horizontal, scroll-snapping shelf of fixed-width cards. */
+.v3-kp-row {
+    display: flex;
+    gap: .75rem;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+}
+.v3-kp-card {
+    flex: 0 0 8.5rem;
+    width: 8.5rem;
+    scroll-snap-align: start;
+}

@@ -349,11 +349,11 @@
         if (acc == null) return '';
         const pct = Math.round(acc * 100);
         if (variant === 'tree') {
-            const color = acc >= 0.9 ? 'text-fb-good' : acc >= 0.5 ? 'text-fb-mid' : 'text-fb-low';
+            const color = acc >= MASTERY_ACCURACY ? 'text-fb-good' : acc >= 0.5 ? 'text-fb-mid' : 'text-fb-low';
             return '<span class="fb-acc-badge text-xs font-bold ' + color + '">' + pct + '%</span>';
         }
-        const color = acc >= 0.9 ? 'bg-fb-good' : (acc >= 0.5 ? 'bg-fb-mid' : 'bg-fb-low');
-        const text = acc >= 0.5 && acc < 0.9 ? 'text-black' : 'text-white';
+        const color = acc >= MASTERY_ACCURACY ? 'bg-fb-good' : (acc >= 0.5 ? 'bg-fb-mid' : 'bg-fb-low');
+        const text = acc >= 0.5 && acc < MASTERY_ACCURACY ? 'text-black' : 'text-white';
         return '<span class="fb-acc-badge absolute bottom-0 right-0 ' + color + '/90 ' + text + ' px-2 py-0.5 rounded-tl-md text-xs font-bold flex items-center gap-1">' +
             '<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>' + pct + '%</span>';
     }
@@ -404,6 +404,126 @@
         const keys = Array.from(_dirtyScores);
         _dirtyScores.clear();
         keys.forEach(repaintAccuracy);
+        // A new score shifts the repertoire meter + the keep-practicing shelf.
+        renderLibraryHome();
+    }
+
+    // ── Practice-aware library home (repertoire meter + "Keep practicing") ─────
+    // Both read data we already have: state.accuracy (/api/stats/best =
+    // {filename: best_accuracy}) and /api/stats/recent. A song is "in your
+    // repertoire" at the same threshold the green accuracy badge uses (>= 0.9);
+    // a started song below that is "in progress". This is descriptive
+    // encouragement — it never gates content, decays, or nags (the goal-gradient
+    // / endowed-progress idea, kept healthy).
+    const MASTERY_ACCURACY = 0.9;
+
+    function _repertoireCounts() {
+        let mastered = 0, learning = 0;
+        for (const v of Object.values(state.accuracy || {})) {
+            if (typeof v !== 'number') continue;
+            if (v >= MASTERY_ACCURACY) mastered++; else learning++;
+        }
+        return { mastered, learning };
+    }
+
+    // The home block is the unfiltered "front door": shown on the grid view when
+    // the user isn't running a focused query (search / filter) or selecting.
+    // Local provider only — the meter's mastered count and the shelf both read
+    // local practice stats (state.accuracy / /api/stats/recent), so on a remote
+    // provider they'd mix local numerators with a remote song total and play
+    // local files while browsing a remote library. Hide it there.
+    function libHomeVisible() {
+        return state.view === 'grid' && state.provider === 'local'
+            && !state.selectMode && !state.q && activeFilterCount() === 0;
+    }
+
+    let _homeToken = 0;
+    async function renderLibraryHome() {
+        const host = document.getElementById('v3-lib-home');
+        if (!host) return;
+        if (!libHomeVisible()) { host.classList.add('hidden'); return; }
+        // A newer render (view/filter/score change) supersedes this one so a
+        // slow response can't repaint a home the grid already moved past.
+        const myToken = ++_homeToken;
+        // Unfiltered library size for the meter denominator (the grid's
+        // state.total tracks the active filter; the meter is library-wide) +
+        // recently-played rows for the shelf, fetched together.
+        const [stats, recent] = await Promise.all([
+            jget('/api/library/stats?provider=' + enc(state.provider)),
+            jget('/api/stats/recent?limit=24'),
+        ]);
+        if (_homeToken !== myToken || !libHomeVisible()) {            // changed mid-fetch
+            if (_homeToken === myToken) host.classList.add('hidden');
+            return;
+        }
+        const total = (stats && (stats.total_songs ?? stats.total)) || 0;
+        if (total <= 0) { host.classList.add('hidden'); return; }    // empty library
+        // Shelf = recently-played, not-yet-mastered songs, newest first. Mastery
+        // is per-SONG (state.accuracy = MAX best across arrangements, what the
+        // green badge shows) — recents are per-(song,arrangement), so dedupe by
+        // filename and gate on the song's best, keeping the shelf and its badges
+        // consistent (no green-badged "keep practicing" card, no dupes).
+        const acc = state.accuracy || {};
+        const seen = new Set();
+        const shelf = (Array.isArray(recent) ? recent : [])
+            .filter((r) => {
+                if (!r || seen.has(r.filename)) return false;
+                const best = acc[r.filename];
+                if (typeof best !== 'number' || best >= MASTERY_ACCURACY) return false;
+                seen.add(r.filename);
+                return true;
+            })
+            .slice(0, 8);
+
+        const { mastered, learning } = _repertoireCounts();
+        const pct = Math.max(0, Math.min(100, Math.round((mastered / total) * 100)));
+        const meter =
+            '<div class="v3-rep-meter">' +
+              '<div class="flex items-baseline justify-between gap-3 mb-1">' +
+                '<span class="text-sm font-semibold text-fb-text">Repertoire</span>' +
+                '<span class="text-xs text-fb-textDim">' + mastered + ' of ' + total + ' song' + (total === 1 ? '' : 's') +
+                  (learning ? ' &middot; ' + learning + ' in progress' : '') + '</span>' +
+              '</div>' +
+              '<div class="v3-rep-track"><div class="v3-rep-fill" style="width:' + pct + '%"></div></div>' +
+            '</div>';
+
+        let shelfHtml = '';
+        if (shelf.length) {
+            const cards = shelf.map((r) =>
+                '<button class="v3-kp-card group text-left" data-kp="' + esc(r.filename) + '" data-arr="' + esc(r.arrangement != null ? r.arrangement : '') + '" title="' + esc(r.title) + '">' +
+                '<div class="relative aspect-square rounded-lg overflow-hidden bg-fb-card">' +
+                '<img src="' + esc(r.art_url) + '" alt="" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" onerror="this.style.visibility=\'hidden\'">' +
+                accuracyBadge(r.filename) +
+                '</div>' +
+                '<div class="mt-1 text-sm text-fb-text truncate">' + esc(r.title) + '</div>' +
+                '<div class="text-xs text-fb-textDim truncate">' + esc(r.artist) + '</div>' +
+                '</button>').join('');
+            shelfHtml =
+                '<section class="v3-kp-shelf mt-4">' +
+                '<h3 class="text-sm font-semibold text-fb-text mb-2">Keep practicing</h3>' +
+                '<div class="v3-kp-row">' + cards + '</div>' +
+                '</section>';
+        }
+
+        host.innerHTML = meter + shelfHtml;
+        host.classList.remove('hidden');
+        // Wire shelf cards → play (mirrors playCard's local path; recents are
+        // always local-library rows, so no provider sync is needed).
+        host.querySelectorAll('.v3-kp-card').forEach((btn) => btn.addEventListener('click', () => {
+            const fn = btn.getAttribute('data-kp');
+            const arr = btn.getAttribute('data-arr');
+            if (!fn || !window.playSong) return;
+            _saveLibraryScrollSnapshot();
+            window.playSong(enc(fn), arr === '' ? undefined : Number(arr));
+        }));
+    }
+
+    // Toggle/refresh the home block on view/sort/filter/search changes.
+    function updateLibraryHome() {
+        const host = document.getElementById('v3-lib-home');
+        if (!host) return;
+        if (!libHomeVisible()) { host.classList.add('hidden'); return; }
+        renderLibraryHome();
     }
 
     // Source format of a song — prefer the server's `format` field, fall back
@@ -1115,6 +1235,9 @@
         // Refresh the A–Z jump rail (shows only for the grid + alphabetical
         // sorts; hides itself otherwise). Independent of the grid load.
         refreshRail();
+        // Refresh the practice-aware home (repertoire meter + keep-practicing
+        // shelf); hides itself when searching/filtering/selecting or off-grid.
+        updateLibraryHome();
         { const _fc = document.getElementById('lib-folder-controls'); if (_fc) _fc.style.display = state.view === 'folder' ? 'flex' : 'none'; }
         if (state.view === 'folder') {
             _applyMainScrollTop(0);
@@ -1176,6 +1299,11 @@
             '<button id="v3-songs-select" class="' + ctrl + (state.selectMode ? ' bg-fb-primary text-white' : '') + '">Select</button>' +
             '<button id="v3-songs-upload" class="' + ctrl + '">Upload</button>' +
             '</div></div></div>' +
+            // Practice-aware library home: a repertoire progress meter + a
+            // "Keep practicing" shelf of started-but-not-mastered songs. Shown
+            // only on the grid view when not searching/filtering/selecting
+            // (renderLibraryHome + updateLibraryHome). Empty/absent → collapses.
+            '<div id="v3-lib-home" class="hidden mb-5"></div>' +
             '<div id="v3-songs-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4"></div>' +
             '<div id="v3-songs-tree" class="hidden"></div>' +
             '<div id="lib-folder-controls" style="display:none"></div>' +

@@ -281,6 +281,35 @@ test('open-source and close-source record outcomes events and no live handles', 
     assert.equal(encoded.includes('token=abc'), false);
 });
 
+test('open-source returns the actually-bound device for read-back without leaking it into diagnostics', async () => {
+    const window = loadAudioSession();
+    const api = window.feedBack.capabilities;
+    const openedEvents = captureEvents(window, 'audio-input:source-opened');
+
+    await registerSource(api, {
+        sourceId: 'readback-source',
+        logicalSourceKey: 'test:readback',
+        operationHandlers: {
+            'source.open': () => ({ outcome: 'handled', status: 'open', payload: { boundType: 'CoreAudio', boundName: 'BlackHole 16ch', requestedName: 'BlackHole 16ch' } }),
+            'source.close': () => ({ outcome: 'handled', status: 'closed' }),
+        },
+    });
+    await api.dispatch({ capability: 'audio-input', command: 'select-source', source: 'user', payload: { logicalSourceKey: 'test:readback' } });
+    const open = await api.dispatch({ capability: 'audio-input', command: 'open-source', source: 'note_detect', payload: { requesterId: 'note_detect', purpose: 'note-detection' } });
+
+    // The trusted in-process caller (input_setup's confirmation gate) gets the real bound device,
+    // so it can show "Now listening to: <device>" and catch a silent wrong-mic substitution.
+    assert.equal(open.outcome, 'handled');
+    assert.equal(open.payload.bound.type, 'CoreAudio');
+    assert.equal(open.payload.bound.name, 'BlackHole 16ch');
+
+    // ...but a raw device name is PII: it must NOT reach the emitted event or the diagnostics snapshot.
+    assert.equal(openedEvents.length, 1);
+    assert.equal('bound' in openedEvents[0], false);
+    const encoded = JSON.stringify(window.feedBack.audioSession.snapshot());
+    assert.equal(encoded.includes('BlackHole'), false);
+});
+
 test('open-source reports no-owner no-handler unsupported failed and malformed provider data distinctly', async () => {
     const window = loadAudioSession();
     const api = window.feedBack.capabilities;

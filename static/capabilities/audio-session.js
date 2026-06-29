@@ -1766,6 +1766,16 @@
             const providerResult = _providerOutcome(raw);
             openSession.state = providerResult.outcome === 'handled' ? 'open' : (providerResult.status || providerResult.outcome);
             openSession.reason = providerResult.reason;
+            // Read-back: the provider (desktop renderer) reports which device the
+            // native engine ACTUALLY bound. Surface it to the in-process caller so
+            // the wizard can show "Now listening to: <device>" and catch a silent
+            // mismatch (picked BlackHole, got the internal mic). Kept OUT of the
+            // redacted summary/event below: that flows into diagnostics, where a raw
+            // device name (e.g. "Byron's AirPods") is PII — but it is fine to return
+            // verbatim to the trusted same-renderer caller, exactly as list-sources
+            // already returns the device `label` verbatim.
+            const boundInfo = _plainObject(providerResult.payload);
+            const bound = { type: _string(boundInfo.boundType, ''), name: _string(boundInfo.boundName, '') };
             if (providerResult.outcome === 'handled') {
                 openSession.openedAt = _now();
                 currentSession.openInputSessions.set(key, openSession);
@@ -1773,7 +1783,7 @@
                 _recordOutcome({ domain: 'audio-input', operation: 'open-source', participantId: requesterId, requesterId, providerId: provider.providerId, sourceId: selected.sourceId, logicalSourceKey: selected.logicalSourceKey, openSessionId: openSession.openSessionId, outcome: 'handled', status: 'open' });
                 capabilities.emitEvent('audio-input', 'source-opened', summary);
                 _touch();
-                return _handled(summary);
+                return _handled((bound.name || bound.type) ? { ...summary, bound } : summary);
             }
             const summary = _redactedOpenSession(openSession, _newPseudonymizer());
             _recordOutcome({ domain: 'audio-input', operation: 'open-source', participantId: requesterId, requesterId, providerId: provider.providerId, sourceId: selected.sourceId, logicalSourceKey: selected.logicalSourceKey, openSessionId: openSession.openSessionId, outcome: providerResult.outcome, status: openSession.state, reason: providerResult.reason });

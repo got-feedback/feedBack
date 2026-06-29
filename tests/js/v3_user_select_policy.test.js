@@ -47,17 +47,34 @@ test('plugin screen subtree stays selectable by inheritance (no `*`, respects pl
     );
 });
 
+// The rule that re-enables selection on copyable content. Find the single
+// declaration block whose body sets `user-select: text`, then assert each
+// required selector is one of its selectors — order/format independent.
+const selectableRule = (css.match(/([^{}]*)\{[^}]*user-select:\s*text[^}]*\}/g) || [])
+    .join('\n');
+
 test('core content opts back in via .fb-selectable (element + descendants)', () => {
-    assert.match(
-        css,
-        /\.fb-selectable,\s*\.fb-selectable\s*\*\s*\{[^}]*user-select:\s*text/,
-        '.fb-selectable (and descendants) must set user-select: text',
-    );
+    assert.match(selectableRule, /\.fb-selectable\b/, '.fb-selectable must set user-select: text');
+    assert.match(selectableRule, /\.fb-selectable\s*\*/, '...and its descendants (.fb-selectable *)');
 });
 
+test('focused copyable surfaces (modals/toasts/scan banner) opt back in', () => {
+    // The PR\'s a11y guardrail keeps copyable text selectable "incl. in
+    // modals/toasts" — these carry errors / IDs / paths the user copies.
+    assert.match(selectableRule, /\.feedBack-modal\b/, 'modals (.feedBack-modal) must be selectable');
+    assert.match(selectableRule, /\[role="dialog"\]/, 'dialogs ([role="dialog"]) must be selectable');
+    assert.match(selectableRule, /#fb-notify-stack\b/, 'toasts (#fb-notify-stack) must be selectable');
+    assert.match(selectableRule, /#scan-banner\b/, 'the scan banner (#scan-banner) must be selectable');
+});
+
+// Match a class="" attribute that contains ALL given tokens in any order.
+const hasClasses = (...tokens) => new RegExp(
+    'class="' + tokens.map((t) => '(?=[^"]*\\b' + t + '\\b)').join('') + '[^"]*"');
+
 test('the Settings panel and now-playing metadata carry .fb-selectable', () => {
-    assert.match(html, /class="fb-settings fb-selectable"/,
+    assert.match(html, hasClasses('fb-settings', 'fb-selectable'),
         'the Settings panel must opt back in (paths / version / diagnostics / About)');
-    assert.match(html, /class="text-sm leading-tight fb-selectable"/,
-        'the now-playing song metadata block must opt back in');
+    assert.match(html, hasClasses('fb-selectable', 'pointer-events-auto'),
+        'the now-playing metadata must opt back in AND re-enable pointer-events '
+        + '(its #player-hud parent is pointer-events-none, which would block mouse selection)');
 });

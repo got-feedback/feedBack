@@ -38,10 +38,27 @@ input, textarea, select,
 /* Core read-only content opts back in by CONTAINER (lower-drift than tagging
    each value — a new setting added later inherits "selectable" for free):
    the Settings panel (values, paths, device names, version, diagnostics,
-   About) and the now-playing song metadata. Any error/toast carrying copyable
-   text should also carry `.fb-selectable`. Plugins re-enable their own
-   copyable regions with this same class (documented in CLAUDE.md). */
-.fb-selectable, .fb-selectable * { -webkit-user-select: text; user-select: text; }
+   About) and the now-playing song metadata (both tagged `.fb-selectable`).
+   Plugins re-enable their own copyable regions with this same class
+   (documented in CLAUDE.md).
+
+   The focused, transient surfaces below ALWAYS carry copy-worthy text (errors,
+   IDs, file paths, device/version strings) per the a11y guardrail, so they're
+   blanket-opted-in by selector rather than hand-tagged — they're single focused
+   panels, not dense card lists, so re-enabling selection there can't recreate
+   the across-cards marquee mess the policy prevents:
+   - modals / dialogs: `.feedBack-modal`, `[role="dialog"]` (confirm, edit-meta,
+     retune result/error, calibration, filter drawer);
+   - toasts: `#fb-notify-stack`, `#v3-fb-toast`;
+   - the library scan banner (`#scan-banner` — shows the current file path).
+   (Dense card lists — the library grid, dashboard, profile — are intentionally
+   left non-selectable; copy their text from the now-playing HUD / Settings.) */
+.fb-selectable, .fb-selectable *,
+.feedBack-modal, .feedBack-modal *,
+[role="dialog"], [role="dialog"] *,
+#fb-notify-stack, #fb-notify-stack *,
+#v3-fb-toast, #v3-fb-toast *,
+#scan-banner, #scan-banner * { -webkit-user-select: text; user-select: text; }
 
 /* The v3 tuner card replaces the tuner plugin's floating launcher — hide it. */
 #tuner-toggle-btn { display: none !important; }

@@ -829,8 +829,12 @@
         <!-- Top HUD — persistent (song info, time, Up Next) -->
         <div id="player-hud" class="absolute top-0 left-0 right-0 flex justify-between items-start px-5 py-4 pointer-events-none z-20">
             <!-- fb-selectable: now-playing song metadata (title / artist /
-                 arrangement / tuning) is copy-worthy content, not chrome. -->
-            <div class="text-sm leading-tight fb-selectable">
+                 arrangement / tuning) is copy-worthy content, not chrome.
+                 pointer-events-auto: the #player-hud parent is pointer-events-none
+                 (so the HUD doesn't eat clicks meant for the highway), which would
+                 also block the mouse from reaching this text to select it — opt
+                 just this block back into hit-testing. -->
+            <div class="text-sm leading-tight fb-selectable pointer-events-auto">
                 <div><span id="hud-artist" class="text-gray-300"></span> — <span id="hud-title" class="text-white font-semibold"></span></div>
                 <div id="hud-arrangement" class="text-gray-500 text-xs mt-0.5"></div>
                 <div id="hud-tuning" class="text-gray-500 text-xs mt-0.5"></div>

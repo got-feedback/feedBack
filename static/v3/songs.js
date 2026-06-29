@@ -67,11 +67,14 @@
     }
     // The bucket a song falls in for the active sort: first char of the sort
     // column, uppercased; anything non-A–Z (digits, symbols, accents, blank)
-    // buckets under '#'. Mirrors the server's letter grouping in query_stats.
+    // buckets under '#'. Mirrors the server's letter grouping in query_stats —
+    // which keys on raw SUBSTR(col, 1, 1) with no trim, and the grid ORDER BY
+    // is likewise raw, so we must NOT trim here either: a leading-space title
+    // sorts (and buckets) under '#' on both sides, keeping the rail consistent.
     function songBucket(song) {
         const col = railSortColumn();
         if (!col) return '';
-        const raw = String((col === 'title' ? song.title : song.artist) || '').trim();
+        const raw = String((col === 'title' ? song.title : song.artist) || '');
         const ch = raw.charAt(0).toUpperCase();
         return (ch >= 'A' && ch <= 'Z') ? ch : '#';
     }
@@ -759,23 +762,50 @@
     function railBubbleEl() { return document.getElementById('v3-songs-azbubble'); }
     function railVisible() { return state.view === 'grid' && !!railSortColumn(); }
 
+    let _railToken = 0;
     async function refreshRail() {
         const rail = railEl();
         if (!rail) return;
         if (!railVisible()) { rail.classList.add('hidden'); railBubbleEl()?.classList.add('hidden'); return; }
-        // Present letters for the active sort+filter (filter-synced; counts songs).
-        const stats = await jget('/api/library/stats?' + queryParams({}).toString());
-        const letters = (stats && (stats.sort_letters || stats.letters)) || {};
+        const col = railSortColumn();
+        // A newer refresh (sort/filter/search/provider change) supersedes this
+        // one — a slow stats response must not repaint a rail the grid moved on.
+        const myToken = ++_railToken;
+        // Present letters for the active sort+filter (filter-synced; counts
+        // songs). `sort_letters=1` opts into the active-sort breakdown so the
+        // dashboard / v2 tree (which read only `letters`) skip the extra query.
+        const stats = await jget('/api/library/stats?' + queryParams({ sort_letters: 1 }).toString());
+        if (_railToken !== myToken || !railVisible()) {                 // changed mid-fetch
+            if (_railToken === myToken) rail.classList.add('hidden');
+            return;
+        }
+        // Prefer the active-sort breakdown. `letters` is the artist distinct-
+        // count, so it only matches the cards on an artist sort; a legacy/third-
+        // party provider that predates `sort_letters` returns none, in which
+        // case a title sort would advertise wrong letters — hide the rail then.
+        let letters = stats && stats.sort_letters;
+        if (!letters) {
+            if (col === 'artist') letters = (stats && stats.letters) || {};
+            else { rail.classList.add('hidden'); railBubbleEl()?.classList.add('hidden'); return; }
+        }
         state.railLetters = letters;
-        if (!railVisible()) { rail.classList.add('hidden'); return; } // sort/view changed mid-fetch
+        // No present letters (empty or fully-filtered grid) → nothing to jump
+        // to; hide the rail instead of rendering a column of disabled buttons.
+        if (!Object.keys(letters).length) { rail.classList.add('hidden'); railBubbleEl()?.classList.add('hidden'); return; }
         const desc = state.sort.endsWith('-desc');
         const order = desc ? RAIL_BUCKETS.slice().reverse() : RAIL_BUCKETS;
+        // Roving tabindex: only the first present letter is in the tab order;
+        // the rest are reached with the arrow keys (see bindRailOnce). Avoids
+        // dumping up to 27 tab stops into the page.
+        let firstPresent = true;
         rail.innerHTML = order.map((L) => {
             const n = letters[L] || 0;
             const present = n > 0;
+            const tabbable = present && firstPresent;
+            if (tabbable) firstPresent = false;
             const name = L === '#' ? 'non-alphabetical' : L;
             return '<button type="button" class="v3-azrail-letter" data-letter="' + esc(L) + '"'
-                + (present ? '' : ' disabled') + ' tabindex="' + (present ? '0' : '-1') + '"'
+                + (present ? '' : ' disabled') + ' tabindex="' + (tabbable ? '0' : '-1') + '"'
                 + ' aria-label="Jump to ' + esc(name) + (present ? ', ' + n + ' song' + (n === 1 ? '' : 's') : ' (none)') + '">'
                 + esc(L) + '</button>';
         }).join('');
@@ -806,10 +836,14 @@
         _setRailActive(letter);
         const sel = '[data-letter="' + ((window.CSS && CSS.escape) ? CSS.escape(letter) : letter) + '"]';
         const myToken = ++_jumpToken;   // a newer jump supersedes this one
-        // Page forward until the bucket's first card is loaded (or list exhausted).
+        // Page forward until the bucket's first card is loaded (or list
+        // exhausted). The guard is the page count the current total implies
+        // (+2 slack) rather than a fixed cap, so even a very large library
+        // stays reachable while a runaway loop is still bounded.
         let guard = 0;
+        const maxPages = Math.ceil((state.total || 0) / PAGE_SIZE) + 2;
         while (!grid.querySelector(sel) && loadedCount() < state.total
-               && _jumpToken === myToken && guard++ < 4000) {
+               && _jumpToken === myToken && guard++ < maxPages) {
             const more = await _loadNextAwait();
             if (!more) break;
         }
@@ -870,7 +904,12 @@
             if (i < 0) return;
             e.preventDefault();
             const next = btns[i + (e.key === 'ArrowDown' ? 1 : -1)];
-            if (next) { next.focus(); jumpToLetter(next.getAttribute('data-letter')); }
+            if (next) {
+                btns[i].setAttribute('tabindex', '-1');   // roving tabindex follows focus
+                next.setAttribute('tabindex', '0');
+                next.focus();
+                jumpToLetter(next.getAttribute('data-letter'));
+            }
         });
     }
 
@@ -1063,6 +1102,10 @@
         // state.q) and needs a refresh rather than a scroll-preserving no-op.
         state.renderedHash = _libraryStateHash();
         updateFilterBadge();
+        // A sort/filter/search/view change rebuilds the grid from page 0, so any
+        // in-flight letter jump is now paging through a dataset that's about to
+        // be discarded — supersede it so it can't scroll the rebuilt grid.
+        _jumpToken++;
         // Keep a handle on the load so callers (notably the scroll restore on
         // screen re-entry) can await page-0 actually landing before paging
         // deeper. The visibility/scroll resets below stay synchronous.

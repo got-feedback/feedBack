@@ -407,9 +407,15 @@ def test_query_stats_sort_letters_artist_counts_songs(client, server_mod):
     _put(server_mod, filename="b1.archive", title="Another", artist="Beck")
     _put(server_mod, filename="num.archive", title="Track", artist="2Pac")
 
-    stats = client.get("/api/library/stats", params={"sort": "artist"}).json()
+    # sort_letters=1 opts into the active-sort breakdown (the jump rail path).
+    stats = client.get("/api/library/stats", params={"sort": "artist", "sort_letters": 1}).json()
     assert stats["letters"] == {"A": 1, "B": 1, "#": 1}        # distinct artists
     assert stats["sort_letters"] == {"A": 2, "B": 1, "#": 1}   # songs
+
+    # Without the opt-in, the extra breakdown is not computed or returned.
+    plain = client.get("/api/library/stats", params={"sort": "artist"}).json()
+    assert "sort_letters" not in plain
+    assert plain["letters"] == {"A": 1, "B": 1, "#": 1}
 
 
 def test_query_stats_sort_letters_follow_title_sort(client, server_mod):
@@ -418,7 +424,7 @@ def test_query_stats_sort_letters_follow_title_sort(client, server_mod):
     _put(server_mod, filename="z1.archive", title="Apple", artist="Zztop")
     _put(server_mod, filename="z2.archive", title="Banana", artist="Zztop")
 
-    stats = client.get("/api/library/stats", params={"sort": "title"}).json()
+    stats = client.get("/api/library/stats", params={"sort": "title", "sort_letters": 1}).json()
     assert stats["sort_letters"] == {"A": 1, "B": 1}
     # The legacy artist breakdown is unchanged regardless of sort — both songs
     # share one artist, so it stays a single distinct-artist Z bucket.
@@ -456,10 +462,11 @@ def test_query_stats_ignores_null_letter_counts(server_mod):
     server_mod.meta_db.conn.close()
     server_mod.meta_db.conn = FakeConn()
 
-    stats = server_mod.meta_db.query_stats()
+    stats = server_mod.meta_db.query_stats(want_sort_letters=True)
 
     # `sort_letters` (the v3 jump-rail breakdown) shares the GROUP BY letter
-    # path in this fake, so it surfaces the same single live bucket.
+    # path in this fake, so it surfaces the same single live bucket when the
+    # caller opts in.
     assert stats == {"total_songs": 1, "total_artists": 1,
                      "letters": {"T": 1}, "sort_letters": {"T": 1}}
 

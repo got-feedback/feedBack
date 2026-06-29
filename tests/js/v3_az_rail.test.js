@@ -42,8 +42,15 @@ test('cards carry a data-letter bucket and non-A–Z buckets under #', () => {
 test('refreshRail reads present letters from the stats endpoint (sort-aware)', () => {
     assert.match(src, /\/api\/library\/stats\?'\s*\+\s*queryParams/,
         'refreshRail must query /api/library/stats with the active filter params');
-    assert.match(src, /stats\.sort_letters\s*\|\|\s*stats\.letters/,
-        'refreshRail must prefer sort_letters (active-sort breakdown), falling back to letters');
+    // Opts into the active-sort breakdown so non-rail callers skip the scan.
+    assert.match(src, /queryParams\(\{\s*sort_letters:\s*1\s*\}\)/,
+        'refreshRail must request the sort_letters breakdown');
+    assert.match(src, /letters\s*=\s*stats\s*&&\s*stats\.sort_letters/,
+        'refreshRail must prefer the active-sort breakdown (sort_letters)');
+    // The legacy artist `letters` is only a valid fallback for an artist sort;
+    // a title sort with no sort_letters hides the rail rather than mislabel it.
+    assert.match(src, /col === 'artist'[\s\S]*?stats\.letters/,
+        'refreshRail must only fall back to letters for an artist sort');
     // Absent letters are disabled (non-interactive), not just dimmed.
     assert.match(src, /present\s*\?\s*''\s*:\s*' disabled'/);
 });

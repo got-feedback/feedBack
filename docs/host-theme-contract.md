@@ -55,50 +55,94 @@ The host writes default `--fb-*` role tokens on `:root` **unconditionally** (not
 `[data-fb-theme]`), seeded from the canonical `fb` palette, so `var(--fb-accent, …)` always
 resolves — themed or not. Roles:
 
-`surface · card · border · text · text-dim · accent · accent-2 · good · warn · bad`
-plus two **new keystones**:
+**Namespace (normative).** The public contract lives under one prefix, **`--fb-*`**, written on
+`:root` by a host-owned *contract stylesheet* (see §6 / §8) so it is present **themed or not**.
+The existing `--fbv-*` vars stay **internal plumbing** — `theme-core.js` uses them only to
+recolour the Tailwind `.bg-fb-*/.text-fb-*/.border-fb-*` utilities under `html[data-fb-theme]`;
+they are **not** part of this contract and plugins must not read them. (Implementation may seed
+`--fb-*` from the same source the `--fbv-*` overrides use, so an equipped theme moves both.)
 
-- **`on-accent`** — foreground legible *on* an accent fill. (Rule: any role used as a fill
-  behind text gets a paired `on-*`.) Fixes white-on-amber.
-- **`focus-ring`** — focus indicator independent of accent, so focus stays visible when
-  `accent ≈ surface`.
+**Value grammar (normative).** Colour roles are a **space-separated `r g b` triplet** (matching
+today's `--fbv-*` and the Tailwind utilities), consumed as `rgb(var(--fb-accent))` with optional
+alpha `rgb(var(--fb-accent) / .5)`. Recipe slots (Layer 2) hold **full CSS values** for their
+device (a `box-shadow`, a `border` shorthand, a length, a paint), with `none` legal **except**
+where noted.
 
-`accent-2` is demoted to "just a second hue" — **never** an assumed gradient end.
+**Normative role tokens** (all `--fb-*`, all always present):
+
+| Role | Token | Notes |
+| --- | --- | --- |
+| surface / card / border | `--fb-surface` `--fb-card` `--fb-border` | structural |
+| text / dim | `--fb-text` `--fb-text-dim` | |
+| accent / second hue | `--fb-accent` `--fb-accent-2` | `accent-2` is **just a second hue** — never an assumed gradient end |
+| status | `--fb-good` `--fb-warn` `--fb-bad` | maps onto today's palette `good / mid / low` (mid→warn, low→bad) — implementation aliases both |
+| **on-fill (new)** | `--fb-on-accent` `--fb-on-good` `--fb-on-warn` `--fb-on-bad` | **Rule: every role used as a fill behind text gets a paired `--fb-on-*`** (fixes white-on-amber). Required + contrast-linted (§6). |
+| **focus (new)** | `--fb-focus-ring` | focus indicator independent of `accent`, so focus stays visible when `accent ≈ surface` |
 
 ### Layer 2 — Capability **recipes** (intent-named slots; "off" is legal)
 
-A theme declares its design *language* by filling intent-named slots. A feature applies the
-slot bundle **unconditionally**; it never branches on "is this theme glowy?". Atomic slots
-(renames-by-intent of today's tokens): `corner-radius`, `corner-clip`, `panel-shadow`,
-`text-emph-shadow`, `panel-texture`, `motion-decorative` (reduced-motion-gated).
+A theme declares its design *language* by filling intent-named slots (all `--fb-*`-prefixed,
+same namespace as the roles). A feature applies the slot bundle **unconditionally**; it never
+branches on "is this theme glowy?". Atomic slots (renames-by-intent of today's tokens):
+`--fb-corner-radius`, `--fb-corner-clip`, `--fb-panel-shadow`, `--fb-text-emph-shadow`,
+`--fb-panel-texture`, `--fb-motion-decorative` (reduced-motion-gated). For these, `none` is legal.
 
 Two **composite recipes** carry the load:
 
 - **EMPHASIS** — how this theme makes a primary action special:
-  `--emph-fill / --emph-border / --emph-halo / --emph-on`.
+  `--fb-emph-fill / --fb-emph-border / --fb-emph-halo / --fb-emph-on`.
   neon → halo (glow ring); esports → border (solid accent); metal → fill + drop-shadow.
-  None empty — each emphasises in its own language.
-- **ACCENT-TEXT** — how this theme fills a big accent number: `--acc-text-fill`
+  Any individual slot may be `none` — but a theme **must** emphasise *somehow* (at least one of
+  fill/border/halo non-`none`), so a primary action is never visually flat.
+- **ACCENT-TEXT** — how this theme fills a big accent number: `--fb-acc-text-fill`
   (decoupled from `accent-2`). neon/metal → a gradient; esports → a solid accent.
+  **`--fb-acc-text-fill` is the one slot where `none` is illegal** — it is always a valid paint
+  (solid colour or gradient), defaulting to `rgb(var(--fb-accent))`. Reason: the number is
+  rendered with `background-clip: text` + transparent text-fill, so a `none` paint would make
+  the digits **invisible** (transparent fill, nothing to clip) — which would violate the DoD
+  "a device stays legible when its slot resolves to `none`". The feature also feature-detects
+  `background-clip: text` and keeps a solid `color` base (see §5), so the digits are legible
+  even where clip-text is unsupported.
 
 > These generalize the interim per-skin tokens already shipped in `note_detect`
 > (`--nd-hero-ring-idle/on`, `--nd-hero-border`, `--nd-acc-fill`).
 
 ### Layer 3 — JS read API + reconciliation
 
-On the existing `window.feedBack` bus:
+**The JS API is only for renderers that can't use CSS (canvas / WebGL), never for DOM/CSS
+consumers** — those use the tokens and slots directly (§5). Critically, it exposes *resolved
+token values*, **not** theme-style booleans: a `glow:false` flag can't tell a canvas whether to
+draw a border, a bevel, a drop-shadow, or flat text, so there is **no** `capabilities()` of
+booleans. On the existing `window.feedBack` bus:
 
-- `feedBack.theme.get()` → `{ id, tokens, isThemed }`
-- `feedBack.theme.capabilities()` → `{ glow, gradients, motion }` (the device-affordance signal)
-- `feedBack.theme.prefersReducedMotion()` → boolean (host wraps `matchMedia` once)
-- `theme:changed` event → `{ id, tokens, capabilities }` (emitted at theme-core's existing
-  apply chokepoint; analogous to `note_detect`'s `notedetect:skin`)
+- `feedBack.theme.get()` → `{ id, isThemed, tokens }` where `tokens` is the **resolved** map of
+  every `--fb-*` role + recipe slot (the computed values, so a canvas reads the actual device,
+  e.g. the gradient stops for `--fb-acc-text-fill`, not a boolean).
+- `feedBack.theme.prefersReducedMotion()` → boolean (host wraps `matchMedia` once). **This is the
+  single approved JS reduced-motion gate going forward** — existing direct `matchMedia` callers
+  (`venue-mood-fx.js`, `pedal-cables.js`) migrate to it; `--fb-motion-decorative` covers the
+  CSS-authored decorative motion.
+- `theme:changed` event → `{ id, tokens }`.
+
+**Lifecycle (normative).** `get()` always returns the **current effective theme synchronously**
+and is valid at any time — before any theme is applied it returns the default/unthemed roles
+(which always exist on `:root`). Theme application is async (it follows a `/api/profile` refresh);
+`theme:changed` fires **only after** the DOM vars/classes are committed, and **once on initial
+hydration** so a late-mounting plugin isn't stuck on stale state. **Plugin rule:** read `get()`
+on mount, then subscribe to `theme:changed` — never assume an order between your mount and the
+first theme apply.
 
 **Reconciliation rule (ends the two-disconnected-systems problem):** a plugin skin
-**derives surface/text/border from host tokens** (`--nd-bg: var(--fb-card)`, etc.) and
+**derives surface/text/border from host tokens** (`--nd-bg: rgb(var(--fb-card))`, etc.) and
 **owns only its accent + its devices**, selecting the device via the recipe. A host theme then
 pulls plugin chrome along (one truth for surfaces), while the plugin layers identity on top and
 never imposes a device the active theme neutralizes.
+
+**Propagation scope (normative).** The contract is **same-document light-DOM**: `:root` `--fb-*`
+inheritance and the central focus/motion rules (§6) reach any normal plugin screen. A plugin that
+renders into a **shadow root or iframe** is responsible for bridging — copy the resolved
+`get().tokens` into its sub-root and re-subscribe to `theme:changed` (host `:root` vars don't
+cross those boundaries).
 
 ## 5. Consumption pattern (the rule for feature authors)
 
@@ -108,28 +152,47 @@ never imposes a device the active theme neutralizes.
 
 ```css
 .hero-cta {
-  background: var(--emph-fill);
-  border:     var(--emph-border);
-  box-shadow: var(--emph-halo);   /* neon→ring · esports→none · metal→drop-shadow */
-  color:      var(--emph-on);     /* never hardcoded #fff again */
-  border-radius: var(--corner-radius);
+  background: var(--fb-emph-fill);
+  border:     var(--fb-emph-border);
+  box-shadow: var(--fb-emph-halo);   /* neon→ring · esports→none · metal→drop-shadow */
+  color:      var(--fb-emph-on);     /* never hardcoded #fff again */
+  border-radius: var(--fb-corner-radius);
 }
 .accuracy-number {
-  color: var(--accent);           /* legible solid fallback FIRST */
-  background: var(--acc-text-fill);
-  background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  /* Always-legible solid base; survives no-clip-text support too. */
+  color: rgb(var(--fb-accent));
+}
+/* Apply the clipped paint ONLY where supported — and --fb-acc-text-fill is
+   guaranteed a real paint (never `none`, per Layer 2), so the digits can't go
+   invisible. */
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .accuracy-number {
+    background: var(--fb-acc-text-fill);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
 }
 ```
 
-## 6. Accessibility (baked into the contract, not per-feature)
+**Where the contract physically lives.** A **host-owned static contract stylesheet** (e.g.
+`static/v3/theme-contract.css`, hand-authored, linked from `static/v3/index.html`) holds the
+always-present `:root --fb-*` defaults **plus** the two central a11y rules below. It is **not** a
+Tailwind file, so it never touches the prebuilt `static/tailwind.min.css` artifact the
+`tailwind-fresh` CI check diffs (and it's independent of `theme-core.js`, which keeps
+runtime-injecting only the `--fbv-*` utility overrides under `[data-fb-theme]`).
 
-- **Reduced motion:** `motion-decorative` is the *only* place decorative animation is named;
-  one central rule sets it to `none` under `@media (prefers-reduced-motion: reduce)`, so no
-  theme can forget the gate.
-- **Focus parity:** exactly one contract-level `:focus-visible { outline: 2px solid var(--focus-ring) }`;
-  themes recolour `focus-ring` but may not author their own focus styling.
-- **On-accent contrast:** `on-accent` is required and **lintable** (`contrast(on-accent, accent) ≥ 4.5:1`,
-  3:1 large). Contrast is the theme's job, computed once — not re-judged per feature.
+- **Reduced motion:** `--fb-motion-decorative` is the *only* place CSS decorative animation is
+  named; one central rule in the contract sheet sets it to `none` under
+  `@media (prefers-reduced-motion: reduce)`, so no theme can forget the gate. (JS-driven motion
+  uses `feedBack.theme.prefersReducedMotion()` — §4.3.)
+- **Focus parity:** one contract-level `:focus-visible { outline: 2px solid rgb(var(--fb-focus-ring)) }`
+  for contract consumers; themes recolour `--fb-focus-ring` but may not author their own focus
+  styling. *Migration:* v3 already ships component-specific focus + reduced-motion rules in
+  `v3.css`; those are reconciled onto the contract token (not magically replaced) as a tracked
+  cleanup — "one rule" describes the end state, not day one.
+- **On-fill contrast:** every `--fb-on-*` is required and **lintable**
+  (`contrast(on-X, X) ≥ 4.5:1`, 3:1 large) for each fill role (`accent / good / warn / bad`).
+  Contrast is the theme's job, computed once — not re-judged per feature.
 
 ## 7. Verification gate (prevent recurrence)
 
@@ -148,13 +211,15 @@ stays legible when its slot resolves to `none`** · reduced-motion + focus parit
 
 ## 8. Back-compat & rollout
 
-All additive: new `--fb-*` runtime vars + a new `feedBack.theme` namespace + a new event with no
-current listeners. Existing plugins (those reading `fb-*` utility classes, or shipping their own
-skins) are untouched unless they opt in; two-arg `var(--fb-x, fallback)` + `window.feedBack?.theme?.get`
-feature-detection means older hosts behave exactly as today.
+All additive: the new always-present `--fb-*` tokens (in the contract sheet, §6) + a new
+`feedBack.theme` namespace + a new event with no current listeners. Existing plugins (those
+reading `fb-*` Tailwind utility classes, or shipping their own skins) are untouched unless they
+opt in. On a host too old to ship the contract sheet, a consumer still degrades cleanly: the
+two-arg fallback `rgb(var(--fb-accent, 224 128 32))` resolves to the literal, and
+`window.feedBack?.theme?.get?.()` is feature-detected — so older hosts behave exactly as today.
 
 **Workstream (sub-tasks):**
-1. **Host minimal surface** — always-present default `--fb-*` tokens + `feedBack.theme.{get,capabilities,prefersReducedMotion}` + `theme:changed`. *(the smallest thing that would have prevented the incident)*
+1. **Host minimal surface** — the contract stylesheet's always-present default `--fb-*` tokens + `feedBack.theme.{get, prefersReducedMotion}` (`get().tokens` = resolved values; no boolean `capabilities()`) + `theme:changed`. *(the smallest thing that would have prevented the incident)*
 2. **note_detect refactor** — rename device tokens by intent (EMPHASIS + ACCENT-TEXT recipes), add `on-accent` + `focus-ring`, derive surfaces from host tokens.
 3. **Verification gate** — commit the render-matrix + DoD checklist; add the canvas share-card surface.
 4. **Ecosystem migration guide** — document the contract + the consumption rule for community plugin authors.
@@ -173,5 +238,9 @@ feature-detection means older hosts behave exactly as today.
   plugin-local forever? (This proposal assumes plugin-local + contract-implementing.)
 - Component-recipe **bundles** (per named component) are the richer end-state; intent-named
   slots are the right seed. When/whether to graduate.
-- Where the central reduced-motion + focus rules physically live (core base layer vs a shared
-  plugin import) and how the host injects role tokens into plugin roots.
+
+*(Resolved during review and folded into the sections above: the token namespace + value grammar
+and normative role table (§4.1); the `none`-is-illegal carve-out for `--fb-acc-text-fill` (§4.2);
+JS exposes resolved tokens, not booleans (§4.3); `theme:changed` lifecycle + shadow/iframe
+propagation (§4.3); the physical home of the role tokens + central focus/motion rules — a
+host-owned contract stylesheet outside Tailwind (§6).)*

@@ -364,9 +364,73 @@ def _ensure_smart_names(arrangements: list[dict]) -> list[dict]:
     return arrangements
 
 
+def _sqlite_file_integrity_ok(path: Path) -> bool:
+    """True if `path` is a SQLite database that opens and passes
+    `PRAGMA quick_check`. Used to gate a DB restore so a truncated or
+    corrupt snapshot can never overwrite the live library DB."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(16) != b"SQLite format 3\x00":   # cheap header gate, no full read
+                return False
+    except OSError:
+        return False
+    conn = None
+    try:
+        conn = sqlite3.connect(str(path))
+        row = conn.execute("PRAGMA quick_check").fetchone()
+        return bool(row) and row[0] == "ok"
+    except sqlite3.Error:
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+        # quick_check on a non-WAL file makes no sidecars, but a malformed
+        # file can; sweep them so a probe never litters config_dir.
+        for suffix in ("-wal", "-shm"):
+            try:
+                path.with_name(path.name + suffix).unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _apply_pending_db_restore(config_dir: Path) -> None:
+    """Swap in a library DB restored from a settings bundle, if one is
+    staged. A settings import writes the restored snapshot to
+    `web_library.db.restore` rather than over the live DB (the running
+    server holds the old file open, and a stale `-wal`/`-shm` could be
+    replayed onto a fresh main file → corruption). The swap happens here,
+    at startup, BEFORE the connection opens: delete the old DB and its WAL
+    sidecars, then rename the staged snapshot into place. The snapshot is a
+    fully-checkpointed single file (SQLite online-backup API), so it needs
+    no sidecars of its own. Idempotent and a no-op when nothing is staged.
+
+    The staged file is re-validated here before anything is destroyed: a
+    restore that fails its integrity check is discarded and the live DB is
+    left untouched, so a bad bundle can never brick startup or lose data."""
+    pending = config_dir / "web_library.db.restore"
+    if not pending.exists():
+        return
+    if not _sqlite_file_integrity_ok(pending):
+        log.error("pending library DB restore failed its integrity check; "
+                  "discarding it and keeping the existing database")
+        try:
+            pending.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            (config_dir / f"web_library.db{suffix}").unlink()
+        except FileNotFoundError:
+            pass
+    os.replace(pending, config_dir / "web_library.db")
+    log.info("applied pending library DB restore from settings import")
+
+
 class MetadataDB:
     def __init__(self):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        _apply_pending_db_restore(CONFIG_DIR)
         self.db_path = str(CONFIG_DIR / "web_library.db")
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -6217,6 +6281,82 @@ def _atomic_write_file(target: Path, payload: bytes):
         raise
 
 
+# Core (non-plugin) server-side state that the settings bundle backs up
+# alongside config.json. The library DB is the only state a rescan can't
+# rebuild (scores, favorites, playlists, play history); the art dirs hold
+# custom playlist covers + the user avatar. `web_library.db` is handled
+# specially (consistent snapshot on export, staged restore on import) — the
+# art dirs are walked like plugin export paths. NOTE: custom uploaded
+# *song* art currently lands in `art_cache/` commingled with the derived
+# (rebuildable) cache, so it is intentionally NOT bundled here to avoid
+# bloating the backup with regenerable thumbnails — splitting custom song
+# art into its own dir is a tracked follow-up (got-feedback/feedBack#636).
+_CORE_LIBRARY_DB = "web_library.db"
+_CORE_EXPORT_ART_DIRS = ("playlist_covers/", "avatars/")
+_CORE_IMPORT_ALLOWED = (_CORE_LIBRARY_DB,) + _CORE_EXPORT_ART_DIRS
+
+
+def _snapshot_library_db() -> dict | None:
+    """A consistent, fully-checkpointed single-file copy of the live library
+    DB, base64-encoded for the bundle. Uses the SQLite online-backup API so
+    it is safe to call while the server is serving requests; the live write
+    lock is held for the copy so no write lands mid-snapshot. Returns None if
+    the DB or backup is unavailable (export proceeds without it)."""
+    import base64
+    fd, tmp = tempfile.mkstemp(dir=str(CONFIG_DIR), prefix="._dbsnap.", suffix=".db")
+    os.close(fd)
+    try:
+        dst = sqlite3.connect(tmp)
+        try:
+            with meta_db._lock:
+                meta_db.conn.backup(dst)
+        finally:
+            dst.close()
+        raw = Path(tmp).read_bytes()
+    except (sqlite3.Error, OSError):
+        log.warning("library DB snapshot for settings export failed", exc_info=True)
+        return None
+    finally:
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                Path(tmp + suffix).unlink()
+            except FileNotFoundError:
+                pass
+    return {"encoding": "base64", "data": base64.b64encode(raw).decode("ascii")}
+
+
+def _sqlite_payload_integrity_ok(payload: bytes) -> bool:
+    """Validate decoded DB bytes by materializing them to a temp file and
+    running the same integrity probe used at restore time — so a corrupt or
+    truncated snapshot is refused at import, before it's ever staged."""
+    fd, tmp = tempfile.mkstemp(dir=str(CONFIG_DIR), prefix="._dbcheck.", suffix=".db")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+        return _sqlite_file_integrity_ok(Path(tmp))
+    except OSError:
+        return False
+    finally:
+        try:
+            Path(tmp).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _core_server_files() -> dict | None:
+    """`{relpath: encoded_entry}` for core server-side state in the bundle:
+    a snapshot of the library DB plus any custom playlist covers / avatar.
+    Returns None if the DB snapshot could not be produced — the caller must
+    treat that as a hard export failure rather than silently shipping a
+    backup that's missing the irreplaceable library state."""
+    snap = _snapshot_library_db()
+    if snap is None:
+        return None
+    out: dict[str, dict] = dict(_walk_export_paths(list(_CORE_EXPORT_ART_DIRS), CONFIG_DIR))
+    out[_CORE_LIBRARY_DB] = snap
+    return out
+
+
 @app.get("/api/settings/export")
 def export_settings():
     """Build a settings bundle covering server config + opted-in plugin
@@ -6229,6 +6369,17 @@ def export_settings():
     server_config = _load_config(config_file)
     if server_config is None:
         server_config = _default_settings()
+
+    # Snapshot the library DB + custom art FIRST: if the irreplaceable state
+    # can't be captured, abort with an error rather than hand back a bundle
+    # that looks like a backup but silently omits it.
+    core_files = _core_server_files()
+    if core_files is None:
+        return JSONResponse(
+            {"ok": False, "error": "could not snapshot the library database; "
+                                   "export aborted to avoid an incomplete backup"},
+            status_code=500,
+        )
 
     plugin_blocks: dict[str, dict] = {}
     with PLUGINS_LOCK:
@@ -6247,6 +6398,7 @@ def export_settings():
         "feedBack_version": _running_version(),
         "server_config": server_config,
         "plugin_server_configs": plugin_blocks,
+        "core_server_files": core_files,
     }
     filename = f"feedBack-settings-{now.strftime('%Y-%m-%d')}.json"
     return JSONResponse(
@@ -6386,6 +6538,62 @@ def import_settings(bundle: dict):
         if applied_for_plugin:
             applied_plugins.append(plugin_id)
 
+    # ── Core server-side files (library DB + custom art) ─────────────
+    core_blocks = bundle.get("core_server_files") or {}
+    if not isinstance(core_blocks, dict):
+        return JSONResponse(
+            {"ok": False, "error": "core_server_files must be an object"},
+            status_code=400,
+        )
+    db_restore_staged = False
+    applied_core: list[str] = []
+    for relpath, file_entry in core_blocks.items():
+        if not isinstance(relpath, str) or not relpath:
+            return JSONResponse(
+                {"ok": False, "error": f"core_server_files: invalid relpath key {relpath!r}"},
+                status_code=400,
+            )
+        if relpath == _CORE_LIBRARY_DB:
+            # Stage the DB beside the live one; the swap happens at next
+            # startup (_apply_pending_db_restore), so we never overwrite a DB
+            # the server holds open or strand a stale WAL against a fresh file.
+            target = CONFIG_DIR / (_CORE_LIBRARY_DB + ".restore")
+            db_restore_staged = True
+        else:
+            try:
+                target = _validate_relpath(relpath, list(_CORE_IMPORT_ALLOWED), CONFIG_DIR)
+            except _UndeclaredFile:
+                warnings.append(f"core_server_files: skipped undeclared path {relpath!r}")
+                continue
+            except ValueError as e:
+                return JSONResponse(
+                    {"ok": False, "error": f"core_server_files, file {relpath!r}: {e}"},
+                    status_code=400,
+                )
+        try:
+            payload = _decode_entry(file_entry)
+        except ValueError as e:
+            return JSONResponse(
+                {"ok": False, "error": f"core_server_files, file {relpath!r}: {e}"},
+                status_code=400,
+            )
+        # Guard the DB payload: a truncated/corrupt file staged as the restore
+        # would fail to open at startup and brick the app (after the live DB
+        # is already gone). Reject anything that doesn't open + pass
+        # quick_check before it's ever staged.
+        if relpath == _CORE_LIBRARY_DB and not _sqlite_payload_integrity_ok(payload):
+            return JSONResponse(
+                {"ok": False, "error": "core_server_files: web_library.db is not a valid SQLite database"},
+                status_code=400,
+            )
+        staged.append((f"core/{relpath}", target, payload))
+        applied_core.append(relpath)
+    if db_restore_staged:
+        warnings.append(
+            "library database restored; restart FeedBack to load it "
+            "(scores, favorites, playlists, and play history)"
+        )
+
     # ── Phase 2: commit ──────────────────────────────────────────────
     written: list[str] = []
     try:
@@ -6412,6 +6620,15 @@ def import_settings(bundle: dict):
         # because we didn't snapshot them — surface what got written
         # (as relpaths, not absolute server paths) so the user knows
         # the state is partial without leaking deployment layout.
+        # Disarm a staged DB restore THIS request wrote: a partial import must
+        # NOT silently swap the library DB on the next restart. Gate on the
+        # write actually having happened (display key in `written`) so we don't
+        # delete a valid restore staged by a prior, not-yet-applied import.
+        if f"core/{_CORE_LIBRARY_DB}" in written:
+            try:
+                (CONFIG_DIR / (_CORE_LIBRARY_DB + ".restore")).unlink()
+            except FileNotFoundError:
+                pass
         return JSONResponse(
             {
                 "ok": False,
@@ -6427,7 +6644,9 @@ def import_settings(bundle: dict):
         "applied": {
             "server_config": True,
             "plugins": applied_plugins,
+            "core_files": applied_core,
         },
+        "restart_required": db_restore_staged,
     }
 
 

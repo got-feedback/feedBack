@@ -1205,14 +1205,14 @@ html.fb-immersive #v3-main > .screen.active {
    centered. Shown only for the grid view + alphabetical (artist/title) sorts. */
 .v3-azrail {
     position: fixed;
-    right: 2px;
+    right: 4px;                 /* off the very edge so letters aren't clipped */
     top: 50%;
     transform: translateY(-50%);
     z-index: 25;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    max-height: 84vh;
+    align-items: stretch;       /* equal-width buttons → one wide, even hit column */
+    max-height: 92vh;
     padding: 4px 1px;
     user-select: none;
     -webkit-user-select: none;
@@ -1224,17 +1224,23 @@ html.fb-immersive #v3-main > .screen.active {
     background: none;
     border: 0;
     color: #94a3b8;              /* fb-textDim */
-    font-size: .62rem;
+    /* Scale with viewport height so the 27-letter rail grows on tall / hi-res
+       displays (a fixed size looked tiny at 1440p) while still fitting 27 rows
+       within max-height on short screens. */
+    font-size: clamp(.72rem, 1.4vh, 1.05rem);
     font-weight: 700;
-    line-height: 1.05;
-    padding: 1px 4px;
+    line-height: 1.04;
+    /* Vertical padding fattens the tap target (was ~13px tall → easy to miss). */
+    padding: clamp(2px, .55vh, 6px) 9px;
     margin: 0;
     cursor: pointer;
     border-radius: 4px;
+    text-align: center;
 }
 .v3-azrail-letter:hover:not([disabled]),
 .v3-azrail-letter.is-active {
     color: #0ea5e9;             /* fb-primary */
+    background: rgba(14, 165, 233, .15); /* visible target under the scrub */
 }
 .v3-azrail-letter:focus-visible {
     outline: 2px solid #38bdf8; /* fb-primaryHi */
@@ -1247,7 +1253,7 @@ html.fb-immersive #v3-main > .screen.active {
 /* Drag indicator bubble (Android fast-scroll pattern). */
 .v3-azbubble {
     position: fixed;
-    right: 2.6rem;
+    right: 2.9rem;              /* clear the (now wider) rail */
     top: 50%;
     transform: translateY(-50%);
     z-index: 26;
@@ -1269,7 +1275,7 @@ html.fb-immersive #v3-main > .screen.active {
 /* Coarse-pointer / short viewports: the 27-letter rail can crowd a phone edge.
    Tighten it; a collapse-to-anchors pass is a follow-up. */
 @media (max-height: 640px) {
-    .v3-azrail-letter { font-size: .55rem; padding: 0 4px; }
+    .v3-azrail-letter { font-size: clamp(.5rem, 1.3vh, .62rem); padding: 0 7px; }
 }
 
 /* — Practice-aware library home: repertoire meter + "Keep practicing" shelf — */

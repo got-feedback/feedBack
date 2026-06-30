@@ -1867,7 +1867,11 @@
     }
 
     let _jumpToken = 0;
-    async function jumpToLetter(letter) {
+    // `smooth` animates the scroll (a discrete tap / keyboard jump). A drag-scrub
+    // passes `false` so each step snaps INSTANTLY: stacked smooth animations over
+    // the windowed grid lag and settle imprecisely, which is why a drag used to
+    // land somewhere other than the let-go letter.
+    async function jumpToLetter(letter, smooth = true) {
         const grid = _gridEl(), sizer = _sizerEl(), main = document.getElementById('v3-main');
         if (!grid || !sizer || !main || state.view !== 'grid' || !letter) return;
         _setRailActive(letter);
@@ -1890,7 +1894,7 @@
         const toolbar = document.getElementById('v3-songs-toolbar');
         const pad = (toolbar ? toolbar.offsetHeight : 0) + 12; // clear the sticky toolbar
         const top = Math.max(0, sizerTop + targetRow * rowH - pad);
-        main.scrollTo({ top, behavior: 'smooth' });
+        main.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
         requestWindowRender();
     }
 
@@ -1898,38 +1902,59 @@
         const rail = railEl();
         if (!rail || rail._bound) return;
         rail._bound = true;
-        let dragging = false, moved = false, lastDrag = null;
+        let dragging = false, lastDrag = null, railBtns = [];
+        // Resolve the letter button under a viewport-Y from the per-drag cached
+        // list (avoids a querySelectorAll per pointermove), clamping past the
+        // top/bottom so a scrub off the ends still seeks the first/last letter.
         const letterAtY = (y) => {
-            const els = rail.querySelectorAll('.v3-azrail-letter');
-            if (!els.length) return null;
-            for (const el of els) { const r = el.getBoundingClientRect(); if (y >= r.top && y <= r.bottom) return el; }
-            return y < els[0].getBoundingClientRect().top ? els[0] : els[els.length - 1]; // clamp past ends
+            if (!railBtns.length) return null;
+            for (const el of railBtns) { const r = el.getBoundingClientRect(); if (y >= r.top && y <= r.bottom) return el; }
+            return y < railBtns[0].getBoundingClientRect().top ? railBtns[0] : railBtns[railBtns.length - 1];
         };
-        rail.addEventListener('click', (e) => {
-            const btn = e.target.closest('.v3-azrail-letter');
-            if (!btn || btn.disabled) return;
-            if (moved) { moved = false; return; }   // a drag already handled it
-            jumpToLetter(btn.getAttribute('data-letter'));
-        });
+        // Seek to the letter under `y`. `smooth` on the initial press (a tap);
+        // instant during the scrub so the grid tracks the finger and RELEASE
+        // lands exactly on the let-go letter.
+        const seekToY = (y, smooth) => {
+            const el = letterAtY(y);
+            if (!el || el.disabled) return;
+            const L = el.getAttribute('data-letter');
+            _showBubble(L);
+            if (L !== lastDrag) { lastDrag = L; jumpToLetter(L, smooth); }
+        };
         rail.addEventListener('pointerdown', (e) => {
             const btn = e.target.closest('.v3-azrail-letter');
             if (!btn) return;
-            dragging = true; moved = false; lastDrag = null;
+            railBtns = [...rail.querySelectorAll('.v3-azrail-letter')];
+            dragging = true; lastDrag = null;
+            // Capture so a vertical scrub keeps seeking even if the pointer drifts
+            // off the thin rail horizontally.
             try { rail.setPointerCapture(e.pointerId); } catch (_) { /* */ }
-            _showBubble(btn.getAttribute('data-letter'));
+            // Drive the jump from here, NOT from the click event: pointer capture
+            // retargets the follow-up click to the rail (never a letter), so a
+            // captured tap's click can't resolve a letter and used to no-op
+            // ("clicked O, nothing happened"). preventDefault() suppresses the
+            // text-selection / focus-scroll default; we re-focus below for kbd.
+            e.preventDefault();
+            try { btn.focus({ preventScroll: true }); } catch (_) { /* */ }
+            seekToY(e.clientY, true);   // jump on press → a tap lands immediately
         });
         rail.addEventListener('pointermove', (e) => {
             if (!dragging) return;
-            const el = letterAtY(e.clientY);
-            if (!el || el.disabled) return;
-            moved = true;
-            const L = el.getAttribute('data-letter');
-            _showBubble(L);
-            if (L !== lastDrag) { lastDrag = L; jumpToLetter(L); }  // only on change
+            seekToY(e.clientY, false);  // instant tracking during the scrub
         });
-        const end = () => { dragging = false; _hideBubble(); };
+        const end = () => { dragging = false; railBtns = []; _hideBubble(); };
         rail.addEventListener('pointerup', end);
         rail.addEventListener('pointercancel', end);
+        // Keyboard activation only. A pointer-driven click (detail >= 1) is
+        // retargeted to the rail by pointer capture and can't resolve a letter,
+        // so the pointer path owns taps; act here only on Enter/Space, whose
+        // synthesized click has detail === 0.
+        rail.addEventListener('click', (e) => {
+            if (e.detail !== 0) return;
+            const btn = e.target.closest('.v3-azrail-letter');
+            if (!btn || btn.disabled) return;
+            jumpToLetter(btn.getAttribute('data-letter'));
+        });
         rail.addEventListener('keydown', (e) => {
             if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
             const btns = [...rail.querySelectorAll('.v3-azrail-letter:not([disabled])')];

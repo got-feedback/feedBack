@@ -92,3 +92,25 @@ test('the rail supports pointer drag-scrub + keyboard arrows', () => {
     assert.match(src, /ArrowUp'[\s\S]*?ArrowDown'|ArrowDown'[\s\S]*?ArrowUp'/,
         'arrow keys must move between present letters');
 });
+
+test('pointer taps are driven by pointerdown, not the retarget-prone click', () => {
+    // A tap must seek on pointerdown (pointer capture retargets the follow-up
+    // click to the rail, so resolving a letter from click is unreliable — taps
+    // would no-op, "clicked O, nothing happened").
+    assert.match(src, /addEventListener\('pointerdown'[\s\S]*?seekToY\(/,
+        'pointerdown must seek immediately so a tap lands without a move');
+    // The click handler must ignore pointer-driven clicks (detail >= 1) and only
+    // handle keyboard Enter/Space activation (synthesized click has detail === 0).
+    assert.match(src, /addEventListener\('click'[\s\S]*?e\.detail\s*!==\s*0/,
+        'the rail click handler must guard on e.detail === 0 (keyboard only)');
+});
+
+test('drag scrubs seek instantly while taps/keys seek smoothly', () => {
+    assert.match(src, /async function\s+jumpToLetter\s*\(\s*letter\s*,\s*smooth/,
+        'jumpToLetter must take a smooth flag');
+    assert.match(src, /behavior:\s*smooth\s*\?\s*'smooth'\s*:\s*'auto'/,
+        'jumpToLetter must scroll instantly during a drag, smoothly on a tap');
+    // pointermove scrubs with smooth=false so RELEASE lands on the let-go letter.
+    assert.match(src, /addEventListener\('pointermove'[\s\S]*?seekToY\([^;]*?,\s*false\)/,
+        'pointermove must seek with smooth=false (precise drag tracking)');
+});

@@ -425,6 +425,42 @@ test('coverage: with no declared instrument it stays conservative (prompts as be
     assert.equal(sandbox.__enableCalls.length, 1);
 });
 
+// ── §4 coverage report + badge cue (E1.6) ──────────────────────────────────
+test('coverage report names the string(s) to retune', async () => {
+    // Note: report objects come from the vm sandbox realm, so compare fields, not
+    // deepStrictEqual (which checks prototype identity across realms).
+    const sandbox = createTunerSandbox({ player: PLAYER_GUITAR_8_FS });
+    const rep = (s) => sandbox.window._tunerAutoOpen.coverageReport(s);
+    const covered = await rep(E_STANDARD);
+    assert.equal(covered.covered, true);
+    assert.equal(covered.retune.length, 0);
+    assert.equal(covered.reference, false);
+    const dropA = await rep(SONG_DROP_A7);
+    assert.equal(dropA.covered, false);
+    assert.equal(dropA.retune.length, 1);
+    assert.equal(dropA.retune[0].from, 'B');   // the user's exact case → "retune B → A"
+    assert.equal(dropA.retune[0].to, 'A');
+});
+
+test('coverage report flags a whole-instrument reference mismatch', async () => {
+    const sandbox = createTunerSandbox({ player: { ...PLAYER_GUITAR_6, reference_pitch: 432 } });
+    const rep = await sandbox.window._tunerAutoOpen.coverageReport(E_STANDARD);
+    assert.equal(rep.covered, false);
+    assert.equal(rep.reference, true);
+});
+
+test('the tuner badge surfaces a passive coverage cue (badges.js)', () => {
+    const badgesSrc = fs.readFileSync(
+        path.join(__dirname, '..', '..', 'static', 'v3', 'badges.js'), 'utf8');
+    // Recomputes via the tuner plugin's coverageReport on song:ready …
+    assert.match(badgesSrc, /api\.coverageReport/);
+    assert.match(badgesSrc, /sm\.on\('song:ready'/);
+    // … and shows an advisory ring + tooltip naming the retune (it never auto-opens).
+    assert.match(badgesSrc, /function _applyCoverageCue/);
+    assert.match(badgesSrc, /report\.retune/);
+    assert.match(badgesSrc, /boxShadow/);
+});
+
 test('auto-open does not require app.js changes', () => {
     const appSrc = fs.readFileSync(APP_JS, 'utf8');
     assert.doesNotMatch(appSrc, /_tunerAutoOpen|maybeAutoOpenOnTuningChange/);

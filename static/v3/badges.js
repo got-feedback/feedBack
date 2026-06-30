@@ -25,6 +25,10 @@
     // Tuning names per instrument key (e.g. 'guitar-6', 'bass-4'), loaded from
     // GET /api/tunings. Falls back to empty arrays until the fetch resolves.
     let _tuningsByKey = {};
+    // Last instrument-coverage report for the current song (from the tuner plugin) —
+    // drives a passive "different tuning" cue on the tuner badge. null = covered /
+    // unknown / off the player.
+    let _lastCoverageReport = null;
     function _tuningsForKey(key) { return Object.keys(_tuningsByKey[key] || {}); }
     function _tuningsForInstrument(instrument, string_count) {
         return _tuningsForKey(instrument + '-' + string_count);
@@ -257,6 +261,36 @@
             openTuner();
         });
         _applyFrame(_lastFrame);
+        _applyCoverageCue(_lastCoverageReport);
+    }
+
+    // Passive "different tuning" cue on the tuner badge: an amber ring + a tooltip
+    // naming the retune (e.g. "B→A"). The diff comes from the tuner plugin's coverage
+    // report; an absent plugin or a covered song → no cue. CSS-free (inline ring +
+    // native title) so it needs no Tailwind rebuild, and it never auto-opens the
+    // panel — it's advisory; the user taps the badge to tune.
+    function _applyCoverageCue(report) {
+        const btn = document.querySelector('#v3-badge-tuner [data-open-tuner]');
+        if (!btn) return;
+        const needs = !!(report && !report.covered);
+        btn.style.boxShadow = needs ? '0 0 0 2px #fbbf24' : '';
+        if (!needs) { btn.title = 'Open tuner'; return; }
+        const summary = report.cantCover ? 'a different instrument'
+            : (report.retune && report.retune.length)
+                ? report.retune.map((d) => d.from + '→' + d.to).join(', ')
+                : 'the reference pitch';
+        btn.title = 'This song needs a different tuning — retune ' + summary + '. Click to tune.';
+    }
+
+    async function _refreshCoverageCue() {
+        const songInfo = window.highway && window.highway.getSongInfo && window.highway.getSongInfo();
+        const api = window._tunerAutoOpen;
+        if (!songInfo || !api || typeof api.coverageReport !== 'function') {
+            _lastCoverageReport = null; _applyCoverageCue(null); return;
+        }
+        try { _lastCoverageReport = await api.coverageReport(songInfo); }
+        catch (_e) { _lastCoverageReport = null; }
+        _applyCoverageCue(_lastCoverageReport);
     }
 
     // ── Instrument selector card (Stitch RightInstrumentSelector) ──────────--
@@ -373,6 +407,13 @@
             sm.on('tunings:updated', async () => {
                 await loadTunings();
                 renderInstrument();
+            });
+            // Passive coverage cue: recompute when a song is ready; clear when a new
+            // song starts loading or we leave the player screen.
+            sm.on('song:ready', () => { _refreshCoverageCue(); });
+            sm.on('song:loading', () => { _lastCoverageReport = null; _applyCoverageCue(null); });
+            sm.on('screen:changed', (e) => {
+                if (!e || !e.detail || e.detail.id !== 'player') { _lastCoverageReport = null; _applyCoverageCue(null); }
             });
         }
     }

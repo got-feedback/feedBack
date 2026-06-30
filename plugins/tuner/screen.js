@@ -193,34 +193,45 @@
         return { midis, refCents: 1200 * Math.log2(refPitch / 440) };
     }
 
-    // The song's open strings must appear as an exact, contiguous, order-preserving
-    // run inside the player's strings (extended-range adds strings at the low/high
-    // ends — match by pitch, never by string index).
-    function _contiguousRunMatch(songMidis, playerMidis) {
-        if (playerMidis.length < songMidis.length) return false;
-        for (let start = 0; start + songMidis.length <= playerMidis.length; start++) {
-            let ok = true;
-            for (let i = 0; i < songMidis.length; i++) {
-                if (playerMidis[start + i] !== songMidis[i]) { ok = false; break; }
+    // The retune the player would need to match this song, as a structured report:
+    //   { covered, retune: [{ from, to }], reference, cantCover }
+    // — covered: the physical tuning already matches (the song's open strings are an
+    //   exact contiguous run inside the player's strings) → no retune;
+    // — retune: the per-string note changes (e.g. { from:'B', to:'A' }) of the best
+    //   contiguous alignment — what the badge cue names;
+    // — reference: a whole-instrument A4/centOffset mismatch (A440 vs A432, octave);
+    // — cantCover: the song needs more strings than the instrument has.
+    // Conservative: any missing data → { covered:false } so a needed prompt/cue is
+    // never silently dropped on a fetch hiccup.
+    async function _coverageReport(songInfo) {
+        const u = window._tunerUtils;
+        const none = { covered: false, retune: [], reference: false, cantCover: false };
+        if (!u) return none;
+        const song = _songOpenMidis(songInfo);
+        if (!song || !song.length) return none;
+        const player = await _playerTuning();
+        if (!player || !player.midis.length) return none;
+        const reference = Math.abs((Number(songInfo?.centOffset) || 0) - player.refCents) > 25;
+        if (player.midis.length < song.length) return { covered: false, retune: [], reference, cantCover: true };
+        // Best contiguous alignment = the run with the fewest per-string mismatches
+        // (extended-range adds strings at the ends — match by pitch, not index).
+        let best = null;
+        for (let start = 0; start + song.length <= player.midis.length; start++) {
+            const diffs = [];
+            for (let i = 0; i < song.length; i++) {
+                const pm = player.midis[start + i];
+                if (pm !== song[i]) diffs.push({ from: u.midiToNote(pm, false), to: u.midiToNote(song[i], false) });
             }
-            if (ok) return true;
+            if (!best || diffs.length < best.length) best = diffs;
+            if (!diffs.length) break;
         }
-        return false;
+        const covered = !reference && best.length === 0;
+        return { covered, retune: covered ? [] : best, reference, cantCover: false };
     }
 
-    // True when the player's current physical tuning already covers the song
-    // (→ suppress auto-open). Conservative: any missing data returns false, so a
-    // genuinely-needed prompt is never silently dropped on a fetch hiccup.
+    // Boolean form used to gate the auto-open prompt.
     async function _coveredByPlayerInstrument(songInfo) {
-        const song = _songOpenMidis(songInfo);
-        if (!song || !song.length) return false;
-        const player = await _playerTuning();
-        if (!player || !player.midis.length) return false;
-        const songCents = Number(songInfo?.centOffset) || 0;
-        // Global reference / octave: a difference fretting can't absorb (A440 vs
-        // A432 ≈ 32¢, or an octave-down centOffset) → NOT covered.
-        if (Math.abs(songCents - player.refCents) > 25) return false;
-        return _contiguousRunMatch(song, player.midis);
+        return (await _coverageReport(songInfo)).covered;
     }
 
     function _onAutoOpenSongLoadingHandler() {
@@ -600,6 +611,7 @@
         sessionKey: _autoOpenSessionKey,
         maybeAutoOpenOnTuningChange: _maybeAutoOpenOnTuningChange,
         coveredByPlayerInstrument: _coveredByPlayerInstrument,
+        coverageReport: _coverageReport,
         onSongLoading: _onAutoOpenSongLoadingHandler,
         getState() {
             return {

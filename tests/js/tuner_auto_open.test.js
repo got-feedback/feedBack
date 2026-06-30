@@ -8,6 +8,7 @@ const vm = require('node:vm');
 
 const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
 const TUNER_SCREEN_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'screen.js');
+const TUNING_UTILS_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'utils', 'tuning-utils.js');
 
 function loadTuningHelpers() {
     const src = fs.readFileSync(APP_JS, 'utf8');
@@ -30,6 +31,10 @@ function createTunerSandbox(opts) {
     // Auto-open is opt-in (default off in prod). The sandbox defaults it ON so the
     // behaviour tests exercise the feature; pass { autoOpen: false } to gate it off.
     const autoOpen = !opts || opts.autoOpen !== false;
+    // The player's physical instrument for the §4 coverage check (core /api/settings).
+    // Absent → the endpoint reports not-ok → coverage stays conservative (can't
+    // decide → don't suppress the prompt), preserving the pre-coverage behaviour.
+    const playerSettings = (opts && opts.player) || null;
     const enableCalls = [];
     let playerActive = true;
     let songInfo = null;
@@ -41,7 +46,13 @@ function createTunerSandbox(opts) {
         setTimeout(fn) { fn(); return 0; },
         clearTimeout() {},
         fetch(url) {
-            if (String(url).includes('/config')) {
+            const _u = String(url);
+            if (_u.includes('/api/settings')) {
+                return Promise.resolve(playerSettings
+                    ? { ok: true, json: () => Promise.resolve(playerSettings) }
+                    : { ok: false, json: () => Promise.resolve({}) });
+            }
+            if (_u.includes('/config')) {
                 return Promise.resolve({
                     json: () => Promise.resolve({
                         showFloatingButton: true,
@@ -124,12 +135,8 @@ function createTunerSandbox(opts) {
     sandbox.window.highway = {
         getSongInfo: () => songInfo,
     };
-    sandbox.window._tunerUtils = {
-        preferFlats: () => false,
-        offsetsToFreqs: (offsets) => offsets.map((o, i) => 80 + i * 10),
-        freqToMidi: () => 40,
-        midiToNote: () => 'E',
-    };
+    // _tunerUtils comes from the REAL tuning-utils.js (loaded into the sandbox
+    // below) so the §4 coverage check runs real pitch math, not stubbed values.
     sandbox.window._tunerUI = () => ({
         addButton() {},
         initUI() {},
@@ -156,6 +163,7 @@ function createTunerSandbox(opts) {
     });
 
     vm.createContext(sandbox);
+    vm.runInContext(fs.readFileSync(TUNING_UTILS_JS, 'utf8'), sandbox);
     vm.runInContext(fs.readFileSync(TUNER_SCREEN_JS, 'utf8'), sandbox);
 
     const realEnable = sandbox.window.tuner.enable.bind(sandbox.window.tuner);
@@ -357,6 +365,64 @@ test('screen.js registers song:loading and song:ready auto-open listeners at boo
     assert.match(src, /window\.feedBack\.on\('song:ready', _onAutoOpenSongReady\)/);
     assert.match(src, /function _tuningIdentityKey/);
     assert.doesNotMatch(src, /restartCurrentSong/);
+});
+
+// ── §4 instrument-coverage (E1.5) ──────────────────────────────────────────
+// Player physical instruments (core /api/settings shape: instrument/string_count/
+// tuning offsets/reference_pitch).
+const PLAYER_GUITAR_8_FS = { instrument: 'guitar', string_count: 8, tuning: [0, 0, 0, 0, 0, 0, 0, 0], reference_pitch: 440 }; // F# standard
+const PLAYER_GUITAR_6 = { instrument: 'guitar', string_count: 6, tuning: [0, 0, 0, 0, 0, 0], reference_pitch: 440 };          // E standard
+const SONG_7B = { filename: '7b.sloppak', arrangement: 'Lead', arrangement_index: 0, stringCount: 7, tuning: [0, 0, 0, 0, 0, 0, 0] };           // B standard 7
+const SONG_DROP_A7 = { filename: 'dropa7.sloppak', arrangement: 'Lead', arrangement_index: 0, stringCount: 7, tuning: [-2, 0, 0, 0, 0, 0, 0] }; // Drop A 7
+
+test('coverage: an 8-string F# player is NOT prompted for a covered 6-/7-string standard song', async () => {
+    const sandbox = createTunerSandbox({ player: PLAYER_GUITAR_8_FS });
+    sandbox.window._tunerAutoOpen.resetState();
+    await ready(sandbox, DROP_D);        // first song → sets lastTuningKey, no open
+    await ready(sandbox, E_STANDARD);    // 6-E lives on the 8-string's top 6 → suppressed
+    assert.equal(sandbox.__enableCalls.length, 0);
+    await ready(sandbox, SONG_7B);       // 7-B lives on the 8-string's top 7 → suppressed
+    assert.equal(sandbox.__enableCalls.length, 0);
+});
+
+test('coverage: a Drop-A 7-string song STILL prompts the 8-string F# player (dropped string absent)', async () => {
+    const sandbox = createTunerSandbox({ player: PLAYER_GUITAR_8_FS });
+    sandbox.window._tunerAutoOpen.resetState();
+    await ready(sandbox, E_STANDARD);    // first → no open
+    await ready(sandbox, SONG_DROP_A7);  // needs an open A1; the 8-string has F#1/B1, not A1 → prompt
+    assert.equal(sandbox.__enableCalls.length, 1);
+});
+
+test('coverage: a 6-string-standard player IS prompted for Drop D', async () => {
+    const sandbox = createTunerSandbox({ player: PLAYER_GUITAR_6 });
+    sandbox.window._tunerAutoOpen.resetState();
+    await ready(sandbox, E_STANDARD);    // first → no open
+    await ready(sandbox, DROP_D);        // low E must drop to D → not covered → prompt
+    assert.equal(sandbox.__enableCalls.length, 1);
+});
+
+test('coverage: a reference-pitch mismatch (A432 player vs A440 song) prompts even when the shape matches', async () => {
+    const sandbox = createTunerSandbox({ player: { ...PLAYER_GUITAR_6, reference_pitch: 432 } });
+    sandbox.window._tunerAutoOpen.resetState();
+    await ready(sandbox, DROP_D);        // first → no open
+    await ready(sandbox, E_STANDARD);    // shape matches, but the whole instrument is ~32¢ flat → prompt
+    assert.equal(sandbox.__enableCalls.length, 1);
+});
+
+test('coverage: covered/uncovered is decided by contiguous pitch alignment (direct)', async () => {
+    const sandbox = createTunerSandbox({ player: PLAYER_GUITAR_8_FS });
+    const cover = (song) => sandbox.window._tunerAutoOpen.coveredByPlayerInstrument(song);
+    assert.equal(await cover(E_STANDARD), true);     // 6-E is a run inside 8-string F#
+    assert.equal(await cover(SONG_7B), true);        // 7-B is a run inside 8-string F#
+    assert.equal(await cover(SONG_DROP_A7), false);  // Drop-A's low A1 isn't an open string on it
+});
+
+test('coverage: with no declared instrument it stays conservative (prompts as before)', async () => {
+    const sandbox = createTunerSandbox();   // no /api/settings instrument
+    sandbox.window._tunerAutoOpen.resetState();
+    await ready(sandbox, CUSTOM_GUITAR);
+    await ready(sandbox, E_STANDARD);
+    assert.equal(sandbox.__enableCalls.length, 1);
 });
 
 test('auto-open does not require app.js changes', () => {

@@ -133,6 +133,96 @@
         return filename + '::' + arr;
     }
 
+    // ── §4 instrument-coverage ────────────────────────────────────────────────
+    // FeedBack is tune-to-song: the highway draws tab in the SONG's tuning, so the
+    // player tunes their instrument to match. We therefore only auto-open when the
+    // player's CURRENT physical tuning doesn't already cover the song — i.e. the
+    // song's open-string tuning isn't an exact contiguous run inside the player's
+    // strings, OR the global reference differs. So an 8-string F# player isn't
+    // nagged for a 6-/7-string standard song (its top strings already match), but a
+    // Drop-A song whose dropped open string the player lacks still prompts.
+    function _openMidisFromFreqs(freqs) {
+        const u = window._tunerUtils;
+        if (!u || !Array.isArray(freqs)) return null;
+        return freqs.map((f) => Math.round(u.freqToMidi(f)));
+    }
+
+    // The song's open-string MIDI (at A440; centOffset handled separately as a
+    // global). Mirrors _tuningIdentityKey's isBass / string-count derivation.
+    function _songOpenMidis(songInfo) {
+        const u = window._tunerUtils;
+        if (!u || !songInfo || !Array.isArray(songInfo.tuning) || !songInfo.tuning.length) return null;
+        const ctx = (typeof window.feedBack?.songTuningContext === 'function')
+            ? window.feedBack.songTuningContext(songInfo)
+            : { stringCount: songInfo.stringCount, arrangement: songInfo.arrangement, arrangement_smart_name: songInfo.arrangement_smart_name };
+        const isBass = (typeof window.feedBack?.isBassArrangement === 'function')
+            ? window.feedBack.isBassArrangement(ctx)
+            : (songInfo.arrangement || '').toLowerCase().includes('bass');
+        const sc = (typeof window.feedBack?.effectiveStringCount === 'function')
+            ? window.feedBack.effectiveStringCount(songInfo.tuning, ctx)
+            : (songInfo.stringCount || songInfo.tuning.length);
+        if (!sc || sc <= 0) return null;
+        const offsets = songInfo.tuning.slice(0, sc);
+        if (!offsets.length) return null;
+        return _openMidisFromFreqs(u.offsetsToFreqs(offsets, isBass));
+    }
+
+    // The player's PHYSICAL instrument from core /api/settings (the v3 instrument
+    // badge's selection — a STABLE reference, NOT the tuner's song-tracking
+    // _syncCurrentTuning). Returns { midis, refCents } or null.
+    async function _playerTuning() {
+        const u = window._tunerUtils;
+        if (!u) return null;
+        let s;
+        try { s = await fetch('/api/settings').then((r) => (r && r.ok ? r.json() : null)); }
+        catch (_) { return null; }
+        if (!s) return null;
+        const isBass = s.instrument === 'bass';
+        const sc = Number(s.string_count) || (isBass ? 4 : 6);
+        const refPitch = Number(s.reference_pitch) || 440;
+        let freqs = null;
+        if (Array.isArray(s.tuning)) {
+            freqs = u.offsetsToFreqs(s.tuning.slice(0, sc), isBass);
+        } else if (typeof s.tuning === 'string') {
+            const named = _state._allTunings && _state._allTunings[(isBass ? 'bass' : 'guitar') + '-' + sc];
+            if (named && Array.isArray(named[s.tuning])) freqs = named[s.tuning];
+        }
+        if (!freqs) freqs = u.offsetsToFreqs(new Array(sc).fill(0), isBass);   // standard fallback
+        const midis = _openMidisFromFreqs(freqs);
+        if (!midis) return null;
+        return { midis, refCents: 1200 * Math.log2(refPitch / 440) };
+    }
+
+    // The song's open strings must appear as an exact, contiguous, order-preserving
+    // run inside the player's strings (extended-range adds strings at the low/high
+    // ends — match by pitch, never by string index).
+    function _contiguousRunMatch(songMidis, playerMidis) {
+        if (playerMidis.length < songMidis.length) return false;
+        for (let start = 0; start + songMidis.length <= playerMidis.length; start++) {
+            let ok = true;
+            for (let i = 0; i < songMidis.length; i++) {
+                if (playerMidis[start + i] !== songMidis[i]) { ok = false; break; }
+            }
+            if (ok) return true;
+        }
+        return false;
+    }
+
+    // True when the player's current physical tuning already covers the song
+    // (→ suppress auto-open). Conservative: any missing data returns false, so a
+    // genuinely-needed prompt is never silently dropped on a fetch hiccup.
+    async function _coveredByPlayerInstrument(songInfo) {
+        const song = _songOpenMidis(songInfo);
+        if (!song || !song.length) return false;
+        const player = await _playerTuning();
+        if (!player || !player.midis.length) return false;
+        const songCents = Number(songInfo?.centOffset) || 0;
+        // Global reference / octave: a difference fretting can't absorb (A440 vs
+        // A432 ≈ 32¢, or an octave-down centOffset) → NOT covered.
+        if (Math.abs(songCents - player.refCents) > 25) return false;
+        return _contiguousRunMatch(song, player.midis);
+    }
+
     function _onAutoOpenSongLoadingHandler() {
         _autoOpenGeneration++;
         _autoOpenDismissedSessionKey = null;
@@ -170,6 +260,13 @@
         if (_state.enabled) return;
         if (_lastAutoOpenSessionKey === sessionKey) return;
         if (!window.tuner || typeof window.tuner.enable !== 'function') return;
+
+        // §4: skip the prompt when the player's physical instrument already covers
+        // this song's tuning (e.g. an 8-string F# playing a 6-/7-string standard
+        // song). Async (fetches /api/settings) — re-check the generation after.
+        const covered = await _coveredByPlayerInstrument(songInfo);
+        if (myGen !== _autoOpenGeneration) return;
+        if (covered) return;
 
         _lastAutoOpenSessionKey = sessionKey;
         try {
@@ -502,6 +599,7 @@
         tuningIdentityKey: _tuningIdentityKey,
         sessionKey: _autoOpenSessionKey,
         maybeAutoOpenOnTuningChange: _maybeAutoOpenOnTuningChange,
+        coveredByPlayerInstrument: _coveredByPlayerInstrument,
         onSongLoading: _onAutoOpenSongLoadingHandler,
         getState() {
             return {

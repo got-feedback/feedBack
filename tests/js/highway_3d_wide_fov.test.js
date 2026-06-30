@@ -68,6 +68,48 @@ test('effectiveVfov is a no-op at/under the start aspect', () => {
     );
 });
 
+// ── shipped defaults: off + coherent ─────────────────────────────────────────
+// The "default off → byte-for-byte prior behaviour" contract only holds if the
+// shipped _ASPECT_DEFAULTS actually ship disabled with a base that matches the
+// camera's constructed fov. A previous revision shipped enabled:true with
+// baseVfov:30 (and blend:0), which forced every pane's fov to 30/36 and
+// silently re-framed normal single-player panes. These pin against that.
+
+test('_ASPECT_DEFAULTS ships disabled (no-op out of the box)', () => {
+    assert.match(
+        src,
+        /const\s+_ASPECT_DEFAULTS\s*=\s*\{[\s\S]*?\benabled\s*:\s*false\b/,
+        '_ASPECT_DEFAULTS.enabled must default to false so the feature is opt-in',
+    );
+});
+
+test('the default base fov matches BASE_VFOV (enabling is still a no-op on normal panes)', () => {
+    // baseVfov === BASE_VFOV means even with the feature ON, a <=startAspect pane
+    // returns the unchanged 70° — the effect is confined to genuinely wide panes.
+    assert.match(
+        src,
+        /const\s+_ASPECT_DEFAULTS\s*=\s*\{[\s\S]*?\bbaseVfov\s*:\s*BASE_VFOV\b/,
+        '_ASPECT_DEFAULTS.baseVfov must default to BASE_VFOV, not a divergent literal',
+    );
+});
+
+test('the default blend engages the hold and the floor sits below the base', () => {
+    // blend:1 means turning the feature on actually holds the horizontal cone
+    // (blend:0 would collapse effectiveVfov back to base = feature inert), and
+    // minVfovDeg:HORPLUS_MIN_VFOV keeps the floor below baseVfov (a real floor,
+    // not one that clamps the base upward).
+    assert.match(
+        src,
+        /const\s+_ASPECT_DEFAULTS\s*=\s*\{[\s\S]*?\bblend\s*:\s*1\b/,
+        '_ASPECT_DEFAULTS.blend must default to 1 so the Hor+ hold actually applies when enabled',
+    );
+    assert.match(
+        src,
+        /const\s+_ASPECT_DEFAULTS\s*=\s*\{[\s\S]*?\bminVfovDeg\s*:\s*HORPLUS_MIN_VFOV\b/,
+        '_ASPECT_DEFAULTS.minVfovDeg must default to HORPLUS_MIN_VFOV (a floor below baseVfov)',
+    );
+});
+
 // ── camUpdate: change-guarded fov write + cached aspect ───────────────────────
 
 test('applySize caches the pane aspect for camUpdate', () => {

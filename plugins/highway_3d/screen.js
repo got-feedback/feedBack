@@ -1648,17 +1648,22 @@
     // a tuning session survives reloads; the floating panel (Shift+A) writes the
     // same object live. All of this is a debug aid — none of it runs unless the
     // user opts in.
-    const _ASPECT_LS = 'h3d_aspect_tune';
-    // Working defaults — the current wide-pane tune, shipped ON for testing.
-    // With enabled:true the framing engages on panes wider than startAspect
-    // (2.25); normal ~16:9 panes (single-player, most 2x2 layouts) are below
-    // that and render unchanged. Toggling OFF (Shift+A) restores the exact prior
-    // framing — effectiveVfov returns the geometric base (BASE_VFOV) and the
-    // pose nudges gate off — so it doubles as the A/B baseline. Reset lands here.
-    // localStorage overrides all of this per machine.
+    // Versioned key: the first iteration shipped a broken default (enabled:true,
+    // baseVfov:30) and may have persisted it. Bumping the key ignores that stale
+    // state so the corrected default-off config actually takes effect.
+    const _ASPECT_LS = 'h3d_aspect_tune2';
+    // Working defaults. Default OFF, so out of the box this is an exact no-op —
+    // every pane renders byte-for-byte as before (effectiveVfov returns
+    // BASE_VFOV and the pose nudges gate off). The config is also coherent when
+    // a tester turns it ON via Shift+A: baseVfov == BASE_VFOV so normal ~16:9
+    // panes (single-player, most 2x2) stay at 70° even enabled, and only panes
+    // wider than startAspect (2.25) engage the Hor+ hold; blend:1 makes that
+    // hold actually take effect; minVfovDeg (28) sits below baseVfov so the floor
+    // is a real floor. The pose nudges are the in-progress wide-pane look a
+    // tester sees once enabled. localStorage overrides all of this per machine.
     const _ASPECT_DEFAULTS = {
-        enabled: true, baseVfov: 30, startAspect: 2.25, hfovDeg: null,
-        blend: 0, minVfovDeg: 36, splitOnly: false,
+        enabled: false, baseVfov: BASE_VFOV, startAspect: 2.25, hfovDeg: null,
+        blend: 1, minVfovDeg: HORPLUS_MIN_VFOV, splitOnly: false,
         heightMul: 0.30, distMul: 0.95, pitchAdd: -1.5, lookDepthMul: 1,
     };
     // Slider specs (numeric fields). Checkboxes (enabled/splitOnly) + the hfov

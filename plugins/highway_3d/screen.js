@@ -1083,6 +1083,22 @@
     const FOCUS_D = 600 * K;
     const CAM_LERP_BASE = 0.02;
 
+    // Base vertical field of view (deg). THREE's PerspectiveCamera fov is the
+    // VERTICAL angle; horizontal follows from the aspect ratio. At a normal
+    // ~16:9 pane this gives a ~102° horizontal cone. On an ultra-wide pane
+    // (top/bottom 2-player split → full-width/half-height → ~32:9) that
+    // horizontal cone balloons past 130° and squeezes the fixed-width neck into
+    // a central sliver. The optional horizontal-FOV-hold path below counters
+    // that by lowering the effective vertical fov as the pane widens.
+    const BASE_VFOV = 70;
+    // Horizontal-FOV-hold ("Hor+") defaults. At/under HORPLUS_START_ASPECT the
+    // effective vertical fov equals BASE_VFOV (exact no-op); past it the
+    // vertical fov drops to keep the horizontal cone ~constant so the neck
+    // fills a wide pane. HORPLUS_MIN_VFOV floors the result on pathological
+    // aspects. Engaged only via the window.__h3dAspectTune bridge (default off).
+    const HORPLUS_START_ASPECT = 16 / 9;
+    const HORPLUS_MIN_VFOV = 28;
+
     // Zoom-dependent framing — height (h*) and depth (dist*) multipliers
     // applied to cam.position. Interpolated by `dist`:
     //   NEAR = tight view (nut position, span<=4 -> dist~=93*K): lower/closer.
@@ -1589,6 +1605,252 @@
         if (!_ssActive()) return true;
         return !!(ss && typeof ss.isCanvasFocused === 'function' &&
             ss.isCanvasFocused(highwayCanvas));
+    }
+
+    // A/B toggle for the wide-pane horizontal-FOV-hold. Flips
+    // window.__h3dAspectTune.enabled so the running app can switch between the
+    // current framing (off, the baseline) and the Hor+ framing (on) with one
+    // keypress, across all panes at once. Registered once per session via a
+    // module-level guard (it toggles a shared global, so per-instance
+    // registration would stack duplicate handlers and cancel itself out); it's
+    // a harmless debug control, so it is never unregistered. No-ops where the
+    // core shortcut API isn't present (older core / borrowed contexts).
+    let _abShortcutRegistered = false;
+    function _registerAspectAbShortcut() {
+        if (_abShortcutRegistered) return;
+        if (typeof window.registerShortcut !== 'function') return;
+        _abShortcutRegistered = true;
+        try {
+            window.registerShortcut({
+                key: 'A',   // uppercase e.key → produced with Shift held (Shift+A)
+                description: '3D Highway: toggle wide-pane framing A/B (Shift+A)',
+                scope: 'player',
+                handler: () => {
+                    const t = _aspectTune();
+                    t.enabled = !t.enabled;
+                    try { console.log('[h3d] wide-pane framing', t.enabled ? 'ON' : 'OFF'); } catch (e) {}
+                    // Surface the live tuner panel whenever the feature is on,
+                    // hide it when off. Built lazily on first use.
+                    _ensureAspectPanel();
+                    _setAspectPanelVisible(t.enabled);
+                    _syncAspectPanel();
+                },
+            });
+        } catch (e) {
+            _abShortcutRegistered = false;   // allow a later retry if it threw
+        }
+    }
+
+    // ── Wide-pane framing: live tuner bridge + panel ──────────────────────────
+    // window.__h3dAspectTune is the single source of truth the renderer reads
+    // each frame (see effectiveVfov + camUpdate). The defaults reproduce the
+    // current framing exactly (enabled:false). Values persist to localStorage so
+    // a tuning session survives reloads; the floating panel (Shift+A) writes the
+    // same object live. All of this is a debug aid — none of it runs unless the
+    // user opts in.
+    const _ASPECT_LS = 'h3d_aspect_tune';
+    // Working defaults — the current wide-pane tune, shipped ON for testing.
+    // With enabled:true the framing engages on panes wider than startAspect
+    // (2.25); normal ~16:9 panes (single-player, most 2x2 layouts) are below
+    // that and render unchanged. Toggling OFF (Shift+A) restores the exact prior
+    // framing — effectiveVfov returns the geometric base (BASE_VFOV) and the
+    // pose nudges gate off — so it doubles as the A/B baseline. Reset lands here.
+    // localStorage overrides all of this per machine.
+    const _ASPECT_DEFAULTS = {
+        enabled: true, baseVfov: 30, startAspect: 2.25, hfovDeg: null,
+        blend: 0, minVfovDeg: 36, splitOnly: false,
+        heightMul: 0.30, distMul: 0.95, pitchAdd: -1.5, lookDepthMul: 1,
+    };
+    // Slider specs (numeric fields). Checkboxes (enabled/splitOnly) + the hfov
+    // override are handled separately in the panel builder. Ranges are wide on
+    // purpose — this is a tuning aid, the no-op default sits mid-range.
+    const _ASPECT_FIELDS = [
+        { k: 'baseVfov',     label: 'Base vFOV°',   min: 18,  max: 90,  step: 1 },
+        { k: 'startAspect',  label: 'Start aspect', min: 1.0, max: 4.0, step: 0.05 },
+        { k: 'blend',        label: 'Blend',        min: 0,   max: 1,   step: 0.05 },
+        { k: 'minVfovDeg',   label: 'Min vFOV°',    min: 10,  max: 60,  step: 1 },
+        { k: 'heightMul',    label: 'Height ×',     min: 0.1, max: 2.5, step: 0.05 },
+        { k: 'distMul',      label: 'Dolly ×',      min: 0.2, max: 3.0, step: 0.05 },
+        { k: 'pitchAdd',     label: 'Pitch +',      min: -40, max: 40,  step: 0.5 },
+        // Aims the camera further down the neck (>1) or pulls the aim back (<1).
+        // This is the lever that flattens the mid-distance "hump" toward a
+        // straight gradual recede.
+        { k: 'lookDepthMul', label: 'Look depth',   min: 0.2, max: 3.0, step: 0.05 },
+    ];
+    let _aspectPanelEl = null;        // the floating panel root (built once)
+    let _aspectPanelRO = null;        // readout <div>
+    let _aspectPanelRAF = 0;          // readout poll handle
+
+    // Get-or-create the live bridge object, seeded from defaults + localStorage.
+    function _aspectTune() {
+        let t = window.__h3dAspectTune;
+        if (!t || typeof t !== 'object') {
+            t = Object.assign({}, _ASPECT_DEFAULTS);
+            try {
+                const raw = localStorage.getItem(_ASPECT_LS);
+                if (raw) Object.assign(t, JSON.parse(raw));
+            } catch (e) {}
+            window.__h3dAspectTune = t;
+        }
+        return t;
+    }
+    function _aspectPersist() {
+        try {
+            const t = _aspectTune(), out = {};
+            Object.keys(_ASPECT_DEFAULTS).forEach((k) => { out[k] = t[k]; });
+            localStorage.setItem(_ASPECT_LS, JSON.stringify(out));
+        } catch (e) {}
+    }
+
+    function _ensureAspectPanel() {
+        if (_aspectPanelEl || typeof document === 'undefined') return;
+        const t = _aspectTune();
+        const wrap = document.createElement('div');
+        wrap.id = 'h3d-aspect-tuner';
+        wrap.style.cssText = [
+            'position:fixed', 'top:64px', 'right:12px', 'z-index:99999',
+            'width:230px', 'padding:10px 12px', 'border-radius:8px',
+            'background:rgba(12,18,28,0.92)', 'border:1px solid rgba(120,150,200,0.35)',
+            'box-shadow:0 6px 24px rgba(0,0,0,0.5)', 'color:#cfe0f5',
+            'font:11px/1.35 system-ui,sans-serif', 'user-select:none',
+            'pointer-events:auto',
+        ].join(';');
+
+        const title = document.createElement('div');
+        title.textContent = 'Wide-pane framing (A/B)';
+        title.style.cssText = 'font-weight:700;margin-bottom:6px;color:#e8c040;';
+        wrap.appendChild(title);
+
+        // enabled + splitOnly checkboxes
+        [['enabled', 'Enabled (Shift+A)'], ['splitOnly', 'Split panes only']].forEach(([k, lbl]) => {
+            const row = document.createElement('label');
+            row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:2px 0;cursor:pointer;';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.checked = !!t[k]; cb.dataset.k = k;
+            cb.addEventListener('change', () => {
+                _aspectTune()[k] = cb.checked; _aspectPersist();
+                if (k === 'enabled') _setAspectPanelVisible(cb.checked);
+            });
+            const span = document.createElement('span'); span.textContent = lbl;
+            row.appendChild(cb); row.appendChild(span); wrap.appendChild(row);
+        });
+
+        // numeric sliders
+        _ASPECT_FIELDS.forEach((f) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'margin:5px 0;';
+            const head = document.createElement('div');
+            head.style.cssText = 'display:flex;justify-content:space-between;';
+            const lab = document.createElement('span'); lab.textContent = f.label;
+            const val = document.createElement('span');
+            val.style.cssText = 'color:#8fb6ff;font-variant-numeric:tabular-nums;';
+            head.appendChild(lab); head.appendChild(val); row.appendChild(head);
+            const sl = document.createElement('input');
+            sl.type = 'range'; sl.min = f.min; sl.max = f.max; sl.step = f.step;
+            sl.value = Number.isFinite(t[f.k]) ? t[f.k] : _ASPECT_DEFAULTS[f.k];
+            sl.dataset.k = f.k;
+            sl.style.cssText = 'width:100%;';
+            const show = () => { val.textContent = (+sl.value).toFixed(f.step < 1 ? 2 : 0); };
+            show();
+            sl.addEventListener('input', () => {
+                _aspectTune()[f.k] = parseFloat(sl.value); show(); _aspectPersist();
+            });
+            row.appendChild(sl); wrap.appendChild(row);
+        });
+
+        // hfov override (checkbox enables a slider; off → hfovDeg=null = auto)
+        {
+            const row = document.createElement('div'); row.style.cssText = 'margin:5px 0;';
+            const head = document.createElement('label');
+            head.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.checked = Number.isFinite(t.hfovDeg);
+            const lbl = document.createElement('span'); lbl.textContent = 'Override held hFOV°';
+            head.appendChild(cb); head.appendChild(lbl); row.appendChild(head);
+            const sl = document.createElement('input');
+            sl.type = 'range'; sl.min = 40; sl.max = 160; sl.step = 1;
+            sl.value = Number.isFinite(t.hfovDeg) ? t.hfovDeg : 102;
+            sl.disabled = !cb.checked;
+            sl.style.cssText = 'width:100%;';
+            cb.addEventListener('change', () => {
+                sl.disabled = !cb.checked;
+                _aspectTune().hfovDeg = cb.checked ? parseFloat(sl.value) : null;
+                _aspectPersist();
+            });
+            sl.addEventListener('input', () => {
+                if (cb.checked) { _aspectTune().hfovDeg = parseFloat(sl.value); _aspectPersist(); }
+            });
+            row.appendChild(sl); wrap.appendChild(row);
+        }
+
+        // live readout
+        _aspectPanelRO = document.createElement('div');
+        _aspectPanelRO.style.cssText = 'margin-top:6px;padding-top:6px;border-top:1px solid rgba(120,150,200,0.25);color:#9fb;font-variant-numeric:tabular-nums;';
+        _aspectPanelRO.textContent = 'aspect — · vFOV —';
+        wrap.appendChild(_aspectPanelRO);
+
+        // buttons
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
+        const mkBtn = (txt, fn) => {
+            const b = document.createElement('button');
+            b.textContent = txt;
+            b.style.cssText = 'flex:1;padding:4px 0;border-radius:5px;border:1px solid rgba(120,150,200,0.4);background:rgba(40,60,90,0.6);color:#cfe0f5;cursor:pointer;font:11px system-ui;';
+            b.addEventListener('click', fn);
+            return b;
+        };
+        btnRow.appendChild(mkBtn('Reset', () => {
+            const t2 = _aspectTune();
+            Object.keys(_ASPECT_DEFAULTS).forEach((k) => { t2[k] = _ASPECT_DEFAULTS[k]; });
+            t2.enabled = true;            // keep panel up after reset
+            _aspectPersist(); _syncAspectPanel();
+        }));
+        btnRow.appendChild(mkBtn('Copy', () => {
+            const t2 = _aspectTune(), out = {};
+            Object.keys(_ASPECT_DEFAULTS).forEach((k) => { out[k] = t2[k]; });
+            const json = JSON.stringify(out, null, 2);
+            try { console.log('[h3d] wide-pane framing values:\n' + json); } catch (e) {}
+            try { if (navigator.clipboard) navigator.clipboard.writeText(json); } catch (e) {}
+        }));
+        wrap.appendChild(btnRow);
+
+        document.body.appendChild(wrap);
+        _aspectPanelEl = wrap;
+        _aspectPanelEl.style.display = 'none';
+    }
+
+    // Push current bridge values back into the panel controls (after Reset or an
+    // external edit). Cheap; only runs on demand.
+    function _syncAspectPanel() {
+        if (!_aspectPanelEl) return;
+        const t = _aspectTune();
+        _aspectPanelEl.querySelectorAll('input[type=checkbox][data-k]').forEach((cb) => {
+            cb.checked = !!t[cb.dataset.k];
+        });
+        _aspectPanelEl.querySelectorAll('input[type=range][data-k]').forEach((sl) => {
+            const k = sl.dataset.k;
+            if (Number.isFinite(t[k])) sl.value = t[k];
+            sl.dispatchEvent(new Event('input'));   // refresh the value label
+        });
+    }
+
+    function _setAspectPanelVisible(on) {
+        _ensureAspectPanel();
+        if (!_aspectPanelEl) return;
+        _aspectPanelEl.style.display = on ? 'block' : 'none';
+        window.__h3dAspectPanelOpen = !!on;        // gates the per-frame readout publish
+        if (on && !_aspectPanelRAF) {
+            const tick = () => {
+                if (!window.__h3dAspectPanelOpen) { _aspectPanelRAF = 0; return; }
+                const ro = window.__h3dAspectReadout;
+                if (_aspectPanelRO && ro && Number.isFinite(ro.aspect)) {
+                    _aspectPanelRO.textContent =
+                        'aspect ' + ro.aspect.toFixed(2) + ' · vFOV ' + ro.vfov.toFixed(1) + '°';
+                }
+                _aspectPanelRAF = requestAnimationFrame(tick);
+            };
+            _aspectPanelRAF = requestAnimationFrame(tick);
+        }
     }
 
     /* ======================================================================
@@ -3498,6 +3760,11 @@
         // that CSS-box drift and re-frame, instead of the user having to
         // un/re-maximize the window.
         let _appliedW = 0, _appliedH = 0;
+        // Last pane aspect (w/h) handed to the camera, cached so camUpdate can
+        // recompute the horizontal-FOV-hold each frame (and react to live
+        // __h3dAspectTune edits) without waiting for a resize. 0 until first
+        // applySize().
+        let _paneAspect = 0;
         // True once applySize() has pinned the .h3d-wrap overlay to the
         // highway canvas's offset box. Stays false while the canvas has no
         // layout yet (init() can run before #highway has a real box, where
@@ -5976,7 +6243,7 @@
             scene = new T.Scene();
             scene.fog = new T.Fog(0x101820, FOG_START * 0.8, FOG_END * 1.2);
 
-            cam = new T.PerspectiveCamera(70, 1, 0.01, FOG_END * 3);
+            cam = new T.PerspectiveCamera(BASE_VFOV, 1, 0.01, FOG_END * 3);
 
             ambLight = new T.AmbientLight(0xffffff, 0.85);
             scene.add(ambLight);
@@ -13915,10 +14182,76 @@
             ctx.restore();
         }
 
+        // Horizontal-FOV-hold ("Hor+"). Returns the vertical fov (deg) the
+        // camera should use for the given pane aspect. With the bridge off (or
+        // absent), or at/under the start aspect, it returns the base vertical
+        // fov unchanged — an exact no-op, so normal panes render identically to
+        // before. Past the start aspect it lowers the vertical fov to keep the
+        // horizontal cone ~constant, so the neck fills an ultra-wide pane
+        // instead of collapsing into a central sliver. Pure + finite-guarded.
+        function effectiveVfov(aspect, tune) {
+            const base = (tune && Number.isFinite(tune.baseVfov)) ? tune.baseVfov : BASE_VFOV;
+            if (!tune || !tune.enabled || !Number.isFinite(aspect) || aspect <= 0) return base;
+            const start = (Number.isFinite(tune.startAspect) && tune.startAspect > 0)
+                ? tune.startAspect : HORPLUS_START_ASPECT;
+            if (aspect <= start) return base;
+            const floor = Number.isFinite(tune.minVfovDeg) ? tune.minVfovDeg : HORPLUS_MIN_VFOV;
+            const DEG = Math.PI / 180;
+            // Held horizontal fov: explicit hfovDeg if given, else the horizontal
+            // cone the base vertical fov produces at the start aspect.
+            const hfov = (Number.isFinite(tune.hfovDeg) && tune.hfovDeg > 0)
+                ? tune.hfovDeg * DEG
+                : 2 * Math.atan(Math.tan(base * DEG / 2) * start);
+            // Vertical fov that reproduces that horizontal cone at this aspect.
+            let vfov = 2 * Math.atan(Math.tan(hfov / 2) / aspect) / DEG;
+            const blend = Number.isFinite(tune.blend) ? Math.max(0, Math.min(1, tune.blend)) : 1;
+            vfov = base + (vfov - base) * blend;            // 0 = base, 1 = full Hor+
+            if (!Number.isFinite(vfov)) return base;
+            return Math.max(floor, Math.min(base, vfov));
+        }
+
         /* ── Camera smooth lerp ──────────────────────────────────────────── */
         function camUpdate(bundle) {
             const bpm = computeBPM(bundle.beats, bundle.currentTime);
             const lerp = CAM_LERP_BASE * Math.max(bpm, 60) / 120;
+
+            // ── Horizontal-FOV-hold + optional wide-pane pose nudges ──
+            // Driven by window.__h3dAspectTune (default off → exact no-op).
+            // _aspectTune() returns the live bridge object, seeded from defaults
+            // + localStorage on first read so a persisted tuning session applies
+            // on load without opening the panel. Every field is finite-coerced.
+            // When disabled (or splitOnly and not in a split) the tune is treated
+            // as null, so effectiveVfov returns the base vertical fov and cam.fov
+            // is restored to it. The fov write is guarded on an actual change so
+            // a steady pane costs nothing.
+            const _aspTune = _aspectTune();
+            const _aspActive = !!(_aspTune && _aspTune.enabled
+                && !(_aspTune.splitOnly && !_ssActive()));
+            const _tune = _aspActive ? _aspTune : null;
+            const _vfov = effectiveVfov(_paneAspect, _tune);
+            if (Number.isFinite(_vfov) && Math.abs(_vfov - cam.fov) > 1e-4) {
+                cam.fov = _vfov;
+                cam.updateProjectionMatrix();
+            }
+            // Publish a live readout for the tuner panel (only while it's open,
+            // so the steady path stays allocation-free). Last pane to render wins
+            // the slot — fine, all panes share the same aspect in a split layout.
+            if (window.__h3dAspectPanelOpen) {
+                const _ro = window.__h3dAspectReadout || (window.__h3dAspectReadout = {});
+                _ro.aspect = _paneAspect; _ro.vfov = _vfov;
+            }
+            // Optional pose nudges (height / dolly / pitch) to chase a low-flat
+            // wide-pane look if fov alone isn't enough. Gated to wide panes and
+            // suppressed while the Camera Director owns the view (it wins).
+            const _startAspect = (_tune && Number.isFinite(_tune.startAspect) && _tune.startAspect > 0)
+                ? _tune.startAspect : HORPLUS_START_ASPECT;
+            const _dirActive = !!(window.__h3dCamCtl && window.__h3dCamCtl.enabled);
+            const _wide = !!(_tune && _paneAspect > _startAspect) && !_dirActive;
+            const _poseHMul = (_wide && Number.isFinite(_tune.heightMul)) ? _tune.heightMul : 1;
+            const _poseDMul = (_wide && Number.isFinite(_tune.distMul)) ? _tune.distMul : 1;
+            const _poseLookYAdd = (_wide && Number.isFinite(_tune.pitchAdd)) ? _tune.pitchAdd * K : 0;
+            const _poseLookZMul = (_wide && Number.isFinite(_tune.lookDepthMul) && _tune.lookDepthMul > 0)
+                ? _tune.lookDepthMul : 1;
 
             curX += (tgtX - curX) * lerp;
             // The fret-row fit guard (end of camUpdate) may dolly the camera back
@@ -13935,6 +14268,9 @@
             const _dMul = CAM_FRAME_D_NEAR + (CAM_FRAME_D_FAR - CAM_FRAME_D_NEAR) * _zt;
             const shoulderOffset = (_leftyCached ? -1 : 1) * 10 * K;
             let _camX = curX + shoulderOffset, _camY = h * _hMul, _camZ = dist * _dMul;
+            // Optional wide-pane pose nudges (default identity → no-op).
+            if (_poseHMul !== 1) _camY *= _poseHMul;
+            if (_poseDMul !== 1) _camZ *= _poseDMul;
             // ── Free-camera user tweaks (orbit / height / zoom / pan) ──
             // Driven by the Camera Director plugin via window.__h3dCamCtl.
             // Layered ON TOP of the auto-framing so note tracking still works.
@@ -13943,7 +14279,7 @@
             // finite number before use so a malformed object can never feed NaN
             // into cam.position / cam.lookAt.
             const _freeCam = window.__h3dCamCtl;
-            const _lookAtZ = -FOCUS_D * 0.35;
+            const _lookAtZ = -FOCUS_D * 0.35 * _poseLookZMul;
             if (_freeCam && _freeCam.enabled) {
                 const _distMul = Number.isFinite(_freeCam.distMul) ? _freeCam.distMul : 1;
                 const _heightMul = Number.isFinite(_freeCam.heightMul) ? _freeCam.heightMul : 1;
@@ -13964,7 +14300,7 @@
             // This lets the camera adapt to any panel aspect ratio automatically.
             const fretMidY = (sY(0) + sY(nStr - 1)) / 2;
             _probe.set(curX, fretMidY, 0);                  // play-line fretboard centre
-            cam.lookAt(curX, curLookY, -FOCUS_D * 0.35);    // tentative look — needed for project()
+            cam.lookAt(curX, curLookY + _poseLookYAdd, _lookAtZ);    // tentative look — needed for project()
             cam.updateMatrixWorld();
             _probe.project(cam);                             // _probe.y → NDC in [-1, 1]
 
@@ -13993,7 +14329,7 @@
                 const _pitch = Number.isFinite(_freeCam.pitch) ? _freeCam.pitch : 0;
                 cam.lookAt(curX + _panX * K, curLookY + (_pitch + _panY) * K, _lookAtZ);
             } else {
-                cam.lookAt(curX, curLookY, _lookAtZ);
+                cam.lookAt(curX, curLookY + _poseLookYAdd, _lookAtZ);
             }
 
             // ── Fret-row fit guard ────────────────────────────────────────────
@@ -14090,6 +14426,10 @@
             cam.aspect = w / h;
             cam.updateProjectionMatrix();
             aspectScale = Math.max(1, REF_ASPECT / Math.max(cam.aspect, 0.5));
+            // Cache the pane aspect for the horizontal-FOV-hold in camUpdate.
+            // cam.fov itself is owned by camUpdate (not set here) so live
+            // __h3dAspectTune edits apply every frame without a resize.
+            _paneAspect = cam.aspect;
             _appliedW = w; _appliedH = h;
         }
 
@@ -14333,6 +14673,7 @@
                 }
                 _destroyed = _isReady = false;
                 _isFocused = true;
+                _registerAspectAbShortcut();   // session-global A/B toggle (self-guarded)
                 const myToken = ++_initToken;
                 highwayCanvas = canvas;
                 _invertedCached = !!(bundle && bundle.inverted);
@@ -14751,6 +15092,8 @@
                 _destroyed = true; _isReady = false; _diagChord = null; _diagPrev = null; _diagLastKey = null; _diagRenderCache.clear();
                 _lastHwW = 0; _lastHwH = 0;
                 _appliedW = 0; _appliedH = 0;
+                _paneAspect = 0;
+                if (cam && cam.fov !== BASE_VFOV) { cam.fov = BASE_VFOV; cam.updateProjectionMatrix(); }
                 _wrapPinned = false;
                 _unsubscribeFocus(); teardown();
                 highwayCanvas = null;

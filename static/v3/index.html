@@ -927,6 +927,15 @@
                     </select>
                 </div>
                 <div class="v3-pop-row">
+                    <span class="v3-pop-label" id="min-scale-label">Min res</span>
+                    <select id="min-scale-select" onchange="highway.setMinRenderScale && highway.setMinRenderScale(parseFloat(this.value))" class="v3-pop-select" aria-labelledby="min-scale-label" title="Minimum auto resolution — how far the highway may lower its resolution to hold the frame rate on heavy scenes. 'Full' disables auto-downscaling, but the Quality selector still caps the maximum (so it's only full resolution at Quality = HD).">
+                        <option value="0.25">25%</option>
+                        <option value="0.5">50%</option>
+                        <option value="0.75">75%</option>
+                        <option value="1">Full</option>
+                    </select>
+                </div>
+                <div class="v3-pop-row">
                     <span class="v3-pop-label" id="scoreboard-label">Scoreboard</span>
                     <select id="scoreboard-select" onchange="setScoreboard(this.value)" class="v3-pop-select" aria-labelledby="scoreboard-label" title="Highway scoreboard">
                         <option value="core" selected>Streak</option>

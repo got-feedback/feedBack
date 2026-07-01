@@ -614,6 +614,54 @@ class MetadataDB:
                 updated_at TEXT
             )
         """)
+        # ── Multi-chart grouping (P5a) ───────────────────────────────────────
+        # A "work" is a song that may be charted by several feedpaks; each chart
+        # stays its own `songs` row (unchanged), but they GROUP under a shared
+        # work_key = normalize(artist+title). Two sparse, never-purged-on-rescan
+        # override tables + one MATERIALIZED read-model so the grid can group
+        # server-side without a query-time GROUP BY (which would kill the keyset
+        # seek / A–Z / virtualization — see query_page).
+        #
+        # chart_group_pref: your chosen "keeper" chart per work (sparse; unset ⇒
+        # auto-pick). Keyed by work_key, NOT filename, so it survives a chart's
+        # rescan; an orphaned preferred (file gone) degrades to auto-pick.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS chart_group_pref (
+                work_key TEXT PRIMARY KEY,
+                preferred_filename TEXT NOT NULL,
+                updated_at TEXT
+            )
+        """)
+        # chart_group_split: "these aren't the same song" escape hatch — a chart
+        # gets its own unique split_key so it stands alone as a singleton work.
+        # Filename-keyed → purged with the song on delete_song.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS chart_group_split (
+                filename TEXT PRIMARY KEY,
+                split_key TEXT NOT NULL,
+                updated_at TEXT
+            )
+        """)
+        # work_display: the MATERIALIZED representative-filter read-model, rebuilt
+        # from songs + the two override tables. One row per song:
+        #   effective_work_key    = split_key if split else work_key
+        #   is_group_representative = 1 for the keeper (pref or auto-pick) of a work
+        #   group_size            = the ⚑ N charts in the work
+        # Grouping-ON is then just `WHERE is_group_representative = 1` (keyset-safe).
+        # A derived cache: filename-keyed, rebuilt on demand (dirty flag) — safe to
+        # drop/rebuild, so it's purged on delete and re-materialized after a scan.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS work_display (
+                filename TEXT PRIMARY KEY,
+                work_key TEXT NOT NULL,
+                effective_work_key TEXT NOT NULL,
+                is_group_representative INTEGER NOT NULL DEFAULT 1,
+                group_size INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_work_display_rep ON work_display(is_group_representative)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_work_display_eff ON work_display(effective_work_key)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_work_display_wk ON work_display(work_key)")
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS loops (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -813,6 +861,9 @@ class MetadataDB:
         self.conn.execute("INSERT OR IGNORE INTO wallet (id) VALUES (1)")
         self.conn.commit()
         self._lock = threading.Lock()
+        # work_display (P5a) is a derived cache; True forces a (re)build on the
+        # first grouped query and after any songs churn (put / delete / rescan).
+        self._work_display_dirty = True
         # One-time repair of pre-fix rows written under URL-encoded filenames
         # (idempotent: a no-op once every row is canonical).
         self._migrate_decode_stat_filenames()
@@ -2315,6 +2366,8 @@ class MetadataDB:
                  meta.get("tuning_offsets", "") or ""),
             )
             self.conn.commit()
+            # A song's identity may have changed → the grouping read-model is stale.
+            self._work_display_dirty = True
 
     def count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM songs WHERE title != ''").fetchone()[0]
@@ -2336,6 +2389,7 @@ class MetadataDB:
             if stale:
                 self.conn.executemany("DELETE FROM songs WHERE filename = ?", [(f,) for f in stale])
                 self.conn.commit()
+                self._work_display_dirty = True   # membership changed → regroup
             return len(stale)
 
     def _estd_set(self) -> set[str]:
@@ -2592,6 +2646,210 @@ class MetadataDB:
                 params += tn
         return where, params
 
+    # ── Multi-chart grouping engine (P5a) ────────────────────────────────────
+    @staticmethod
+    def _norm_token(s, fold_the=False):
+        """Fold a name to a comparison token: strip diacritics + punctuation +
+        whitespace, lowercase, optionally drop a leading 'the ' (artist names)."""
+        import re
+        import unicodedata
+        s = unicodedata.normalize("NFKD", str(s or ""))
+        s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+        if fold_the:
+            s = re.sub(r"^the\s+", "", s)
+        return re.sub(r"[^a-z0-9]+", "", s)
+
+    @classmethod
+    def _work_key(cls, artist, title) -> str:
+        """Identity of a musical WORK = normalize(artist)+'|'+normalize(title).
+        Recording-MBID identity is a later enrichment upgrade (§3); this text key
+        groups the common 'same song, several charts' case now."""
+        return cls._norm_token(artist, fold_the=True) + "|" + cls._norm_token(title)
+
+    def _alias_map_if_exists(self) -> dict:
+        """{raw_artist_lower: canonical} from P4's artist_alias when that table is
+        present, so work_key groups across artist aliases (ACDC/AC/DC) once P4 is
+        merged; {} (→ raw artist) when it isn't. Forward-compatible, no hard P4 dep."""
+        try:
+            rows = self.conn.execute("SELECT raw_name, canonical_name FROM artist_alias").fetchall()
+        except Exception:
+            return {}
+        return {r[0].lower(): r[1] for r in rows}
+
+    @staticmethod
+    def _pick_representative(members: list, prefs: dict) -> str:
+        """The keeper chart of a group: the user's chart_group_pref when its file
+        is present, else auto-pick = most-complete (arrangements) → most-played →
+        newest → filename. `members` = dicts {fn, wk, arr, plays, mtime}."""
+        if members:
+            pref = prefs.get(members[0]["wk"])
+            if pref and any(m["fn"] == pref for m in members):
+                return pref
+        best = min(members, key=lambda m: (-m["arr"], -m["plays"], -m["mtime"], m["fn"]))
+        return best["fn"]
+
+    def _load_work_members(self):
+        """Read songs + overrides → ({effective_work_key: [member dicts]}, prefs)."""
+        amap = self._alias_map_if_exists()
+        splits = dict(self.conn.execute(
+            "SELECT filename, split_key FROM chart_group_split").fetchall())
+        prefs = dict(self.conn.execute(
+            "SELECT work_key, preferred_filename FROM chart_group_pref").fetchall())
+        plays = dict(self.conn.execute(
+            "SELECT filename, SUM(plays) FROM song_stats GROUP BY filename").fetchall())
+        groups: dict = {}
+        for fn, artist, title, arr_json, mtime in self.conn.execute(
+                "SELECT filename, artist, title, arrangements, mtime FROM songs WHERE title != ''"):
+            wk = self._work_key(amap.get((artist or "").lower(), artist), title)
+            eff = splits.get(fn) or wk
+            try:
+                arr = len(json.loads(arr_json)) if arr_json else 0
+            except Exception:
+                arr = 0
+            groups.setdefault(eff, []).append(
+                {"fn": fn, "wk": wk, "arr": arr, "plays": int(plays.get(fn) or 0), "mtime": mtime or 0})
+        return groups, prefs
+
+    def rebuild_work_display(self) -> None:
+        """Full re-materialization of work_display from songs + the override
+        tables. O(n) — cheap enough to run lazily after any songs churn."""
+        with self._lock:
+            groups, prefs = self._load_work_members()
+            out = []
+            for eff, members in groups.items():
+                rep = self._pick_representative(members, prefs)
+                n = len(members)
+                for m in members:
+                    out.append((m["fn"], m["wk"], eff, 1 if m["fn"] == rep else 0, n))
+            self.conn.execute("DELETE FROM work_display")
+            if out:
+                self.conn.executemany(
+                    "INSERT INTO work_display (filename, work_key, effective_work_key, "
+                    "is_group_representative, group_size) VALUES (?, ?, ?, ?, ?)", out)
+            self.conn.commit()
+            self._work_display_dirty = False
+
+    def _ensure_work_display(self) -> None:
+        """(Re)build the read-model when a change marked it dirty (or it's never
+        been built). Called at the top of every grouped query."""
+        if getattr(self, "_work_display_dirty", True):
+            self.rebuild_work_display()
+
+    def work_key_for(self, filename: str):
+        """work_key of a song (from its current artist+title), or None if absent."""
+        row = self.conn.execute(
+            "SELECT artist, title FROM songs WHERE filename = ?", (filename,)).fetchone()
+        if not row:
+            return None
+        amap = self._alias_map_if_exists()
+        return self._work_key(amap.get((row[0] or "").lower(), row[0]), row[1])
+
+    def set_chart_preferred(self, work_key: str, filename: str) -> None:
+        """Pick the keeper chart of a work. Incremental: re-flips
+        is_group_representative within the work's (non-split) group only —
+        group_size is unchanged — so no full rebuild."""
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO chart_group_pref (work_key, preferred_filename, updated_at) "
+                "VALUES (?, ?, datetime('now')) "
+                "ON CONFLICT(work_key) DO UPDATE SET "
+                "preferred_filename = excluded.preferred_filename, updated_at = excluded.updated_at",
+                (work_key, filename))
+            if not self._work_display_dirty:
+                members = [r[0] for r in self.conn.execute(
+                    "SELECT filename FROM work_display WHERE effective_work_key = ?",
+                    (work_key,)).fetchall()]
+                if filename in members:
+                    self.conn.execute(
+                        "UPDATE work_display SET is_group_representative = "
+                        "CASE WHEN filename = ? THEN 1 ELSE 0 END "
+                        "WHERE effective_work_key = ?", (filename, work_key))
+                else:
+                    # pref target isn't a current member (orphan/split) — reconcile
+                    # on the next lazy rebuild rather than leave it half-applied.
+                    self._work_display_dirty = True
+            self.conn.commit()
+
+    def clear_chart_preferred(self, work_key: str) -> None:
+        """Reset a work to auto-pick; lazy full rebuild."""
+        with self._lock:
+            self.conn.execute("DELETE FROM chart_group_pref WHERE work_key = ?", (work_key,))
+            self._work_display_dirty = True
+            self.conn.commit()
+
+    def split_chart(self, filename: str) -> None:
+        """'These aren't the same' — give a chart a unique split_key so it stands
+        alone as a singleton work. Lazy full rebuild (the old group's membership +
+        sizes shift)."""
+        wk = self.work_key_for(filename) or filename
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO chart_group_split (filename, split_key, updated_at) "
+                "VALUES (?, ?, datetime('now')) "
+                "ON CONFLICT(filename) DO UPDATE SET "
+                "split_key = excluded.split_key, updated_at = excluded.updated_at",
+                (filename, f"{wk}#split#{filename}"))
+            self._work_display_dirty = True
+            self.conn.commit()
+
+    def unsplit_chart(self, filename: str) -> None:
+        """Undo a split — the chart rejoins its work. Lazy full rebuild."""
+        with self._lock:
+            self.conn.execute("DELETE FROM chart_group_split WHERE filename = ?", (filename,))
+            self._work_display_dirty = True
+            self.conn.commit()
+
+    def work_charts(self, work_key: str) -> dict:
+        """Every chart in a work (P5b) — the Charts drawer's data. Members are the
+        work's CURRENT (non-split) group: work_display rows whose effective_work_key
+        matches. Each carries its effective title/artist, arrangements, tuning,
+        format, best accuracy, and the representative/preferred flags so the drawer
+        can label 'Preferred — your pick' vs 'Preferred (auto)'."""
+        self._ensure_work_display()
+        amap = self._alias_map_if_exists()
+        pref_row = self.conn.execute(
+            "SELECT preferred_filename FROM chart_group_pref WHERE work_key = ?", (work_key,)).fetchone()
+        pref_fn = pref_row[0] if pref_row else None
+        rows = self.conn.execute(
+            "SELECT wd.filename, wd.is_group_representative, s.title, s.artist, s.album, s.year, "
+            "s.arrangements, s.tuning_name, s.tuning, s.format, "
+            "(SELECT MAX(best_accuracy) FROM song_stats st WHERE st.filename = wd.filename AND st.plays > 0) "
+            "FROM work_display wd JOIN songs s ON s.filename = wd.filename "
+            "WHERE wd.effective_work_key = ? "
+            "ORDER BY wd.is_group_representative DESC, s.title COLLATE NOCASE, s.filename",
+            (work_key,)).fetchall()
+        charts = []
+        for fn, is_rep, title, artist, album, year, arr_json, tuning_name, tuning, fmt, best in rows:
+            try:
+                arrangements = _ensure_smart_names(json.loads(arr_json) if arr_json else [])
+            except Exception:
+                arrangements = []
+            charts.append({
+                "filename": fn,
+                "title": title or fn,
+                "artist": amap.get((artist or "").lower(), artist) or "",
+                "album": album or "", "year": year or "",
+                "arrangements": arrangements,
+                "tuning_name": tuning_name or "", "tuning": tuning or "",
+                "format": fmt or "archive",
+                "best_accuracy": best,
+                "is_representative": bool(is_rep),
+                "is_preferred": (fn == pref_fn),
+            })
+        return {
+            "work_key": work_key,
+            "count": len(charts),
+            "preferred_filename": pref_fn,
+            # Whether the keeper is your explicit pick or the auto-pick — drives the
+            # drawer's "Preferred — your pick" vs "Preferred (auto)" label.
+            "preferred_source": "user" if pref_fn else "auto",
+            "charts": charts,
+        }
+
+    # Predicate that narrows a query to one representative chart per work — the
+    # keyset-safe grouping filter (see query_page / query_stats).
+    _GROUP_REP_PREDICATE = " AND filename IN (SELECT filename FROM work_display WHERE is_group_representative = 1)"
+
     def query_page(self, q: str = "", page: int = 0, size: int = 24,
                    sort: str = "artist", direction: str = "asc",
                    favorites_only: bool = False,
@@ -2608,13 +2866,20 @@ class MetadataDB:
                    tags_has: list[str] | None = None,
                    user_difficulty_in: list[str] | None = None,
                    after: str | None = None,
+                   group: bool = False,
                    naming_mode: str = "legacy") -> tuple[list[dict], int]:
         """Server-side paginated search. Returns (songs, total_count).
 
         `after` is an opaque keyset cursor (the last row of the previous page).
         When supplied and the sort can keyset, the page is fetched with a
         WHERE-seek instead of OFFSET — O(page), independent of depth. Unknown
-        sorts / bad cursors fall back to OFFSET, so it's always safe."""
+        sorts / bad cursors fall back to OFFSET, so it's always safe.
+
+        `group` collapses a work's charts to one card (P5a): it adds a single
+        `WHERE is_group_representative = 1` predicate over the materialized
+        work_display, so the total counts WORKS not charts and the keyset seek /
+        sort / A–Z all stay correct over the representative subset. Each grouped
+        row carries `chart_count` (the ⚑ N)."""
         where, params = self._build_where(
             q=q, favorites_only=favorites_only, format_filter=format_filter,
             artist_filter=artist_filter, album_filter=album_filter,
@@ -2624,6 +2889,9 @@ class MetadataDB:
             tags_has=tags_has, user_difficulty_in=user_difficulty_in,
             naming_mode=naming_mode,
         )
+        if group:
+            self._ensure_work_display()
+            where += self._GROUP_REP_PREDICATE
 
         sort_map = {
             "artist": "artist COLLATE NOCASE", "artist-desc": "artist COLLATE NOCASE DESC",
@@ -2750,6 +3018,18 @@ class MetadataDB:
             s["tags"] = tgm.get(s["filename"], [])
             if amap:
                 s["artist"] = amap.get((s.get("artist") or "").lower(), s.get("artist"))
+        # Grouped rows carry the ⚑ N (chart_count) + the work_key from the
+        # materialized read-model, so the card can render the "N charts" chip and
+        # address the Charts drawer (GET /api/work/{work_key}/charts) without a
+        # second request.
+        if group and fns:
+            ph = ",".join("?" * len(fns))
+            wd = {r[0]: (r[1], r[2]) for r in self.conn.execute(
+                f"SELECT filename, group_size, work_key FROM work_display WHERE filename IN ({ph})", fns).fetchall()}
+            for s in songs:
+                gs, wk = wd.get(s["filename"], (1, None))
+                s["chart_count"] = gs
+                s["work_key"] = wk
         return songs, total
 
     def query_artists(self, letter: str = "", q: str = "",
@@ -2861,10 +3141,16 @@ class MetadataDB:
                     tunings: list[str] | None = None,
                     sort: str = "artist",
                     want_sort_letters: bool = False,
+                    group: bool = False,
                     naming_mode: str = "legacy") -> dict:
         """Aggregate stats for the letter bar. Accepts the same filter
         params as query_page so the letter counts stay synchronized
         with the grid when filters are active.
+
+        `group` (P5a) restricts every count to one representative chart per work
+        (the same predicate query_page uses), so `total_songs` and the jump-rail
+        `sort_letters` count WORKS not charts and stay in lockstep with the
+        grouped grid.
 
         `sort` selects the column the v3 jump rail's `sort_letters`
         breakdown keys on (artist for artist sorts, title for title
@@ -2884,6 +3170,9 @@ class MetadataDB:
             stems_has=stems_has, stems_lacks=stems_lacks,
             has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode,
         )
+        if group:
+            self._ensure_work_display()
+            where += self._GROUP_REP_PREDICATE
         total = self.conn.execute(f"SELECT COUNT(*) FROM songs {where}", params).fetchone()[0]
         # NOCASE collation here mirrors `query_artists` and the per-
         # letter `COUNT(DISTINCT artist COLLATE NOCASE)` below — without
@@ -5410,6 +5699,14 @@ def delete_song(filename: str):
             # Personal difficulty / notes / tags for this song (we hold the
             # lock, so purge is lock-free).
             meta_db.purge_song_user_data(cache_key)
+            # Multi-chart grouping (P5a): drop this chart's split + read-model rows,
+            # and any preferred-chart pointer that named it (the work re-auto-picks).
+            # work_key-keyed prefs for OTHER charts survive. Mark the read-model
+            # dirty so the affected work regroups on the next grouped query.
+            meta_db.conn.execute("DELETE FROM chart_group_split WHERE filename = ?", (cache_key,))
+            meta_db.conn.execute("DELETE FROM work_display WHERE filename = ?", (cache_key,))
+            meta_db.conn.execute("DELETE FROM chart_group_pref WHERE preferred_filename = ?", (cache_key,))
+            meta_db._work_display_dirty = True
             meta_db.conn.commit()
 
         _invalidate_song_caches(cache_key)
@@ -5512,7 +5809,7 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
                        stems_has: str = "", stems_lacks: str = "",
                        has_lyrics: str = "", tunings: str = "", provider: str = "local",
                        mastery: str = "", tags: str = "", user_difficulty: str = "",
-                       after: str = "", naming_mode: str = "legacy"):
+                       after: str = "", group: int = 0, naming_mode: str = "legacy"):
     """Paginated library search through the selected library provider.
 
     `after` is an opaque keyset cursor (feedBack#636 item 3): pass back the
@@ -5535,6 +5832,7 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
         sort=sort,
         direction=dir,
         after=((after or None) if is_local else None),
+        group=bool(group),
         naming_mode=naming_mode,
         mastery=_split_csv(mastery),
         tags_has=_split_csv(tags),
@@ -5552,6 +5850,58 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
                    if (is_local and songs) else None)
     return {"songs": songs, "total": total, "page": page, "size": size,
             "next_cursor": next_cursor}
+
+
+# ── Multi-chart work grouping API (P5b) ──────────────────────────────────────
+# Read + manage the charts of a work (the P5d Charts drawer consumes this). The
+# grouping engine lives in MetadataDB (P5a); these are its HTTP surface. Local
+# library only. NOTE: a scoped "work changed" repaint broadcast for OTHER open
+# views is deferred to P5d — there's no server-side library event bus today, and
+# the drawer updates itself from these responses.
+
+@app.get("/api/work/{work_key:path}/charts")
+def api_get_work_charts(work_key: str):
+    """All charts in a work + which is the keeper (your pick vs auto-pick)."""
+    return meta_db.work_charts(work_key)
+
+
+@app.put("/api/work/{work_key:path}/preferred")
+def api_set_work_preferred(work_key: str, data: dict):
+    """Set the keeper chart of a work: body {filename}. The filename must be a
+    current member of the work. Returns the refreshed chart list."""
+    fn = (data.get("filename") or "").strip()
+    if not fn:
+        return JSONResponse({"error": "filename is required"}, 400)
+    members = {c["filename"] for c in meta_db.work_charts(work_key)["charts"]}
+    if fn not in members:
+        return JSONResponse({"error": "filename is not a chart of this work"}, 400)
+    meta_db.set_chart_preferred(work_key, fn)
+    return meta_db.work_charts(work_key)
+
+
+@app.delete("/api/work/{work_key:path}/preferred")
+def api_reset_work_preferred(work_key: str):
+    """Reset a work to auto-pick (drop the explicit preferred)."""
+    meta_db.clear_chart_preferred(work_key)
+    return meta_db.work_charts(work_key)
+
+
+@app.post("/api/chart/{filename:path}/split")
+def api_split_chart(filename: str):
+    """'These aren't the same song' — split this chart out as its own singleton
+    work. Under /api/chart (NOT /api/song) so the DELETE /api/song/{path}
+    catch-all can't shadow it."""
+    key = meta_db._canonical_song_filename(filename)
+    meta_db.split_chart(key)
+    return {"ok": True, "filename": key}
+
+
+@app.post("/api/chart/{filename:path}/unsplit")
+def api_unsplit_chart(filename: str):
+    """Undo a split — rejoin the chart to its work."""
+    key = meta_db._canonical_song_filename(filename)
+    meta_db.unsplit_chart(key)
+    return {"ok": True, "filename": key}
 
 
 @app.get("/api/library/artists")
@@ -5591,12 +5941,13 @@ async def library_stats(favorites: int = 0, q: str = "", format: str = "",
                         stems_has: str = "", stems_lacks: str = "",
                         has_lyrics: str = "", tunings: str = "", provider: str = "local",
                         sort: str = "artist", sort_letters: int = 0,
-                        naming_mode: str = "legacy"):
+                        group: int = 0, naming_mode: str = "legacy"):
     """Aggregate stats for the UI. Accepts the same filter params as
     /api/library so the letter bar mirrors the active grid filter set.
     `sort` selects the column the jump rail's `sort_letters` keys on;
     `sort_letters=1` opts into that breakdown (the rail), so non-rail
-    callers skip the extra per-letter aggregate."""
+    callers skip the extra per-letter aggregate. `group=1` counts works not
+    charts (mirrors the grouped grid)."""
     library_provider = _get_library_provider(provider)
     _require_library_provider_capability(library_provider, "library.read")
     return await _call_library_provider_async(
@@ -5605,6 +5956,7 @@ async def library_stats(favorites: int = 0, q: str = "", format: str = "",
         naming_mode=naming_mode,
         sort=sort,
         want_sort_letters=bool(sort_letters),
+        group=bool(group),
         **_library_filter_args(
             q=q, favorites=favorites, format=format,
             artist=artist, album=album,

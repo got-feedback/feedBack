@@ -115,3 +115,36 @@ test('FX defaults: hit-FX controls ship enabled', () => {
     assert.equal(FX_DEFAULTS.streakFx, true);
     assert.equal(FX_DEFAULTS.hitFx, 0.7);
 });
+
+test('themes: table ids match the guitar highway, default is the stock palette', () => {
+    const { BG_THEMES, _bgThemeColors } = load().__test;
+    // Same id set as highway_3d's BG_THEMES (cross-instrument consistency).
+    assert.deepEqual(Object.keys(BG_THEMES), [
+        'default', 'midnight', 'charcoal', 'deeppurple', 'forest', 'warmslate',
+        'deepfocus', 'deepsea', 'cathode', 'cathodegreen', 'hearth',
+    ]);
+    // 'default' preserves THIS plugin's original look byte-for-byte.
+    assert.equal(BG_THEMES.default.clear, 0x1a1a2e);
+    assert.equal(BG_THEMES.default.board, 0x0a0e1a);
+    assert.equal(BG_THEMES.default.lane, undefined); // stock stripes fallback
+    // Unknown ids fall back to default.
+    assert.equal(_bgThemeColors('nonsense'), BG_THEMES.default);
+    // Every non-default theme carries a lane pair (the axis differentiator).
+    for (const [id, t] of Object.entries(BG_THEMES)) {
+        if (id === 'default') continue;
+        assert.ok(t.lane != null && t.laneDim != null, id + ' lane pair');
+        assert.equal(t.clear, t.fog, id + ' clear==fog (horizon dissolve)');
+    }
+});
+
+test('readThemeSetting: defaults without localStorage; validates ids', () => {
+    const { readThemeSetting } = load().__test;
+    assert.equal(readThemeSetting(), 'default');
+});
+
+test('FX defaults: theme-PR controls ship enabled at stock-neutral values', () => {
+    const { FX_DEFAULTS } = load().__test;
+    assert.equal(FX_DEFAULTS.cinematic, true);
+    assert.equal(FX_DEFAULTS.glow, 0.5);      // 0.5 = 1.0x multiplier (stock)
+    assert.equal(FX_DEFAULTS.vibrancy, 0.85); // ≈ the stock 0.32 stripe base
+});

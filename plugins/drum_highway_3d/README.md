@@ -78,6 +78,10 @@ tunes one of these, mirror the change here (and in `keys_highway_3d`):
 - `_timingHex()` — early/late/on-time feedback colors (green/cyan/amber)
 - `_ssActive()` — host splitscreen probe (minus the guitar's focus-API
   checks, which it needs for input routing and we don't)
+- `BG_THEMES` / `_bgThemeColors()` — the scene theme table (same ids/values
+  as the guitar's, except `default` which is this plugin's original
+  palette); one pick drives both of the guitar's background/highway axes
+- `_applyCinematic()` — ambient/key rebalance (values tuned per plugin)
 
 ## Why a separate plugin (vs. drum mode inside highway_3d)?
 

@@ -563,6 +563,34 @@ class MetadataDB:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_tuning_sort_key ON songs(tuning_sort_key)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_year ON songs(year)")
         self.conn.execute("CREATE TABLE IF NOT EXISTS favorites (filename TEXT PRIMARY KEY)")
+        # Personal, per-song metadata that must NEVER travel in the shared
+        # feedpak file: a light 1–5 user-difficulty (planning only — distinct
+        # from the authored 1–10 difficulty bands) + freeform notes. Likes are
+        # NOT here — they stay the existing `favorites` heart (Christian's call).
+        # A SEPARATE table (not `songs` columns) so a rescan's
+        # `INSERT OR REPLACE INTO songs` can't wipe it; keyed by the same on-disk
+        # filename as every other personal table. Additive + idempotent.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS song_user_meta (
+                filename TEXT PRIMARY KEY,
+                user_difficulty INTEGER,   -- 1..5, NULL = unset
+                notes TEXT,
+                updated_at TEXT
+            )
+        """)
+        # Free-form personal practice tags ("warm-ups", "riffs to nail") — an
+        # intent practice-set primitive (Play-all-over-a-tag comes later). Tags
+        # are normalized lowercase on write so "Rock"/"rock" don't split. Peer
+        # of song_user_meta; same never-clobber rationale.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS song_tags (
+                filename TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                created_at TEXT,
+                PRIMARY KEY (filename, tag)
+            )
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_song_tags_tag ON song_tags(tag COLLATE NOCASE)")
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS loops (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -859,6 +887,113 @@ class MetadataDB:
                 self.conn.execute("INSERT OR IGNORE INTO favorites VALUES (?)", (filename,))
                 self.conn.commit()
                 return True
+
+    # ── Personal per-song metadata: user-difficulty / notes / tags ───────────
+    # All keyed by the on-disk `songs` filename and kept OUT of the shared
+    # feedpak file. Likes are the `favorites` heart, deliberately NOT duplicated
+    # here. Reads are lock-free (WAL); writes take self._lock like the rest.
+    def get_song_user_meta(self, filename: str) -> dict:
+        """{'user_difficulty', 'notes', 'tags'} for one song (tags sorted)."""
+        row = self.conn.execute(
+            "SELECT user_difficulty, notes FROM song_user_meta WHERE filename = ?",
+            (filename,)).fetchone()
+        tags = [r[0] for r in self.conn.execute(
+            "SELECT tag FROM song_tags WHERE filename = ? ORDER BY tag COLLATE NOCASE",
+            (filename,)).fetchall()]
+        return {
+            "user_difficulty": (row[0] if row else None),
+            "notes": ((row[1] if row else None) or ""),
+            "tags": tags,
+        }
+
+    def set_song_user_meta(self, filename: str, *,
+                           user_difficulty="__keep__", notes="__keep__") -> dict:
+        """Partial upsert of the personal fields. Pass a value to set it, None to
+        clear it, or leave it out (sentinel `__keep__`) to preserve the current
+        one. When nothing personal remains the row is dropped so an
+        unset-everything leaves no empty shell. Returns the merged meta."""
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT user_difficulty, notes FROM song_user_meta WHERE filename = ?",
+                (filename,)).fetchone()
+            cur_diff = cur[0] if cur else None
+            cur_notes = cur[1] if cur else None
+            new_diff = cur_diff if user_difficulty == "__keep__" else user_difficulty
+            new_notes = cur_notes if notes == "__keep__" else notes
+            if new_diff is None and not (new_notes or "").strip():
+                self.conn.execute("DELETE FROM song_user_meta WHERE filename = ?", (filename,))
+            else:
+                self.conn.execute(
+                    "INSERT INTO song_user_meta (filename, user_difficulty, notes, updated_at) "
+                    "VALUES (?, ?, ?, datetime('now')) "
+                    "ON CONFLICT(filename) DO UPDATE SET "
+                    "user_difficulty = excluded.user_difficulty, "
+                    "notes = excluded.notes, updated_at = excluded.updated_at",
+                    (filename, new_diff, (new_notes or None)))
+            self.conn.commit()
+        return self.get_song_user_meta(filename)
+
+    def set_song_tags(self, filename: str, tags) -> list:
+        """Replace ALL of a song's tags with the given set (each normalized;
+        blanks + case-dupes dropped). Full-replace so the whole personal-meta
+        blob edits as a unit. Returns the stored tag list (sorted, like reads)."""
+        norm: list = []
+        seen: set = set()
+        for t in (tags or []):
+            nt = _normalize_tag(t)
+            if nt and nt not in seen:
+                seen.add(nt)
+                norm.append(nt)
+        with self._lock:
+            self.conn.execute("DELETE FROM song_tags WHERE filename = ?", (filename,))
+            if norm:
+                self.conn.executemany(
+                    "INSERT OR IGNORE INTO song_tags (filename, tag, created_at) "
+                    "VALUES (?, ?, datetime('now'))",
+                    [(filename, t) for t in norm])
+            self.conn.commit()
+        return self.get_song_user_meta(filename)["tags"]
+
+    def all_tags(self) -> list:
+        """[{tag, count}] over songs that still exist, most-used first — powers
+        the tag filter UI. Excludes tags whose only songs were deleted."""
+        rows = self.conn.execute(
+            "SELECT tag, COUNT(*) c FROM song_tags "
+            "WHERE filename IN (SELECT filename FROM songs) "
+            "GROUP BY tag ORDER BY c DESC, tag COLLATE NOCASE").fetchall()
+        return [{"tag": r[0], "count": r[1]} for r in rows]
+
+    def user_meta_map(self, filenames) -> dict:
+        """Batch {filename: user_difficulty} for a page of rows (set values
+        only). Lets query_page embed difficulty without an N+1."""
+        fns = list(filenames)
+        if not fns:
+            return {}
+        ph = ",".join("?" * len(fns))
+        rows = self.conn.execute(
+            f"SELECT filename, user_difficulty FROM song_user_meta "
+            f"WHERE filename IN ({ph}) AND user_difficulty IS NOT NULL", fns).fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    def tags_map(self, filenames) -> dict:
+        """Batch {filename: [tags]} for a page of rows."""
+        fns = list(filenames)
+        if not fns:
+            return {}
+        ph = ",".join("?" * len(fns))
+        rows = self.conn.execute(
+            f"SELECT filename, tag FROM song_tags WHERE filename IN ({ph}) "
+            f"ORDER BY tag COLLATE NOCASE", fns).fetchall()
+        out: dict = {}
+        for fn, tag in rows:
+            out.setdefault(fn, []).append(tag)
+        return out
+
+    def purge_song_user_data(self, filename: str) -> None:
+        """Drop all personal rows for a deleted song. Called by delete_song
+        INSIDE the caller's `meta_db._lock` — must not re-acquire the lock."""
+        self.conn.execute("DELETE FROM song_user_meta WHERE filename = ?", (filename,))
+        self.conn.execute("DELETE FROM song_tags WHERE filename = ?", (filename,))
 
     # ── Player profile (fee[dB]ack v0.3.0) ─────────────────────────────────
     def get_profile(self) -> dict:
@@ -1930,6 +2065,8 @@ class MetadataDB:
                      has_lyrics: int | None = None,
                      tunings: list[str] | None = None,
                      mastery: list[str] | None = None,
+                     tags_has: list[str] | None = None,
+                     user_difficulty_in: list[str] | None = None,
                      naming_mode: str = "legacy") -> tuple[str, list]:
         """Shared WHERE-clause builder for query_page / query_artists /
         query_stats. Returns (where_sql, params). Leading 'WHERE' is
@@ -1961,6 +2098,29 @@ class MetadataDB:
             _sel = [_bands[b] for b in mastery if b in _bands]
             if _sel:
                 where += " AND (" + " OR ".join(_sel) + ")"
+        # Personal practice tags (song_tags) — any-of. EXISTS-style IN keeps it a
+        # predicate on `songs` (keyset-safe, no row multiplication). Normalized to
+        # match how tags are stored.
+        _tags = [t for t in (_normalize_tag(x) for x in (tags_has or [])) if t]
+        if _tags:
+            ph = ",".join(["?"] * len(_tags))
+            where += (" AND filename IN (SELECT filename FROM song_tags "
+                      f"WHERE tag IN ({ph}))")
+            params += _tags
+        # Personal user-difficulty (song_user_meta) — any-of over the 1..5 set.
+        _diffs = []
+        for d in (user_difficulty_in or []):
+            try:
+                di = int(d)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= di <= 5:
+                _diffs.append(di)
+        if _diffs:
+            ph = ",".join(["?"] * len(_diffs))
+            where += (" AND filename IN (SELECT filename FROM song_user_meta "
+                      f"WHERE user_difficulty IN ({ph}))")
+            params += _diffs
         if q:
             where += " AND (title LIKE ? COLLATE NOCASE OR artist LIKE ? COLLATE NOCASE OR album LIKE ? COLLATE NOCASE)"
             params += [f"%{q}%"] * 3
@@ -2114,6 +2274,8 @@ class MetadataDB:
                    has_lyrics: int | None = None,
                    tunings: list[str] | None = None,
                    mastery: list[str] | None = None,
+                   tags_has: list[str] | None = None,
+                   user_difficulty_in: list[str] | None = None,
                    after: str | None = None,
                    naming_mode: str = "legacy") -> tuple[list[dict], int]:
         """Server-side paginated search. Returns (songs, total_count).
@@ -2127,7 +2289,9 @@ class MetadataDB:
             artist_filter=artist_filter, album_filter=album_filter,
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings, mastery=mastery, naming_mode=naming_mode,
+            has_lyrics=has_lyrics, tunings=tunings, mastery=mastery,
+            tags_has=tags_has, user_difficulty_in=user_difficulty_in,
+            naming_mode=naming_mode,
         )
 
         sort_map = {
@@ -2237,6 +2401,16 @@ class MetadataDB:
                 "tuning_offsets": r[14] or "",
                 "has_estd": r[0] in estd, "favorite": r[0] in favs,
             })
+        # Personal layer (difficulty + tags) rides along like `favorite`, so a
+        # card can badge it without a second request. Notes stay OUT of the list
+        # payload (they can be long) — fetch per-song via /user-meta. Batched to
+        # avoid an N+1 over the page.
+        fns = [s["filename"] for s in songs]
+        udm = self.user_meta_map(fns)
+        tgm = self.tags_map(fns)
+        for s in songs:
+            s["user_difficulty"] = udm.get(s["filename"])
+            s["tags"] = tgm.get(s["filename"], [])
         return songs, total
 
     def query_artists(self, letter: str = "", q: str = "",
@@ -4887,6 +5061,9 @@ def delete_song(filename: str):
             # surfacing in stats / recent / continue / playlists immediately.
             meta_db.conn.execute("DELETE FROM song_stats WHERE filename = ?", (cache_key,))
             meta_db.conn.execute("DELETE FROM playlist_songs WHERE filename = ?", (cache_key,))
+            # Personal difficulty / notes / tags for this song (we hold the
+            # lock, so purge is lock-free).
+            meta_db.purge_song_user_data(cache_key)
             meta_db.conn.commit()
 
         _invalidate_song_caches(cache_key)
@@ -4911,6 +5088,15 @@ def _split_csv(raw: str) -> list[str]:
     if not raw:
         return []
     return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+def _normalize_tag(tag) -> str:
+    """Canonical form for a personal practice tag: trimmed, lowercased,
+    internal whitespace collapsed, length-capped. Lowercasing is what keeps
+    "Rock"/"rock" from splitting into two tags. Non-strings → ''."""
+    if not isinstance(tag, str):
+        return ""
+    return " ".join(tag.strip().lower().split())[:60]
 
 
 def _parse_has_lyrics(raw: str) -> int | None:
@@ -4979,7 +5165,8 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
                        arrangements_has: str = "", arrangements_lacks: str = "",
                        stems_has: str = "", stems_lacks: str = "",
                        has_lyrics: str = "", tunings: str = "", provider: str = "local",
-                       mastery: str = "", after: str = "", naming_mode: str = "legacy"):
+                       mastery: str = "", tags: str = "", user_difficulty: str = "",
+                       after: str = "", naming_mode: str = "legacy"):
     """Paginated library search through the selected library provider.
 
     `after` is an opaque keyset cursor (feedBack#636 item 3): pass back the
@@ -5004,6 +5191,8 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
         after=((after or None) if is_local else None),
         naming_mode=naming_mode,
         mastery=_split_csv(mastery),
+        tags_has=_split_csv(tags),
+        user_difficulty_in=_split_csv(user_difficulty),
         **_library_filter_args(
             q=q, favorites=favorites, format=format,
             artist=artist, album=album,
@@ -5099,6 +5288,72 @@ def toggle_favorite(data: dict):
         return {"error": "No filename"}
     new_state = meta_db.toggle_favorite(filename)
     return {"favorite": new_state}
+
+
+# ── Personal per-song metadata (difficulty / notes / tags) ───────────────────
+# The local, never-shared layer. Distinct from POST /api/song/{f}/meta, which
+# writes catalog fields (title/artist/album/year) BACK INTO the feedpak file;
+# these endpoints are DB-only and never touch the file. Likes stay the heart
+# (POST /api/favorites/toggle).
+
+@app.get("/api/song/{filename:path}/user-meta")
+def get_song_user_meta(filename: str):
+    """Read {user_difficulty, notes, tags} for one song."""
+    return meta_db.get_song_user_meta(meta_db._canonical_song_filename(filename))
+
+
+@app.put("/api/song/{filename:path}/user-meta")
+def put_song_user_meta(filename: str, data: dict):
+    """Partial update. Send any of: `user_difficulty` (int 1–5, or null/"" to
+    clear), `notes` (string, or null to clear), `tags` (a full-replace array of
+    strings). Omitted keys are preserved. Returns the merged meta.
+
+    Tag removal is a full-replace `tags` array (send the new set) rather than a
+    granular DELETE sub-route, because `DELETE /api/song/{filename:path}` already
+    owns every DELETE under /api/song and would shadow it."""
+    key = meta_db._canonical_song_filename(filename)
+    kwargs: dict = {}
+    if "user_difficulty" in data:
+        v = data["user_difficulty"]
+        if v is None or v == "":
+            kwargs["user_difficulty"] = None
+        else:
+            # Reject bools (int subclass) and non-integral floats so 2.5 / true
+            # can't silently truncate into a valid band.
+            if isinstance(v, bool) or (isinstance(v, float) and not v.is_integer()):
+                return JSONResponse({"error": "user_difficulty must be an integer 1–5 or null"}, 400)
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "user_difficulty must be an integer 1–5 or null"}, 400)
+            if not (1 <= iv <= 5):
+                return JSONResponse({"error": "user_difficulty must be 1–5 or null"}, 400)
+            kwargs["user_difficulty"] = iv
+    if "notes" in data:
+        n = data["notes"]
+        if n is None:
+            kwargs["notes"] = None
+        elif isinstance(n, str):
+            kwargs["notes"] = n.strip()[:4000]
+        else:
+            return JSONResponse({"error": "notes must be a string or null"}, 400)
+    tags = data.get("tags", "__absent__")
+    if tags != "__absent__" and not isinstance(tags, list):
+        return JSONResponse({"error": "tags must be an array of strings"}, 400)
+    if not kwargs and tags == "__absent__":
+        return JSONResponse({"error": "No fields to update"}, 400)
+    if kwargs:
+        meta_db.set_song_user_meta(key, **kwargs)
+    if tags != "__absent__":
+        meta_db.set_song_tags(key, tags)
+    return meta_db.get_song_user_meta(key)
+
+
+@app.get("/api/tags")
+def list_tags():
+    """All personal tags in use (over still-present songs), most-used first —
+    powers the tag filter UI."""
+    return {"tags": meta_db.all_tags()}
 
 
 # ── Player profile / unified XP / streak (fee[dB]ack v0.3.0) ──────────────────

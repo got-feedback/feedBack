@@ -35,6 +35,9 @@
         ['title', 'Title A–Z'], ['title-desc', 'Title Z–A'],
         ['recent', 'Recently Added'], ['year-desc', 'Year (newest)'],
         ['year', 'Year (oldest)'], ['tuning', 'Tuning'],
+        // Mastery = best accuracy across arrangements (song_stats); unscored songs
+        // sort last either way. Ascending surfaces what needs work; never default.
+        ['mastery', 'Needs practice first'], ['mastery-desc', 'Most mastered first'],
     ];
     const FORMATS = [['', 'All formats'], ['sloppak', 'Feedpak'], ['loose', 'Folder']];
     const ARRANGEMENTS = ['Lead', 'Rhythm', 'Bass', 'Combo', 'Vocals'];

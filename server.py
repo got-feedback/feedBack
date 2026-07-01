@@ -2153,6 +2153,20 @@ class MetadataDB:
             # '2005' rather than alphabetic.
             "year": "(year = '') ASC, CAST(year AS INTEGER) ASC",
             "year-desc": "(year = '') ASC, CAST(year AS INTEGER) DESC",
+            # Mastery = best accuracy across a song's arrangements, from the
+            # separate song_stats table (so via a correlated subquery — this sort
+            # drops to OFFSET paging, like tuning/year). Unscored ("not started")
+            # songs push to the BOTTOM in both directions (the IS NULL term);
+            # ascending is "needs practice first" (weakest measured first),
+            # descending is "most mastered first".
+            "mastery": (
+                "((SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) IS NULL) ASC, "
+                "(SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) ASC"
+            ),
+            "mastery-desc": (
+                "((SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) IS NULL) ASC, "
+                "(SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) DESC"
+            ),
         }
         order = sort_map.get(sort, "artist COLLATE NOCASE")
         # Legacy `dir=desc` toggle: only safe to append on simple sort

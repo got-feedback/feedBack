@@ -2795,13 +2795,20 @@
         }
     }
     // Show a completion toast (reuses the shared fbNotify surface), suppressed
-    // while in a song. Honest + never-punishing copy; the precise "N added" count
-    // arrives with the background-scan delta work — until then this is a generic,
-    // truthful confirmation.
+    // while in a song. Honest + never-punishing copy: shows the "N added / M
+    // removed" delta from the scan when there is one, else "up to date".
     function _scanCompleteToast(sd) {
         if (document.querySelector('.screen.active') && document.querySelector('.screen.active').id === 'player') return;
         if (!window.fbNotify) return;
-        const msg = (sd && sd.error) ? 'Scan finished with an error' : 'Your library is up to date';
+        const added = (sd && sd.added) || 0, removed = (sd && sd.removed) || 0;
+        let msg;
+        if (sd && sd.error) msg = 'Scan finished with an error';
+        else if (added || removed) {
+            const parts = [];
+            if (added) parts.push(added + ' song' + (added === 1 ? '' : 's') + ' added');
+            if (removed) parts.push(removed + ' removed');
+            msg = parts.join(' · ');
+        } else msg = 'Your library is up to date';
         try { window.fbNotify.show({ title: 'Library scan complete', message: msg, icon: '🔄', accent: '#22C55E' }); } catch (e) { /* */ }
     }
     // Poll scan-status until the scan finishes, driving the button state. On
@@ -2824,8 +2831,12 @@
             if ((sawRunning && sd && !sd.running) || noopDone || ticks >= 180) {
                 clearInterval(_refreshPoll); _refreshPoll = null;
                 _setRefreshState(null);
-                if (sawRunning && window.feedBack) { try { window.feedBack.emit('library:changed', { reason: 'rescan' }); } catch (e) { /* */ } }
-                if (announce) _scanCompleteToast(sd);
+                const hasDelta = sd && (((sd.added || 0) > 0) || ((sd.removed || 0) > 0));
+                if (sawRunning && window.feedBack) { try { window.feedBack.emit('library:changed', { reason: 'rescan', added: (sd && sd.added) || 0, removed: (sd && sd.removed) || 0 }); } catch (e) { /* */ } }
+                // A user-initiated refresh always confirms; a scan we only attached
+                // to (background / Settings) toasts just when it changed something,
+                // so a periodic no-op pass stays silent.
+                if (announce || hasDelta) _scanCompleteToast(sd);
             }
         }, 1000);
     }

@@ -2586,7 +2586,10 @@ class MetadataDB:
                 self.conn.executemany("DELETE FROM songs WHERE filename = ?", [(f,) for f in stale])
                 self.conn.commit()
                 self._work_display_dirty = True   # membership changed → regroup
-            return len(stale)
+            # Report both deltas from the one query we already ran: rows pruned,
+            # and how many current files are genuinely new (not yet in the DB),
+            # so a scan can surface an "N added / M removed" summary.
+            return {"removed": len(stale), "added": len(current_filenames - db_files)}
 
     # ── Metadata enrichment (P7 — plumbing; the matcher itself is the next
     # slice) ─────────────────────────────────────────────────────────────────
@@ -4994,7 +4997,7 @@ def _stat_for_cache(f: Path) -> tuple[float, int]:
     return st.st_mtime, st.st_size
 
 
-_SCAN_STATUS_INIT = {"running": False, "stage": "idle", "total": 0, "done": 0, "current": "", "error": None, "is_first_scan": False}
+_SCAN_STATUS_INIT = {"running": False, "stage": "idle", "total": 0, "done": 0, "current": "", "error": None, "is_first_scan": False, "added": 0, "removed": 0}
 _scan_status = dict(_SCAN_STATUS_INIT)
 
 _STARTUP_STATUS_INIT = {
@@ -5324,10 +5327,12 @@ def _background_scan():
 
     current_files = {_relpath(f, dlc) for f in all_songs}
 
-    # Clean up stale DB entries
-    stale = meta_db.delete_missing(current_files)
-    if stale:
-        log.info("Removed %d stale DB entries", stale)
+    # Clean up stale DB entries. delete_missing reports both deltas (rows pruned
+    # + genuinely-new files) so the scan can surface an added/removed summary.
+    _delta = meta_db.delete_missing(current_files)
+    removed, added = _delta["removed"], _delta["added"]
+    if removed:
+        log.info("Removed %d stale DB entries", removed)
 
     # Figure out which need scanning
     to_scan = []
@@ -5365,7 +5370,7 @@ def _background_scan():
             to_scan.append((f, mtime, size, dlc))
 
     if not to_scan:
-        _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "complete"}
+        _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "complete", "added": added, "removed": removed}
         log.info("Scan: nothing new to scan (%d songs, all cached)", len(all_songs))
         return
 
@@ -5390,7 +5395,7 @@ def _background_scan():
             _scan_status["current"] = fname
 
     log.info("Scan complete: %d songs cached", len(to_scan))
-    _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "complete"}
+    _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "complete", "added": added, "removed": removed}
 
 
 _scan_kick_lock = threading.Lock()

@@ -465,3 +465,82 @@ test('auto-open does not require app.js changes', () => {
     const appSrc = fs.readFileSync(APP_JS, 'utf8');
     assert.doesNotMatch(appSrc, /_tunerAutoOpen|maybeAutoOpenOnTuningChange/);
 });
+
+// ── PR 3: per-instrument live working tuning (the both-directions fix) ──────
+test('coverage reads the live per-instrument working tuning, so it prompts BOTH directions', async () => {
+    // GUITAR-6 selected; the player's LIVE working tuning is Drop-D (they retuned).
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    sandbox.window.feedBack.workingTuning = {
+        get: () => ({ offsets: [-2, 0, 0, 0, 0, 0], stringCount: 6, instrument: 'guitar', referencePitch: 440 }),
+        set() {},
+    };
+    const rep = (s) => sandbox.window._tunerAutoOpen.coverageReport(s);
+    // The Drop-D song now MATCHES the live tuning → covered (no prompt).
+    assert.equal((await rep(DROP_D)).covered, true);
+    // An E-standard song NO LONGER matches (the player is in Drop-D) → not covered →
+    // prompts to tune the low string back UP to E. The old static-profile logic missed
+    // this "coming back" direction entirely.
+    const estd = await rep(E_STANDARD);
+    assert.equal(estd.covered, false);
+    assert.equal(estd.retune.length, 1);
+    assert.equal(estd.retune[0].from, 'D');   // player low string is D…
+    assert.equal(estd.retune[0].to, 'E');     // …song wants E → "tune D → E" (up)
+});
+
+// Wire a set-capturing workingTuning stub, then run a coverage read so the tuner caches
+// the selected-instrument identity (publish is synchronous and writes to that cached
+// slot — an auto-open always runs coverage first, so this mirrors real ordering).
+async function _primeSets(sandbox, get = () => ({ offsets: null })) {
+    const sets = [];
+    sandbox.window.feedBack.workingTuning = { get, set: (state, opts) => sets.push({ state, opts }) };
+    await sandbox.window._tunerAutoOpen.playerTuning();
+    return sets;
+}
+
+test('clearing the auto-opened tuner publishes the song tuning to the right instrument slot', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(DROP_D);
+    assert.equal(sets.length, 1);
+    assert.deepEqual(sets[0].state.offsets, [-2, 0, 0, 0, 0, 0]);   // the song's tuning
+    assert.equal(sets[0].state.instrument, 'guitar');
+    assert.equal(sets[0].opts.instrument, 'guitar-6');             // targets the guitar slot
+    assert.equal(sets[0].opts.provenance, 'assumed');              // a guess, not mic-verified
+});
+
+test('publish targets the SELECTED instrument slot, not a song-derived one (string-count mismatch)', async () => {
+    // A 5-string bass is selected; the cleared song is a 4-string bass chart. The publish
+    // must land in bass-5 (what coverage reads), NOT bass-4 (where it would be stranded).
+    const sandbox = createTunerSandbox({ player: { instrument: 'bass', string_count: 5, tuning: 'Standard' } });
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(BASS_EADG);
+    assert.equal(sets.length, 1);
+    assert.equal(sets[0].opts.instrument, 'bass-5');   // the selected instrument's slot
+    assert.equal(sets[0].state.instrument, 'bass');
+});
+
+test('publish skips a cross-instrument chart (bass arrangement while guitar is selected)', async () => {
+    // Guitar selected, but the player manually opened the Bass arrangement and cleared.
+    // That is not evidence the guitar was retuned — do not pollute either slot.
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(BASS_EADG);
+    assert.equal(sets.length, 0);
+});
+
+test('publish carries the player reference pitch so the slot is self-consistent', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard', reference_pitch: 432 } });
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(DROP_D);
+    assert.equal(sets.length, 1);
+    assert.equal(sets[0].state.referencePitch, 432);
+});
+
+test('publish skips when the instrument could not be confidently resolved (settings unreadable)', async () => {
+    // No player settings → /api/settings reports not-ok → we never cached a confident
+    // selection, so publish must NOT write to a guessed default slot.
+    const sandbox = createTunerSandbox();   // no player
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(DROP_D);
+    assert.equal(sets.length, 0);
+});

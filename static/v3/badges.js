@@ -29,6 +29,9 @@
     // drives a passive "different tuning" cue on the tuner badge. null = covered /
     // unknown / off the player.
     let _lastCoverageReport = null;
+    // Monotonic token so a slow coverage fetch can't restore a stale cue after a newer
+    // song started loading / we left the player. Bumped on every refresh and clear.
+    let _coverageCueToken = 0;
     function _tuningsForKey(key) { return Object.keys(_tuningsByKey[key] || {}); }
     function _tuningsForInstrument(instrument, string_count) {
         return _tuningsForKey(instrument + '-' + string_count);
@@ -282,14 +285,30 @@
         btn.title = 'This song needs a different tuning — retune ' + summary + '. Click to tune.';
     }
 
+    // A coverage report only drives the cue when it carries an actual signal: covered
+    // (clears the ring) or a nameable mismatch (retune / reference / cantCover). The
+    // plugin returns a conservative all-false report on a fetch hiccup / missing data —
+    // that's "unknown", NOT "needs retune", so collapse it to null (no cue) rather than
+    // painting an amber "retune the reference pitch" ring with no evidence.
+    function _meaningfulReport(report) {
+        if (!report) return null;
+        if (report.covered) return report;
+        if (report.cantCover || report.reference || (report.retune && report.retune.length)) return report;
+        return null;
+    }
+
     async function _refreshCoverageCue() {
+        const myToken = ++_coverageCueToken;
         const songInfo = window.highway && window.highway.getSongInfo && window.highway.getSongInfo();
         const api = window._tunerAutoOpen;
         if (!songInfo || !api || typeof api.coverageReport !== 'function') {
             _lastCoverageReport = null; _applyCoverageCue(null); return;
         }
-        try { _lastCoverageReport = await api.coverageReport(songInfo); }
-        catch (_e) { _lastCoverageReport = null; }
+        let report = null;
+        try { report = await api.coverageReport(songInfo); }
+        catch (_e) { report = null; }
+        if (myToken !== _coverageCueToken) return;   // superseded by a newer song / a clear
+        _lastCoverageReport = _meaningfulReport(report);
         _applyCoverageCue(_lastCoverageReport);
     }
 
@@ -411,9 +430,9 @@
             // Passive coverage cue: recompute when a song is ready; clear when a new
             // song starts loading or we leave the player screen.
             sm.on('song:ready', () => { _refreshCoverageCue(); });
-            sm.on('song:loading', () => { _lastCoverageReport = null; _applyCoverageCue(null); });
+            sm.on('song:loading', () => { _coverageCueToken++; _lastCoverageReport = null; _applyCoverageCue(null); });
             sm.on('screen:changed', (e) => {
-                if (!e || !e.detail || e.detail.id !== 'player') { _lastCoverageReport = null; _applyCoverageCue(null); }
+                if (!e || !e.detail || e.detail.id !== 'player') { _coverageCueToken++; _lastCoverageReport = null; _applyCoverageCue(null); }
             });
         }
     }

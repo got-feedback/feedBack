@@ -289,7 +289,7 @@
     // — cantCover: the song needs more strings than the instrument has.
     // Conservative: any missing data → { covered:false } so a needed prompt/cue is
     // never silently dropped on a fetch hiccup.
-    async function _coverageReport(songInfo) {
+    async function _computeCoverageReport(songInfo) {
         const u = window._tunerUtils;
         const none = { covered: false, retune: [], reference: false, cantCover: false };
         if (!u) return none;
@@ -315,6 +315,23 @@
         return { covered, retune: covered ? [] : best, reference, cantCover: false };
     }
 
+    // Dedup the coverage computation (which fetches /api/settings): the auto-open gate
+    // AND the badge cue both call this on the same song:ready. Cache the in-flight/last
+    // result per song so they share ONE fetch. Invalidated when anything that changes the
+    // answer happens — a new song (song:loading), an instrument switch (instrument:changed),
+    // or a retune (working-tuning-changed) — so the cache can never go stale within a song.
+    let _coverageCache = null;   // { key, promise }
+    function _coverageReport(songInfo) {
+        const key = _autoOpenSessionKey(songInfo) + '|'
+            + (songInfo && Array.isArray(songInfo.tuning) ? songInfo.tuning.join(',') : '')
+            + '|' + (songInfo && songInfo.centOffset != null ? songInfo.centOffset : '');   // coverage uses centOffset
+        if (_coverageCache && _coverageCache.key === key) return _coverageCache.promise;
+        const promise = _computeCoverageReport(songInfo);
+        _coverageCache = { key, promise };
+        return promise;
+    }
+    function _invalidateCoverageCache() { _coverageCache = null; }
+
     // Boolean form used to gate the auto-open prompt.
     async function _coveredByPlayerInstrument(songInfo) {
         return (await _coverageReport(songInfo)).covered;
@@ -324,6 +341,7 @@
         _autoOpenGeneration++;
         _autoOpenDismissedSessionKey = null;
         _lastAutoOpenSessionKey = null;
+        _invalidateCoverageCache();
     }
 
     async function _maybeAutoOpenOnTuningChange() {
@@ -390,7 +408,10 @@
         // switches instrument. Drop the cached selection so a publish-on-clear can't write
         // to the previously-selected instrument's slot; the next coverage read re-resolves
         // it. Until then _publishWorkingTuning skips (safe — no mis-slotted write).
-        window.feedBack.on('instrument:changed', () => { _state._playerSelected = null; });
+        window.feedBack.on('instrument:changed', () => { _state._playerSelected = null; _invalidateCoverageCache(); });
+        // A retune (working tuning published on a tuner clear) changes coverage for the
+        // current song — drop the cached report so a re-evaluation recomputes it.
+        window.feedBack.on('working-tuning-changed', _invalidateCoverageCache);
     }
 
     // ── Player sync helpers ───────────────────────────────────────────

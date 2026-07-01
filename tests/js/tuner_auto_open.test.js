@@ -591,3 +591,22 @@ test('a configured standard-guitar player still covers a standard song', async (
     const covered = await sandbox.window._tunerAutoOpen.coveredByPlayerInstrument(E_STANDARD);
     assert.equal(covered, true, 'a known standard guitar covers a standard song (no regression)');
 });
+// ── #657 fix (#680): coverage is deduped — the auto-open gate and the badge cue both
+// call coverageReport() on the same song:ready; they must share ONE /api/settings fetch.
+test('coverage reports for the same song share one settings fetch, and a new song refetches', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    let settingsFetches = 0;
+    const origFetch = sandbox.window.fetch;
+    sandbox.window.fetch = (url) => {
+        if (String(url).includes('/api/settings')) settingsFetches += 1;
+        return origFetch(url);
+    };
+    const api = sandbox.window._tunerAutoOpen;
+    const [a, b] = await Promise.all([api.coverageReport(DROP_D), api.coverageReport(DROP_D)]);
+    assert.equal(settingsFetches, 1, 'concurrent reports for the same song share one fetch');
+    assert.deepEqual(a, b);
+    // A new song invalidates the cache → a fresh fetch.
+    api.onSongLoading();
+    await api.coverageReport(E_STANDARD);
+    assert.equal(settingsFetches, 2, 'a new song refetches');
+});

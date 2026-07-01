@@ -1,0 +1,63 @@
+{
+  "id": "keys_highway_3d",
+  "name": "Keys Highway 3D",
+  "version": "0.1.0",
+  "description": "RS+-style 3D falling-note piano highway fed by the Sloppak Notation Format, with Web MIDI input scoring.",
+  "type": "visualization",
+  "script": "screen.js",
+  "standards": [
+    "capability-pipelines.v1",
+    "plugin-runtime-idempotent.v1"
+  ],
+  "capabilities": {
+    "visualization": {
+      "roles": [
+        "provider"
+      ],
+      "operations": [
+        "renderer.create",
+        "renderer.destroy"
+      ],
+      "emits": [
+        "renderer-ready",
+        "renderer-failed"
+      ],
+      "mode": "active",
+      "safety": "safe"
+    },
+    "note-detection": {
+      "roles": [
+        "provider"
+      ],
+      "operations": [
+        "verify.target"
+      ],
+      "emits": [
+        "hit",
+        "miss"
+      ],
+      "mode": "active",
+      "safety": "sensitive"
+    },
+    "midi-input": {
+      "roles": [
+        "requester"
+      ],
+      "requests": [
+        "discover",
+        "list-sources",
+        "select-source",
+        "open-source",
+        "close-source"
+      ],
+      "mode": "active",
+      "compatibility": "degrade-noop",
+      "ownership": "requester-only",
+      "safety": "sensitive",
+      "description": "Reads the MIDI keyboard input through the core midi-input domain (Web-MIDI provider ships built-in with the domain). Absent domain \u2192 no MIDI devices, fail-soft.",
+      "version": 1
+    }
+  },
+  "category": "practice",
+  "icon": "assets/thumb.svg"
+}

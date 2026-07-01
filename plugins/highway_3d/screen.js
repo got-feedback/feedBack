@@ -14459,7 +14459,11 @@
             // costs nothing.
             const _paneKey = _aspectPaneKey(
                 bundle && bundle.songInfo && bundle.songInfo.arrangement, _paneUid);
-            _aspectRegisterPane(_paneKey);
+            // Only feed the Target-picker registry while the tuner is open (same
+            // gate as the readout). Closed → nothing is registered, so the registry
+            // can't grow for users who never open the panel; the key is still
+            // resolved below so any saved overrides keep applying.
+            if (window.__h3dAspectPanelOpen) _aspectRegisterPane(_paneKey);
             const _aspTune = _resolveTuneFor(_paneKey);
             const _aspActive = !!(_aspTune && _aspTune.enabled
                 && !(_aspTune.splitOnly && !_ssActive()));

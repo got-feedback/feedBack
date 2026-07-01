@@ -170,8 +170,8 @@ test('a Target select and pane registry drive the per-pane picker', () => {
         'the panel must build a Target <select>');
     assert.match(src, /function\s+_aspectRegisterPane\s*\(/,
         '_aspectRegisterPane must record live panes for the picker');
-    assert.match(src, /_aspectRegisterPane\(\s*_paneKey\s*\)/,
-        'camUpdate must register its pane each frame');
+    assert.match(src, /if\s*\(\s*window\.__h3dAspectPanelOpen\s*\)\s*_aspectRegisterPane\(\s*_paneKey\s*\)/,
+        'camUpdate must register its pane only while the tuner panel is open');
 });
 
 test('panes are keyed by arrangement (stable across songs, no split-API dep)', () => {

@@ -1126,6 +1126,12 @@
         // chart the user is actually looking at.
         let _latestNotes = null;
         let _latestTime = 0;
+        // Miss-sweep floor: notes at or before this song-time are exempt
+        // from _updateMissed. Set to the connect-frame time when a MIDI
+        // device wires up mid-song — notes that passed while no events
+        // could arrive are unplayable, not misses. Lowered on seek-back
+        // (those notes become playable again) and cleared by _resetScoring.
+        let _missSweepFloor = -Infinity;
 
         /* ── HUD overlay (combo / accuracy / streak) ─────────────── */
         let _hudEl = null;
@@ -1204,6 +1210,7 @@
             _hits = 0; _misses = 0;
             _streak = 0; _bestStreak = 0;
             _laneFlashes.length = 0;
+            _missSweepFloor = -Infinity;
         }
 
         function _hitKey(t, lane) {
@@ -1265,6 +1272,7 @@
             for (const n of _latestNotes) {
                 if (n.t > cutoff) break;
                 if (n.t < cutoff - 2) continue;  // older than 2 s — already counted
+                if (n.t <= _missSweepFloor) continue;  // passed before MIDI connected
                 const key = _hitKey(n.t, n.lane);
                 if (_hitKeys.has(key) || _missedKeys.has(key)) continue;
                 _missedKeys.add(key);
@@ -1736,7 +1744,18 @@
                 // which no events can arrive — counting passes then would bank false
                 // misses. _midiHandle is truthy only after a handle is opened+wired.
                 if (_midiHandle) {
-                    if (_midiJustConnected) { _midiJustConnected = false; _resetScoring(); }
+                    if (_midiJustConnected) {
+                        _midiJustConnected = false;
+                        _resetScoring();
+                        // Floor the sweep at the connect frame: without this
+                        // the _updateMissed call right below would bank the
+                        // last ~2 s of notes as misses even though no input
+                        // could have arrived for them yet.
+                        _missSweepFloor = t;
+                    }
+                    // Seek-back past the floor makes those notes playable
+                    // again — let them count.
+                    if (t < _missSweepFloor) _missSweepFloor = t;
                     _updateMissed(t);
                 }
                 // Linear walk with early break — notes are sorted by time so
@@ -2106,7 +2125,15 @@
 
             destroy() {
                 _instances.delete(instance);
-                if (_activeInstance === instance) _activeInstance = null;
+                // If the focused instance is going away but others remain
+                // (splitscreen teardown of one panel), promote a survivor so
+                // _midiOnMessage keeps routing instead of dropping every
+                // event on its `if (!_activeInstance) return` guard — same
+                // behavior as keys_highway_3d.
+                if (_activeInstance === instance) {
+                    _activeInstance = null;
+                    for (const inst of _instances) { _activeInstance = inst; break; }
+                }
                 if (_instances.size === 0) _midiReleaseSession();
                 _removeHud();
                 teardown();

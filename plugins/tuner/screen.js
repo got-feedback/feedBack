@@ -225,9 +225,13 @@
             if (named && Array.isArray(named[s.tuning])) freqs = named[s.tuning];
         }
         if (!freqs) {
-            // No settings AND no live tuning → we can't tell the player's tuning; fail
-            // toward prompting (null → coverage treats it as not-covered).
-            if (!s && !wtHasOffsets) return null;
+            // No confident instrument identity — settings absent, OR present but carrying
+            // no instrument/string_count/tuning (a fresh profile: /api/settings omits them)
+            // — and no live working tuning. We can't tell the player's tuning, so fail
+            // toward prompting (null → not-covered) rather than silently assuming standard
+            // and suppressing a genuinely-needed prompt.
+            const hasIdentity = !!(s && (s.instrument || s.string_count || s.tuning));
+            if (!hasIdentity && !wtHasOffsets) return null;
             freqs = u.offsetsToFreqs(new Array(sc).fill(0), isBass);   // standard fallback
         }
         const midis = _openMidisFromFreqs(freqs);

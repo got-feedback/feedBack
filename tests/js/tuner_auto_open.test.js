@@ -577,3 +577,17 @@ test('dismiss during the audio-start await does not leave a zombie enabled tuner
     assert.equal(sandbox.window._tunerAutoOpen.getState().enabled, false,
         'a mid-open dismiss must win — the tuner stays disabled, not enabled-but-hidden');
 });
+// ── #656 fix: coverage stays conservative when the instrument identity is unknown.
+// A fresh profile (/api/settings omits instrument/string_count/tuning) must NOT be
+// assumed to be standard guitar and silently suppress the prompt. See issue #677.
+test('coverage is conservative when settings carry no instrument identity', async () => {
+    const sandbox = createTunerSandbox({ player: {} });   // settings object, but no instrument fields
+    const covered = await sandbox.window._tunerAutoOpen.coveredByPlayerInstrument(E_STANDARD);
+    assert.equal(covered, false, 'unknown instrument → not covered → still prompt');
+});
+
+test('a configured standard-guitar player still covers a standard song', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    const covered = await sandbox.window._tunerAutoOpen.coveredByPlayerInstrument(E_STANDARD);
+    assert.equal(covered, true, 'a known standard guitar covers a standard song (no regression)');
+});

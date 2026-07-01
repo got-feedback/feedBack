@@ -1567,6 +1567,7 @@
             '<select id="v3-songs-format" class="' + ctrl + '">' + opt(FORMATS, state.format) + '</select>' +
             '<button id="v3-songs-filters" class="relative ' + ctrl + ' flex items-center gap-2">Filters<span id="v3-songs-filter-count" class="hidden bg-fb-primary text-white text-xs rounded-full px-1.5">0</span></button>' +
             '<button id="v3-songs-select" class="' + ctrl + (state.selectMode ? ' bg-fb-primary text-white' : '') + '">Select</button>' +
+            '<button id="v3-songs-refresh" title="Refresh library (scan for new songs)" class="' + ctrl + '">⟳ Refresh</button>' +
             '<button id="v3-songs-upload" class="' + ctrl + '">Upload</button>' +
             '</div></div></div>' +
             // Practice-aware library home: a repertoire progress meter + a
@@ -1624,6 +1625,16 @@
             if (legacy) { legacy.click(); watchUploadScan(); }
         });
         byId('v3-songs-select').addEventListener('click', () => setSelectMode(!state.selectMode));
+        byId('v3-songs-refresh')?.addEventListener('click', refreshLibrary);
+        // Reflect a scan already in progress (Settings button or a background
+        // pass) on the Refresh button, so its state isn't just tied to clicks here.
+        (async () => {
+            try {
+                const r = await fetch('/api/scan-status');
+                const sd = r.ok ? await r.json() : null;
+                if (sd && sd.running) { _setRefreshState(sd); _watchScan({ announce: false }); }
+            } catch (e) { /* */ }
+        })();
 
         // Bulletproof multi-select: in select mode, a capture-phase click on the
         // grid toggles the card and STOPS the event, so nothing (a per-card
@@ -1753,6 +1764,73 @@
     // legacy screens, so without this newly-uploaded songs wouldn't appear in
     // v3 until a manual refresh. Bounded so a no-op upload can't poll forever.
     let _uploadScanTimer = null;
+    // ── Library refresh (rescan) from the Songs toolbar ───────────────────────
+    // The tester ask: a media-server-style "I dropped files in my folder, hit
+    // refresh" button, with live progress. Reuses the SAME machinery the Settings
+    // Rescan buttons drive (/api/rescan + /api/scan-status) and emits
+    // library:changed so the grid reloads. A scan already running (Settings or a
+    // background pass) is reflected on the button too.
+    let _refreshPoll = null;
+    function _setRefreshState(sd) {
+        const btn = document.getElementById('v3-songs-refresh');
+        if (!btn) return;
+        if (sd && sd.running) {
+            // Determinate count only exists in the 'scanning' stage; 'listing' is
+            // indeterminate (total 0), so show a plain "Scanning…" then.
+            const det = (sd.stage === 'scanning' && sd.total) ? ' ' + sd.done + '/' + sd.total : '';
+            btn.textContent = '⟳ Scanning' + det + '…';
+            btn.disabled = true;
+            btn.classList.add('opacity-70');
+            const pct = sd.total ? Math.round((sd.done / sd.total) * 100) + '% · ' : '';
+            btn.title = 'Scanning new/changed songs… ' + pct + (sd.current || '');
+        } else {
+            btn.textContent = '⟳ Refresh';
+            btn.disabled = false;
+            btn.classList.remove('opacity-70');
+            btn.title = 'Refresh library (scan for new songs)';
+        }
+    }
+    // Show a completion toast (reuses the shared fbNotify surface), suppressed
+    // while in a song. Honest + never-punishing copy; the precise "N added" count
+    // arrives with the background-scan delta work — until then this is a generic,
+    // truthful confirmation.
+    function _scanCompleteToast(sd) {
+        if (document.querySelector('.screen.active') && document.querySelector('.screen.active').id === 'player') return;
+        if (!window.fbNotify) return;
+        const msg = (sd && sd.error) ? 'Scan finished with an error' : 'Your library is up to date';
+        try { window.fbNotify.show({ title: 'Library scan complete', message: msg, icon: '🔄', accent: '#22C55E' }); } catch (e) { /* */ }
+    }
+    // Poll scan-status until the scan finishes, driving the button state. On
+    // completion, emit library:changed (grid reloads via the listener below) and,
+    // for a user-initiated refresh (announce), show the toast. announce:false is
+    // used when we only attached to a scan we didn't start.
+    function _watchScan(opts) {
+        if (_refreshPoll) return;
+        const announce = !opts || opts.announce !== false;
+        let sawRunning = false, ticks = 0;
+        _refreshPoll = setInterval(async () => {
+            ticks++;
+            let sd = null;
+            try { const r = await fetch('/api/scan-status'); if (r.ok) sd = await r.json(); } catch (e) { /* */ }
+            _setRefreshState(sd);
+            if (sd && sd.running) sawRunning = true;
+            // A user-initiated refresh that never saw a running scan = nothing to
+            // do (already up to date); give prompt feedback instead of waiting.
+            const noopDone = announce && !sawRunning && ticks >= 3;
+            if ((sawRunning && sd && !sd.running) || noopDone || ticks >= 180) {
+                clearInterval(_refreshPoll); _refreshPoll = null;
+                _setRefreshState(null);
+                if (sawRunning && window.feedBack) { try { window.feedBack.emit('library:changed', { reason: 'rescan' }); } catch (e) { /* */ } }
+                if (announce) _scanCompleteToast(sd);
+            }
+        }, 1000);
+    }
+    async function refreshLibrary() {
+        if (_refreshPoll) return;                 // a scan is already in progress
+        try { await fetch('/api/rescan', { method: 'POST' }); } catch (e) { /* */ }
+        _watchScan({ announce: true });
+    }
+
     function watchUploadScan() {
         if (_uploadScanTimer) clearInterval(_uploadScanTimer);
         let sawRunning = false, ticks = 0;

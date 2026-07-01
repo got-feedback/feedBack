@@ -1115,8 +1115,57 @@
         hitFx: 0.7,       // 0–1 master intensity for lane flashes / kick pulse
         timingFx: true,   // early/late/on-time coloring of hit feedback
         streakFx: true,   // consecutive-hit escalation (bigger spark bursts)
+        cinematic: true,  // rebalanced lighting (dimmer ambient, stronger key)
+        glow: 0.5,        // 0–1 emissive multiplier (0.5 = the stock look)
+        vibrancy: 0.85,   // lane stripe / halo / ghost opacity strength
     };
     const FX_LS_PREFIX = 'drum_h3d_bg_';
+    // Theme id lives OUTSIDE FX_DEFAULTS (string, not bool/number) — its own
+    // localStorage key + validation against BG_THEMES.
+    const FX_LS_THEME = 'drum_h3d_bg_theme';
+
+    // Scene color themes — PORTED FROM highway_3d BG_THEMES (keep the ids,
+    // names and values in sync so a user's look carries across instruments).
+    // The guitar splits background/highway into two axes; here one pick
+    // drives both (clear/fog + board/lane) — the drum scene is simpler and
+    // a single dropdown reads better in its settings panel.
+    //   clear/fog — WebGL clear color + distance fog (kept equal so the
+    //               horizon dissolves cleanly)
+    //   board     — the floor plane under the lanes
+    //   lane/laneDim — the alternating lane stripes; themes without them
+    //               fall back to the stock teal/blue pair.
+    const BG_THEMES = {
+        // 'default' is THIS plugin's original palette (fog 0x1a1a2e, floor
+        // 0x0a0e1a, stock teal/blue stripes) — byte-identical for anyone who
+        // never touches the setting. The guitar's default differs; every
+        // OTHER id below matches the guitar's table exactly.
+        default:    { clear: 0x1a1a2e, fog: 0x1a1a2e, board: 0x0a0e1a },
+        midnight:   { clear: 0x0a0e1a, fog: 0x0a0e1a, board: 0x080d1c, lane: 0x244fae, laneDim: 0x122a5e },
+        charcoal:   { clear: 0x16181c, fog: 0x16181c, board: 0x141417, lane: 0x525a66, laneDim: 0x282d34 },
+        deeppurple: { clear: 0x140a1e, fog: 0x140a1e, board: 0x0b0610, lane: 0x3a1f6e, laneDim: 0x1f1040 },
+        forest:     { clear: 0x0a1614, fog: 0x0a1614, board: 0x06100c, lane: 0x15602a, laneDim: 0x0a3318 },
+        warmslate:  { clear: 0x1c130b, fog: 0x1c130b, board: 0x0e0805, lane: 0x5e3a12, laneDim: 0x341f0a },
+        deepfocus:  { clear: 0x0c0c0d, fog: 0x0c0c0d, board: 0x060606, lane: 0x2f7fa0, laneDim: 0x163c4e },
+        deepsea:    { clear: 0x06222b, fog: 0x06222b, board: 0x03141a, lane: 0x0e5a63, laneDim: 0x063338 },
+        cathode:    { clear: 0x140b03, fog: 0x140b03, board: 0x0c0702, lane: 0x6e4a0e, laneDim: 0x3a2806 },
+        cathodegreen: { clear: 0x07301a, fog: 0x07301a, board: 0x031a0c, lane: 0x0e6e2a, laneDim: 0x073a18 },
+        hearth:     { clear: 0x280806, fog: 0x280806, board: 0x1a0606, lane: 0x7a2410, laneDim: 0x3f1409 },
+    };
+    function _bgThemeColors(id) { return BG_THEMES[id] || BG_THEMES.default; }
+    function readThemeSetting() {
+        try {
+            const id = localStorage.getItem(FX_LS_THEME);
+            if (id && BG_THEMES[id]) return id;
+        } catch (_) {}
+        return 'default';
+    }
+    window.drumH3dSetTheme = function (id) {
+        if (!BG_THEMES[id]) return;
+        try { localStorage.setItem(FX_LS_THEME, id); } catch (_) {}
+        try {
+            window.dispatchEvent(new CustomEvent('drum_h3d:settings', { detail: { theme: id } }));
+        } catch (_) { /* dispatch unavailable — persisted value applies next init */ }
+    };
 
     function readFxSettings() {
         const fx = Object.assign({}, FX_DEFAULTS);
@@ -1181,6 +1230,14 @@
         let settings = readSettings();
         let activePalette = PALETTES[settings.palette];
         let fx = readFxSettings();
+        let _theme = readThemeSetting();
+
+        // Theme/material handles (initScene builds them; _applyTheme /
+        // _applyCinematic / the glow slider retune them live).
+        let ambLight = null, dirLight = null;
+        let mFloor = null, _gFloor = null;
+        let _hitBarMat = null, _gHitBar = null;
+        let _envRT = null;   // PMREM render target backing scene.environment
 
         // Host adaptive-quality scale (bundle.renderScale, 0.25–1) —
         // multiplied into the device pixel ratio like highway_3d does.
@@ -1638,7 +1695,31 @@
                 for (const k of Object.keys(detail.fx)) {
                     if (k in FX_DEFAULTS) fx[k] = detail.fx[k];
                 }
+                if ('cinematic' in detail.fx) _applyCinematic();
+                if ('glow' in detail.fx) {
+                    // Static emissive bases (hit bar, snare stripe, hit/miss
+                    // tints) are baked at build time — rebuild them; the
+                    // per-frame placeNote pulse picks the new value up on
+                    // its own.
+                    rebuildPaletteMaterials();
+                    if (_hitBarMat) _hitBarMat.emissiveIntensity = 0.9 * _glowMul();
+                    if (mSnareStripe) mSnareStripe.emissiveIntensity = 0.5 * _glowMul();
+                }
+                if ('vibrancy' in detail.fx) _applyVibrancy();
             }
+            if (detail.theme && BG_THEMES[detail.theme]) {
+                _theme = detail.theme;
+                _applyTheme();
+            }
+        }
+
+        // Vibrancy slider: stripes get their new base next frame (draw()
+        // recomputes them); the halo/ghost ring statics update here.
+        function _applyVibrancy() {
+            const v = Math.min(1, Math.max(0, fx.vibrancy));
+            if (mAccentRing) mAccentRing.opacity = 0.6 + 0.3 * v;
+            // Ghost rings get their vibrancy at per-note material creation in
+            // buildNoteMesh (they never render with the shared mGhostRing).
         }
 
         function rebuildPaletteMaterials() {
@@ -1661,9 +1742,12 @@
                     mDrumByLane[i] = new T.MeshStandardMaterial({
                         color,
                         emissive: color,
-                        emissiveIntensity: 0.45,
-                        roughness: 0.55,
+                        emissiveIntensity: 0.45 * _glowMul(),
+                        // Drumhead: satin, a little env pickup so the studio
+                        // strips give the discs some dimension.
+                        roughness: 0.45,
                         metalness: 0.1,
+                        envMapIntensity: 0.5,
                     });
                     // Pre-cloned tint materials for hit (green) and miss (red),
                     // keyed per lane so proximity emissive adjustments on the base
@@ -1678,9 +1762,13 @@
                     mCymbalByLane[i] = new T.MeshStandardMaterial({
                         color,
                         emissive: color,
-                        emissiveIntensity: 0.55,
-                        roughness: 0.25,
-                        metalness: 0.7,
+                        emissiveIntensity: 0.55 * _glowMul(),
+                        // With scene.environment set (studio env map) the
+                        // metalness finally reads as metal — the old 0.7
+                        // metalness had no envMap and looked matte.
+                        roughness: 0.2,
+                        metalness: 0.85,
+                        envMapIntensity: 1.2,
                         transparent: true,
                         opacity: 0.92,
                     });
@@ -1698,9 +1786,10 @@
             mKick = new T.MeshStandardMaterial({
                 color: KICK_COLOR,
                 emissive: KICK_COLOR,
-                emissiveIntensity: 0.6,
+                emissiveIntensity: 0.6 * _glowMul(),
                 roughness: 0.4,
                 metalness: 0.2,
+                envMapIntensity: 0.6,
             });
             mKickHit = mKick.clone();
             mKickHit.color.setHex(0x22c55e);
@@ -1717,32 +1806,141 @@
 
         /* -- one-time scene setup --------------------------------------- */
 
+        // Emissive multiplier from the Glow slider — 0.5 is neutral (the
+        // stock look), so `base * _glowMul()` leaves defaults byte-identical.
+        function _glowMul() {
+            return Math.min(1, Math.max(0, fx.glow)) * 2;
+        }
+
+        // Cinematic lighting: dimmer ambient + stronger key light, same
+        // rebalance idea as highway_3d's _applyCinematic. Off = the plugin's
+        // pre-parity values.
+        function _applyCinematic() {
+            if (!ambLight || !dirLight) return;
+            ambLight.intensity = fx.cinematic ? 0.3 : 0.4;
+            dirLight.intensity = fx.cinematic ? 1.2 : 1.0;
+        }
+
+        // Procedural "studio" environment for image-based lighting: a dark
+        // room shell with three emissive light strips (cool overhead key,
+        // warm left fill, cool right accent), baked through PMREMGenerator.
+        // No addon needed (PMREMGenerator ships in the core three build) —
+        // RoomEnvironment is NOT vendored, hence this hand-rolled stand-in.
+        // Returns the PMREM render target ({texture}) or null; caller owns
+        // disposing the RT.
+        function _makeStudioEnv(ThreeLib, renderer) {
+            if (!renderer) return null;
+            try {
+                const envScene = new ThreeLib.Scene();
+                const own = [];   // geometries/materials to free after baking
+                const shellGeo = new ThreeLib.BoxGeometry(100, 100, 100);
+                const shellMat = new ThreeLib.MeshBasicMaterial({ color: 0x11131c, side: ThreeLib.BackSide });
+                envScene.add(new ThreeLib.Mesh(shellGeo, shellMat));
+                own.push(shellGeo, shellMat);
+                const strip = (w, h, hex, intensity, x, y, z, rx, ry) => {
+                    const g = new ThreeLib.PlaneGeometry(w, h);
+                    // DoubleSide: orientation-proof — the bake only runs once,
+                    // so the extra faces are free insurance.
+                    const m = new ThreeLib.MeshBasicMaterial({ color: hex, side: ThreeLib.DoubleSide });
+                    m.color.multiplyScalar(intensity);
+                    const mesh = new ThreeLib.Mesh(g, m);
+                    mesh.position.set(x, y, z);
+                    mesh.rotation.set(rx, ry, 0);
+                    envScene.add(mesh);
+                    own.push(g, m);
+                };
+                strip(60, 8, 0xdfe8ff, 18, 0, 45, 0, Math.PI / 2, 0);      // overhead key
+                strip(30, 50, 0xffd9a8, 6, -48, 5, 0, 0, Math.PI / 2);     // warm left wall
+                strip(30, 50, 0x9fd8ff, 6, 48, 5, 0, 0, -Math.PI / 2);     // cool right wall
+                const pmrem = new ThreeLib.PMREMGenerator(renderer);
+                const rt = pmrem.fromScene(envScene, 0.04);
+                pmrem.dispose();
+                for (const r of own) r.dispose();
+                return rt;
+            } catch (e) {
+                console.warn('[Drum-Hwy3D] studio env failed (continuing without IBL)', e);
+                return null;
+            }
+        }
+
+        function _disposeEnv() {
+            if (_envRT) {
+                try { _envRT.dispose(); } catch (_) {}
+                _envRT = null;
+            }
+        }
+
+        // Apply the active theme to the live scene (background/fog/clear +
+        // floor + lane stripes). Notes keep their piece palette — themes own
+        // the SCENE, palettes own the KIT.
+        function _applyTheme() {
+            const c = _bgThemeColors(_theme);
+            if (scene) {
+                if (scene.background && scene.background.isColor) scene.background.setHex(c.clear);
+                if (scene.fog) scene.fog.color.setHex(c.fog);
+            }
+            if (ren) ren.setClearColor(c.clear, 1);
+            if (mFloor) mFloor.color.setHex(c.board);
+            _applyStripeColors();
+        }
+
+        // Lane stripe colors + base opacity (theme lane pair or the stock
+        // teal/blue; vibrancy drives how strongly they read). draw()'s
+        // approach highlight adds on top of the vibrancy base each frame.
+        function _stripeBaseOpacity() {
+            return 0.12 + 0.24 * Math.min(1, Math.max(0, fx.vibrancy));
+        }
+        function _applyStripeColors() {
+            const c = _bgThemeColors(_theme);
+            const pair = (c.lane != null && c.laneDim != null)
+                ? [c.laneDim, c.lane]
+                : [0x2d5476, 0x42759d];
+            for (let i = 0; i < laneStripeMats.length; i++) {
+                laneStripeMats[i].color.setHex(pair[i % 2]);
+            }
+        }
+
         function initScene() {
             scene = new T.Scene();
-            scene.background = new T.Color(FOG_COLOR);
-            scene.fog = new T.Fog(FOG_COLOR, FOG_START, FOG_END);
+            const themeCols = _bgThemeColors(_theme);
+            scene.background = new T.Color(themeCols.clear);
+            scene.fog = new T.Fog(themeCols.fog, FOG_START, FOG_END);
+            if (ren) ren.setClearColor(themeCols.clear, 1);
+
+            // Studio environment map: emissive-strip room baked through
+            // PMREM so MeshStandardMaterial metalness/roughness finally get
+            // specular payoff (the cymbals' 0.85 metalness reads as metal).
+            // Rebuilt here so the kit-change renderer recreation gets a
+            // fresh one; the old RT is disposed by _disposeScene/teardown.
+            _envRT = _makeStudioEnv(T, ren);
+            if (_envRT) scene.environment = _envRT.texture;
 
             cam = new T.PerspectiveCamera(60, 16 / 9, 0.1, 1000 * K);
             positionCamera();
 
             lights = new T.Group();
-            const ambient = new T.AmbientLight(0xffffff, 0.4);
-            const dir = new T.DirectionalLight(0xffffff, 1.0);
-            dir.position.set(-50 * K, 200 * K, 200 * K);
-            lights.add(ambient);
-            lights.add(dir);
+            ambLight = new T.AmbientLight(0xffffff, 0.4);
+            dirLight = new T.DirectionalLight(0xffffff, 1.0);
+            dirLight.position.set(-50 * K, 200 * K, 200 * K);
+            lights.add(ambLight);
+            lights.add(dirLight);
             scene.add(lights);
+            _applyCinematic();
 
             // Floor plane — wide darkened quad under the lanes.
             // Use Math.max(1, LANE_COUNT) so a kick-only kit (LANE_COUNT=0)
             // still produces a floor at least as wide as the kick bar (KICK_W).
             const floorW = Math.max(1, LANE_COUNT) * LANE_GAP + 8 * K;
             const floorD = (AHEAD + BEHIND + 0.5) * TS + 60 * K;
-            const gFloor = new T.PlaneGeometry(floorW, floorD);
-            const mFloor = new T.MeshStandardMaterial({
-                color: 0x0a0e1a,
-                roughness: 0.95,
+            _gFloor = new T.PlaneGeometry(floorW, floorD);
+            const gFloor = _gFloor;
+            mFloor = new T.MeshStandardMaterial({
+                color: themeCols.board,
+                // 0.7 (was 0.95): just enough sheen to catch the env strips
+                // without turning the floor into a mirror.
+                roughness: 0.7,
                 metalness: 0.0,
+                envMapIntensity: 0.35,
             });
             const floor = new T.Mesh(gFloor, mFloor);
             floor.rotation.x = -Math.PI / 2;
@@ -1758,14 +1956,17 @@
             rebuildKitMap();
 
             // Hit-line bar in front of the camera, perpendicular to scroll.
-            const gHit = new T.BoxGeometry(floorW, 0.6 * K, 0.6 * K);
+            _gHitBar = new T.BoxGeometry(floorW, 0.6 * K, 0.6 * K);
+            const gHit = _gHitBar;
             const mHit = new T.MeshStandardMaterial({
                 color: 0xffffff,
                 emissive: 0xffffff,
-                emissiveIntensity: 0.9,
+                emissiveIntensity: 0.9 * _glowMul(),
                 roughness: 0.3,
                 metalness: 0.6,
+                envMapIntensity: 1.0,
             });
+            _hitBarMat = mHit;
             const hitBar = new T.Mesh(gHit, mHit);
             hitBar.position.set(0, 0.3 * K, 0);
             scene.add(hitBar);
@@ -1878,7 +2079,7 @@
             mSnareStripe = new T.MeshStandardMaterial({
                 color: 0xffffff,
                 emissive: 0xffffff,
-                emissiveIntensity: 0.5,
+                emissiveIntensity: 0.5 * _glowMul(),
                 roughness: 0.3,
             });
             mBellDot = new T.MeshBasicMaterial({
@@ -1889,6 +2090,7 @@
             });
 
             rebuildPaletteMaterials();
+            _applyVibrancy();   // halo/ghost ring opacities from the slider
         }
 
         function positionCamera() {
@@ -1909,16 +2111,21 @@
         function buildLanes(_floorW, floorD) {
             laneGroup = new T.Group();
             laneStripeMats = [];
-            // Alternating lane stripes for the 7 hand lanes (same teal/blue
-            // as highway_3d, but a notch darker so the brighter discs pop).
-            const colors = [0x2d5476, 0x42759d];
+            // Alternating lane stripes for the 7 hand lanes — theme lane
+            // pair when the active theme defines one, else the stock
+            // teal/blue (a notch darker than highway_3d so discs pop).
+            // _applyStripeColors() retints these on a live theme switch.
+            const tc = _bgThemeColors(_theme);
+            const colors = (tc.lane != null && tc.laneDim != null)
+                ? [tc.laneDim, tc.lane]
+                : [0x2d5476, 0x42759d];
             for (let i = 0; i < LANE_COUNT; i++) {
                 const x = LANE_X0 + i * LANE_GAP;
                 const g = new T.PlaneGeometry(LANE_GAP * 0.96, floorD);
                 const m = new T.MeshBasicMaterial({
                     color: colors[i % 2],
                     transparent: true,
-                    opacity: 0.32,
+                    opacity: _stripeBaseOpacity(),
                 });
                 const stripe = new T.Mesh(g, m);
                 stripe.rotation.x = -Math.PI / 2;
@@ -2035,7 +2242,11 @@
                     const ghostMat = new T.MeshBasicMaterial({
                         color: activePalette[laneCfg.paletteIdx],
                         transparent: true,
-                        opacity: 0.75,
+                        // Vibrancy-driven, evaluated per build — notesGroup is
+                        // rebuilt every frame, so slider changes apply live.
+                        // (The shared mGhostRing is only the hit/miss-tint
+                        // template, not what pending ghosts render with.)
+                        opacity: 0.5 + 0.29 * Math.min(1, Math.max(0, fx.vibrancy)),
                         side: T.DoubleSide,
                     });
                     ghostMat.userData.transient = true;
@@ -2254,13 +2465,14 @@
             if (note.lane < LANE_COUNT && proximity > (_laneProx[note.lane] || 0)) {
                 _laneProx[note.lane] = proximity;
             }
+            const g = _glowMul();   // Glow slider (0.5 default = 1.0x, stock)
             if (laneCfg.kind === 'drum' && note.variant !== 'ghost' && mDrumByLane[note.lane]) {
                 // Subtle pulse via emissiveIntensity — palette-driven base + pulse.
-                mDrumByLane[note.lane].emissiveIntensity = 0.45 + proximity * 0.35;
+                mDrumByLane[note.lane].emissiveIntensity = (0.45 + proximity * 0.35) * g;
             } else if (laneCfg.kind === 'cymbal' && mCymbalByLane[note.lane]) {
-                mCymbalByLane[note.lane].emissiveIntensity = 0.55 + proximity * 0.35;
+                mCymbalByLane[note.lane].emissiveIntensity = (0.55 + proximity * 0.35) * g;
             } else if (laneCfg.kind === 'kick' && mKick) {
-                mKick.emissiveIntensity = 0.6 + proximity * 0.5;
+                mKick.emissiveIntensity = (0.6 + proximity * 0.5) * g;
             }
 
             // Slight scale-up as notes near the hit line gives the eye a
@@ -2374,6 +2586,7 @@
         function _disposeScene() {
             _bloomDispose();   // composer is bound to the renderer we're about to replace
             _disposeFxObjects();
+            _disposeEnv();     // PMREM RT is renderer-bound too; initScene rebuilds it
             if (notesGroup) {
                 while (notesGroup.children.length) {
                     disposeMeshTree(notesGroup.children.pop());
@@ -2419,7 +2632,14 @@
             if (gOpenRing) gOpenRing.dispose();
             if (mOpenRing) mOpenRing.dispose();
             if (ren) ren.dispose();
+            // Floor + hit-bar resources (tracked since the themes PR — they
+            // previously leaked across kit-change scene rebuilds).
+            if (mFloor) mFloor.dispose();
+            if (_gFloor) _gFloor.dispose();
+            if (_hitBarMat) _hitBarMat.dispose();
+            if (_gHitBar) _gHitBar.dispose();
             scene = cam = ren = lights = laneGroup = kitMapGroup = notesGroup = null;
+            ambLight = dirLight = mFloor = _gFloor = _hitBarMat = _gHitBar = null;
             mDrumByLane = mCymbalByLane = mKick = mKickHit = mKickMiss = null;
             mDrumHitByLane = mDrumMissByLane = mCymbalHitByLane = mCymbalMissByLane = null;
             mAccentRing = mGhostRing = mSnareStripe = mBellDot = null;
@@ -2446,6 +2666,7 @@
         function teardown() {
             _bloomDispose();
             _disposeFxObjects();
+            _disposeEnv();
             // HUD cleanup lives here (not only destroy): init() re-runs
             // teardown() for renderer re-initialization, possibly against a
             // different canvas — a stale _hudEl would both linger in the old
@@ -2495,7 +2716,14 @@
             if (gOpenRing) gOpenRing.dispose();
             if (mOpenRing) mOpenRing.dispose();
             if (ren) ren.dispose();
+            // Floor + hit-bar resources (tracked since the themes PR — they
+            // previously leaked across kit-change scene rebuilds).
+            if (mFloor) mFloor.dispose();
+            if (_gFloor) _gFloor.dispose();
+            if (_hitBarMat) _hitBarMat.dispose();
+            if (_gHitBar) _gHitBar.dispose();
             scene = cam = ren = lights = laneGroup = kitMapGroup = notesGroup = null;
+            ambLight = dirLight = mFloor = _gFloor = _hitBarMat = _gHitBar = null;
             mDrumByLane = mCymbalByLane = mKick = mKickHit = mKickMiss = null;
             mDrumHitByLane = mDrumMissByLane = mCymbalHitByLane = mCymbalMissByLane = null;
             mAccentRing = mGhostRing = mSnareStripe = mBellDot = null;
@@ -2516,6 +2744,10 @@
                 settings = readSettings();
                 activePalette = PALETTES[settings.palette];
                 fx = readFxSettings();
+                // Persisted string settings refresh here too — a theme saved
+                // while no instance was listening must not come up stale on a
+                // later init().
+                _theme = readThemeSetting();
 
                 loadThree().then(() => {
                     if (!highwayCanvas) return; // destroyed before load resolved
@@ -2623,7 +2855,7 @@
                 // Approach highlight: raise each lane stripe toward its next
                 // note (accumulated by the rebuildNotes walk above).
                 for (let i = 0; i < laneStripeMats.length; i++) {
-                    laneStripeMats[i].opacity = 0.32 + 0.28 * (_laneProx[i] || 0) * fx.hitFx;
+                    laneStripeMats[i].opacity = _stripeBaseOpacity() + 0.28 * (_laneProx[i] || 0) * fx.hitFx;
                 }
                 _applyLaneFlashes();
                 _refreshHud();
@@ -2732,6 +2964,9 @@
         _variantForHit,
         _classifyTiming,
         readFxSettings,
+        readThemeSetting,
+        _bgThemeColors,
+        BG_THEMES,
         FX_DEFAULTS,
         MIDI_TO_PIECE,
         HIT_TOLERANCE_S,

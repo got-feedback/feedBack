@@ -573,6 +573,7 @@ window._tunerUI = function(state, actions) {
         closeBtn.title = 'Close';
         closeBtn.textContent = '×';
         closeBtn.onclick = () => actions.disable();
+        state.closeBtn = closeBtn;
         header.appendChild(closeBtn);
 
         const settingsBtn = document.createElement('button');
@@ -639,10 +640,26 @@ window._tunerUI = function(state, actions) {
         const skipBtn = document.createElement('button');
         skipBtn.className = 'tuner-skip-btn hidden w-full mt-3 text-[11px] text-fb-textDim hover:text-fb-text border border-fb-border/40 hover:border-fb-border/70 rounded-lg py-1.5 transition-colors';
         skipBtn.textContent = 'Skip';
-        skipBtn.title = 'Dismiss the tuner for this song';
+        skipBtn.title = "I've tuned — play the song";
         skipBtn.onclick = () => actions.disable();
         state.skipBtn = skipBtn;
         state.uiContainer.appendChild(skipBtn);
+
+        // Auto-open escape hatch: leave the song entirely instead of committing to
+        // the play-now choice — so a gated retune is never a one-way trap. Mirrors
+        // Escape (the player's "Back to library" shortcut) and, like Escape, does
+        // NOT record a tuning (you're leaving, not asserting you tuned).
+        const backBtn = document.createElement('button');
+        backBtn.className = 'tuner-back-btn hidden w-full mt-2 text-[11px] text-fb-textDim hover:text-fb-text border border-fb-border/40 hover:border-fb-border/70 rounded-lg py-1.5 transition-colors';
+        backBtn.textContent = 'Back to library';
+        backBtn.title = 'Leave the song (Esc)';
+        backBtn.onclick = () => {
+            const exit = window.feedBack && window.feedBack.requestExitSong;
+            if (typeof exit === 'function') exit();
+            else if (typeof window.requestExitSong === 'function') window.requestExitSong();
+        };
+        state.backBtn = backBtn;
+        state.uiContainer.appendChild(backBtn);
 
         document.body.appendChild(state.uiContainer);
         state.uiContainer.addEventListener('click', (e) => e.stopPropagation());

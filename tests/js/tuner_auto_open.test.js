@@ -9,6 +9,7 @@ const vm = require('node:vm');
 const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
 const TUNER_SCREEN_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'screen.js');
 const TUNING_UTILS_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'utils', 'tuning-utils.js');
+const TUNER_UI_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'utils', 'ui.js');
 
 function loadTuningHelpers() {
     const src = fs.readFileSync(APP_JS, 'utf8');
@@ -459,6 +460,61 @@ test('the tuner badge surfaces a passive coverage cue (badges.js)', () => {
     assert.match(badgesSrc, /function _applyCoverageCue/);
     assert.match(badgesSrc, /report\.retune/);
     assert.match(badgesSrc, /boxShadow/);
+});
+
+// ── Autoplay gate (E2) ─────────────────────────────────────────────────────
+test('gate: claims an autoplay hold on song:loading and releases it on dismiss', async () => {
+    const sandbox = createTunerSandbox({ player: PLAYER_GUITAR_6 });
+    let holds = 0, releases = 0;
+    sandbox.window.feedBack.holdAutoplay = () => { holds++; return () => { releases++; }; };
+    const api = sandbox.window._tunerAutoOpen;
+    await ready(sandbox, DROP_D);        // loads config (feature on)
+    api.resetState();
+    api.onSongLoading();                 // song:loading → claim the gate
+    assert.equal(holds, 1);
+    assert.equal(releases, 0);
+    sandbox.window.tuner.disable();      // dismiss → release (playback proceeds)
+    assert.equal(releases, 1);
+});
+
+test('gate: does not claim a hold when the feature is off', async () => {
+    const sandbox = createTunerSandbox({ player: PLAYER_GUITAR_6, autoOpen: false });
+    let holds = 0;
+    sandbox.window.feedBack.holdAutoplay = () => { holds++; return () => {}; };
+    const api = sandbox.window._tunerAutoOpen;
+    await ready(sandbox, DROP_D);        // loads config (feature OFF)
+    api.onSongLoading();
+    assert.equal(holds, 0);
+});
+
+test('the autoplay gate is a generic core hook with a fail-open backstop (app.js)', () => {
+    const appSrc = fs.readFileSync(APP_JS, 'utf8');
+    assert.match(appSrc, /window\.feedBack\.holdAutoplay = function/);
+    assert.match(appSrc, /AUTOPLAY_HOLD_BACKSTOP_MS/);                       // fail-open: never strand the song
+    assert.match(appSrc, /if \(_autoplayHeld\) \{ _autoplayStart = start;/); // a gated start is stashed
+    assert.match(appSrc, /_clearAutoplayHold\(\);[\s\S]{0,160}emit\('song:loading'/); // reset before plugins re-claim
+    // The hook is generic — app.js still doesn't reference the tuner's internals.
+    assert.doesNotMatch(appSrc, /_tunerAutoOpen|maybeAutoOpenOnTuningChange/);
+});
+
+test('the tuner gates playback via holdAutoplay (screen.js)', () => {
+    const src = fs.readFileSync(TUNER_SCREEN_JS, 'utf8');
+    assert.match(src, /window\.feedBack\.holdAutoplay\(\)/);     // claimed on song:loading
+    assert.match(src, /_gateClaimed = true/);                   // kept when the tuner opens
+    assert.match(src, /if \(!_gateClaimed\) _releaseGate\(\)/);  // released when we don't open
+    assert.match(src, /_releaseGate\(\);[\s\S]{0,80}dismissing a gated/); // released on dismiss
+});
+
+test('gate escape hatch: auto-open offers "Back to library" (+ Esc) and hides the × (ui.js/screen.js)', () => {
+    const ui = fs.readFileSync(TUNER_UI_JS, 'utf8');
+    assert.match(ui, /Back to library/);          // an explicit way out, not only play-now
+    assert.match(ui, /requestExitSong/);          // reuses the standard song-exit path (mirrors Esc)
+    assert.match(ui, /state\.backBtn =/);
+    assert.match(ui, /state\.closeBtn =/);        // × captured so it can be toggled
+
+    const screen = fs.readFileSync(TUNER_SCREEN_JS, 'utf8');
+    assert.match(screen, /_state\.backBtn[\s\S]{0,60}toggle\('hidden', !auto\)/);   // shown on auto-open
+    assert.match(screen, /_state\.closeBtn[\s\S]{0,60}toggle\('hidden', !!auto\)/); // × hidden on auto-open
 });
 
 test('auto-open does not require app.js changes', () => {

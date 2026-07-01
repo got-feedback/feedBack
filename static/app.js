@@ -5990,6 +5990,45 @@ function _resolvePlayerOrigin() {
 // next song:ready. song:ready also fires on arrangement switches / seeks,
 // which never arm the flag, so those don't auto-restart.
 let _pendingAutostart = false;
+// Autoplay gate (window.feedBack.holdAutoplay): a plugin (the tuner) can defer the
+// auto-start of a freshly-loaded song until it's cleared — "tune before you play".
+// The hold is claimed synchronously on song:loading (so it beats this song:ready
+// autostart); release() — or a fail-open backstop — runs the deferred start.
+// Generation-guarded so a newer song invalidates a stale hold. Manual Play never
+// flows through here, so Play always wins.
+let _autoplayHeld = false;
+let _autoplayStart = null;
+let _autoplayGen = 0;
+let _autoplayBackstop = null;
+const AUTOPLAY_HOLD_BACKSTOP_MS = 12000;
+function _clearAutoplayHold() {
+    if (_autoplayBackstop) { clearTimeout(_autoplayBackstop); _autoplayBackstop = null; }
+    _autoplayHeld = false;
+    _autoplayStart = null;
+    _autoplayGen++;
+}
+function _releaseAutoplay(gen) {
+    if (gen !== _autoplayGen) return;            // a newer song superseded this hold
+    if (_autoplayBackstop) { clearTimeout(_autoplayBackstop); _autoplayBackstop = null; }
+    _autoplayHeld = false;
+    const start = _autoplayStart;
+    _autoplayStart = null;
+    if (typeof start === 'function') start();
+}
+window.feedBack.holdAutoplay = function () {
+    const gen = _autoplayGen;
+    _autoplayHeld = true;
+    if (_autoplayBackstop) clearTimeout(_autoplayBackstop);
+    // Fail-open: a hold that's never released (wedged plugin / lost event) must
+    // never permanently block the song.
+    _autoplayBackstop = setTimeout(() => _releaseAutoplay(gen), AUTOPLAY_HOLD_BACKSTOP_MS);
+    let released = false;
+    return function release() {
+        if (released || gen !== _autoplayGen) return;
+        released = true;
+        _releaseAutoplay(gen);
+    };
+};
 window.feedBack.on('song:ready', () => {
     if (!_pendingAutostart) return;
     _pendingAutostart = false;
@@ -6014,27 +6053,30 @@ window.feedBack.on('song:ready', () => {
         if (authors.length) _creditsTimer = setTimeout(hideSongCreditsOverlay, _CREDITS_HOLD_MS);
         return;
     }
-    // "Countdown before song": play a 4-beat count-in, then start. Otherwise
-    // reuse the Play button's start path directly (handles HTML5 + _juceMode).
-    if (_countdownBeforeSongEnabled()) {
-        // The count-in (~2.5s) gives the credits their on-screen dwell.
-        Promise.resolve(startSongCountIn()).catch((err) => console.warn('[app] song count-in failed:', err));
-    } else if (authors.length) {
-        // No count-in window — hold the credits a couple seconds, then start.
-        // _cancelCountIn() and changeArrangement() both clear _creditsTimer, so
-        // a teardown / arrangement switch during the hold cancels this play.
-        _creditsTimer = setTimeout(() => {
-            _creditsTimer = null;
-            // If playback doesn't actually start (e.g. HTML5 autoplay rejection),
-            // song:play never fires — clear the credits promptly rather than
-            // waiting for the backstop. On success the song:play listener owns it.
+    // The actual auto-start: a count-in (which handles HTML5 + _juceMode) or the
+    // Play path directly. Guarded so a manual Play during a gate / credits hold
+    // can't double-toggle, and so a stale (released-after-leaving) start never
+    // begins playback off the player.
+    const start = () => {
+        if (isPlaying) return;
+        if (!document.getElementById('player')?.classList.contains('active')) { hideSongCreditsOverlay(); return; }
+        if (_countdownBeforeSongEnabled()) {
+            Promise.resolve(startSongCountIn()).catch((err) => console.warn('[app] song count-in failed:', err));
+        } else {
             Promise.resolve(togglePlay())
                 .then(() => { if (!isPlaying) hideSongCreditsOverlay(); })
                 .catch((err) => { console.warn('[app] autoplay failed:', err); hideSongCreditsOverlay(); });
-        }, _CREDITS_HOLD_MS);
-    } else {
-        Promise.resolve(togglePlay()).catch((err) => console.warn('[app] autoplay failed:', err));
-    }
+        }
+    };
+    // A plugin (the tuner) may gate playback until it's cleared. The hold was
+    // claimed on song:loading; stash the start and let release()/the backstop run
+    // it. _cancelCountIn()/changeArrangement() clear _creditsTimer below, so a
+    // teardown during the credits dwell still cancels a non-gated play.
+    if (_autoplayHeld) { _autoplayStart = start; return; }
+    // Not gated: a count-in starts now (it owns its on-screen dwell); otherwise
+    // let the credits dwell a couple seconds first, then start.
+    if (_countdownBeforeSongEnabled() || !authors.length) start();
+    else _creditsTimer = setTimeout(() => { _creditsTimer = null; start(); }, _CREDITS_HOLD_MS);
 });
 
 // ── Resume last session ────────────────────────────────────────────────────
@@ -6331,6 +6373,9 @@ async function playSong(filename, arrangement, options) {
     if (!options || options.bridge !== false) {
         _recordPlaybackBridge('playback.window-play-song', 'window.playSong', 'legacy playSong entry point used');
     }
+    // Invalidate any prior song's autoplay gate before plugins re-claim it on the
+    // song:loading emit below.
+    _clearAutoplayHold();
     window.feedBack.emit('song:loading', { filename, arrangement: arrangement ?? null });
 
     // Cancel any pending art/metadata requests

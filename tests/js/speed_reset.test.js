@@ -148,6 +148,7 @@ function loadPlaySong(sandbox) {
         var _playerOriginScreen = null;
         var _pendingAutostart = false;
         function _clearAutoExit() {}
+        function _clearAutoplayHold() {}
         function _resolvePlayerOrigin() { return 'home'; }
         function _recordPlaybackBridge() {}
         function _cancelCountIn() {}

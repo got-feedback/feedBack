@@ -19,6 +19,11 @@
     let _openGen = 0;
     let _onAutoOpenSongLoading = null;
     let _onAutoOpenSongReady = null;
+    // Autoplay gate (E2): when the feature is on, hold playback on song:loading and
+    // release it once we know we won't open (covered / unchanged) or the tuner is
+    // dismissed — so playback waits behind a genuinely-needed retune.
+    let _autoplayRelease = null;
+    let _gateClaimed = false;
 
     // ── Shared mutable state (read/written by screen.js; UI reads via closure) ──
     const _state = {
@@ -362,11 +367,23 @@
         return (await _coverageReport(songInfo)).covered;
     }
 
+    function _releaseGate() {
+        if (_autoplayRelease) { try { _autoplayRelease(); } catch (_) { /* */ } _autoplayRelease = null; }
+    }
+
     function _onAutoOpenSongLoadingHandler() {
         _autoOpenGeneration++;
         _autoOpenDismissedSessionKey = null;
         _lastAutoOpenSessionKey = null;
         _invalidateCoverageCache();
+        // Claim the autoplay gate NOW (synchronously, before song:ready) when the
+        // feature is on, so playback can wait behind a needed retune. Released on
+        // song:ready if we don't open, or when the tuner is dismissed.
+        _releaseGate();
+        _gateClaimed = false;
+        _autoplayRelease = (_state._serverConfig && _state._serverConfig.autoOpenOnTuningChange
+            && window.feedBack && typeof window.feedBack.holdAutoplay === 'function')
+            ? window.feedBack.holdAutoplay() : null;
     }
 
     async function _maybeAutoOpenOnTuningChange() {
@@ -412,6 +429,7 @@
         try {
             await window.tuner.enable({ auto: true });
             if (myGen !== _autoOpenGeneration) return;
+            _gateClaimed = true;   // tuner is open → keep the autoplay gate until it's dismissed
         } catch (e) {
             console.warn('Tuner: auto-open failed:', e && e.message ? e.message : e);
             if (_lastAutoOpenSessionKey === sessionKey) _lastAutoOpenSessionKey = null;
@@ -426,7 +444,10 @@
     function _installAutoOpenListeners() {
         if (_onAutoOpenSongLoading || !window.feedBack?.on) return;
         _onAutoOpenSongLoading = _onAutoOpenSongLoadingHandler;
-        _onAutoOpenSongReady = () => { _maybeAutoOpenOnTuningChange(); };
+        _onAutoOpenSongReady = async () => {
+            await _maybeAutoOpenOnTuningChange();
+            if (!_gateClaimed) _releaseGate();   // not gating this song → let it play
+        };
         window.feedBack.on('song:loading', _onAutoOpenSongLoading);
         window.feedBack.on('song:ready', _onAutoOpenSongReady);
         // The badge (static/v3/badges.js) emits this on the feedBack bus when the player
@@ -635,11 +656,17 @@
         // "Skip" is the auto-open nudge's explicit dismiss; hidden for a manual
         // open (the × / click-away already close those).
         if (_state.skipBtn) _state.skipBtn.classList.toggle('hidden', !auto);
+        // Auto-open shows the "Back to library" escape hatch and hides the ×:
+        // the Skip / Back buttons + Esc are the auto-open's dismiss surface, so a
+        // gated retune always offers a way forward AND a way out.
+        if (_state.backBtn) _state.backBtn.classList.toggle('hidden', !auto);
+        if (_state.closeBtn) _state.closeBtn.classList.toggle('hidden', !!auto);
 
         // Close when clicking outside the panel. Deferred so the badge's opening
         // click doesn't bubble up to the document and fire immediately. Skipped
         // for an auto-open: the user never clicked to open it, so their first
-        // unrelated click must not dismiss it (it persists until Skip/×/leave).
+        // unrelated click must not dismiss it (it persists until Skip / Back to
+        // library / Esc).
         if (!auto) {
             if (_outsideClickClose) document.removeEventListener('click', _outsideClickClose);
             _outsideClickClose = () => { if (_state.enabled) disable(); };
@@ -689,6 +716,7 @@
         const onPlayer = document.getElementById('player')?.classList.contains('active');
         _state.enabled = false;
         _state.autoOpened = false;
+        _releaseGate();   // dismissing a gated auto-open releases playback (it starts now)
         _state.manualTargetFreq = null;
         if (_outsideClickClose) { document.removeEventListener('click', _outsideClickClose); _outsideClickClose = null; }
         if (_state.activeViz) { _state.activeViz.destroy(); _state.activeViz = null; }

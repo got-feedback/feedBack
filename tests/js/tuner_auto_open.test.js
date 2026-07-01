@@ -700,18 +700,20 @@ test('a transient /api/settings failure is not cached — the next coverage read
 // ── PR 9b: mic-verify (assumed -> verified via a per-string check) ──────────
 const VERIFY_TARGETS = [82.41, 110, 146.83, 196, 246.94, 329.63];   // guitar-6 standard freqs
 
-test('mic-verify: all strings in-tune-and-stable promotes to verified', () => {
+test('mic-verify: all strings in-tune-and-stable promotes to verified (with the confirmed offsets)', () => {
     const sandbox = createTunerSandbox();
     const sets = [];
     sandbox.window.feedBack.workingTuning = { get: () => ({ offsets: [0, 0, 0, 0, 0, 0] }), set: (n, o) => sets.push({ n, o }) };
     const api = sandbox.window._tunerAutoOpen;
-    assert.ok(api.verifyStart(VERIFY_TARGETS));
+    assert.ok(api.verifyStart(VERIFY_TARGETS, [-2, 0, 0, 0, 0, 0]));   // verifying a Drop-D tuning
     for (let i = 0; i < 8; i++) api.verifyFeed(82.41, 2);        // one string alone isn't enough
     assert.equal(api.verifyState().complete, false);
     for (const f of VERIFY_TARGETS) { for (let i = 0; i < 8; i++) api.verifyFeed(f, 2); }
     assert.equal(api.verifyState().complete, true);
     assert.equal(sets.length, 1);
     assert.equal(sets[0].o.provenance, 'verified');
+    // The stamp carries the CONFIRMED offsets, not whatever stale offsets the slot held.
+    assert.deepEqual(sets[0].n.offsets, [-2, 0, 0, 0, 0, 0]);
     assert.equal(sets[0].n.verifiedStrings.length, 6);
 });
 
@@ -745,4 +747,6 @@ test('the tuner exposes the mic-verify API and only it claims verified (screen.j
     assert.match(src, /verifyStart:/);
     assert.match(src, /verifyFeed:/);
     assert.match(src, /provenance: 'verified'/);   // the only place that stamps verified
+    // A just-earned 'verified' is not clobbered by the assumed publish-on-clear.
+    assert.match(src, /wasAutoOpened && !_verifiedPublished/);
 });

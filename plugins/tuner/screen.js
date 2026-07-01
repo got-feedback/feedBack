@@ -490,6 +490,12 @@
             const sc = (typeof window.feedBack?.effectiveStringCount === 'function')
                 ? window.feedBack.effectiveStringCount(songInfo.tuning, ctx)
                 : (songInfo.stringCount || songInfo.tuning.length);
+            // A tuning change invalidates an in-flight mic-verify — its captured targets
+            // and offsets are now stale, so it must not complete against the old tuning.
+            if (_verify && String(songInfo.tuning.slice(0, sc)) !== String(_verify.offsets)) {
+                verifyCancel();
+                _tunerUIApi?.resetVerify?.();
+            }
             _state.currentSongOffsets = songInfo.tuning.slice(0, sc);
             _state.currentSongIsBass = isBass;
             _state.currentSongStringCount = sc;
@@ -748,10 +754,13 @@
                 _autoOpenDismissedSessionKey = _autoOpenSessionKey(songInfo);
                 // Clearing an auto-opened tuner = the player tuned to this song:
                 // publish the song's tuning as their instrument's live working tuning
-                // so coverage stops nagging for it (and prompts on the way back).
-                if (wasAutoOpened) _publishWorkingTuning(songInfo);
+                // so coverage stops nagging for it (and prompts on the way back). But
+                // if a mic-verify already wrote 'verified' this session, a plain
+                // 'assumed' publish would immediately clobber it — leave it verified.
+                if (wasAutoOpened && !_verifiedPublished) _publishWorkingTuning(songInfo);
             }
         }
+        _verifiedPublished = false;   // consumed — fresh for the next tuner session
     }
 
     window.tuner = {
@@ -805,6 +814,7 @@
     const VERIFY_TOL_CENTS = 6;
     const VERIFY_STABLE = 8;
     let _verify = null;
+    let _verifiedPublished = false;   // set when a mic-verify wrote 'verified' this session
 
     function verifyState() {
         if (!_verify) return null;
@@ -814,37 +824,54 @@
             remaining: _verify.targets.filter((t) => !t.done).length,
         };
     }
-    function verifyStart(targets) {
+    // Start a verify session for `targets` (freqs; defaults to the selected tuning).
+    // Captures the tuning's OFFSETS now (explicit arg, else the current song's) so that
+    // when it completes we stamp 'verified' onto the exact tuning that was confirmed.
+    function verifyStart(targets, offsets) {
         const freqs = (Array.isArray(targets) && targets.length) ? targets : _state.selectedTuning;
         if (!Array.isArray(freqs) || !freqs.length) return null;
-        _verify = { targets: freqs.map((f) => ({ freq: f, streak: 0, done: false })), complete: false };
+        const offs = (Array.isArray(offsets) && offsets.length) ? offsets.slice()
+            : (Array.isArray(_state.currentSongOffsets) ? _state.currentSongOffsets.slice() : null);
+        _verify = { targets: freqs.map((f) => ({ freq: f, streak: 0, done: false })), complete: false, offsets: offs };
+        _verifiedPublished = false;
         return verifyState();
     }
     function verifyCancel() { _verify = null; }
-    // Feed one processed frame (its matched target freq + cents-off). Advances the
-    // in-tune streak for that string; completes + stamps 'verified' when all pass.
+    // Feed one processed frame (its matched target freq + cents-off). Requires
+    // CONSECUTIVE in-tune frames per string: the one confirmed string advances, and
+    // every other not-yet-done string's streak resets — so a run can't accumulate across
+    // silence / wrong-string / out-of-tune frames. Completes + stamps 'verified' when all pass.
     function verifyFeed(targetFreq, cents) {
-        if (!_verify || _verify.complete || targetFreq == null) return verifyState();
-        const t = _verify.targets.find((x) => Math.abs(x.freq - targetFreq) < 0.5);
-        if (t && !t.done) {
-            if (isFinite(cents) && Math.abs(cents) <= VERIFY_TOL_CENTS) {
-                if (++t.streak >= VERIFY_STABLE) t.done = true;
-            } else {
-                t.streak = 0;
-            }
+        if (!_verify || _verify.complete) return verifyState();
+        let hit = null;
+        if (targetFreq != null) {
+            const t = _verify.targets.find((x) => Math.abs(x.freq - targetFreq) < 0.5);
+            if (t && !t.done && isFinite(cents) && Math.abs(cents) <= VERIFY_TOL_CENTS) hit = t;
+        }
+        for (const t of _verify.targets) {
+            if (t.done) continue;
+            if (t === hit) { if (++t.streak >= VERIFY_STABLE) t.done = true; }
+            else t.streak = 0;
         }
         if (_verify.targets.every((x) => x.done)) {
             _verify.complete = true;
-            _publishVerified(_verify.targets.length);
+            _publishVerified();
         }
         return verifyState();
     }
-    function _publishVerified(stringCount) {
+    // Promote the working tuning to 'verified'. Write the CONFIRMED tuning's offsets
+    // atomically with provenance + verifiedStrings (into the selected instrument's slot),
+    // so 'verified' can never attach to stale offsets the slot happened to hold.
+    function _publishVerified() {
         const wt = window.feedBack && window.feedBack.workingTuning;
         if (!wt || typeof wt.set !== 'function') return;
-        const verifiedStrings = [];
-        for (let i = 0; i < stringCount; i++) verifiedStrings.push(true);
-        try { wt.set({ verifiedStrings }, { provenance: 'verified' }); } catch (_) { /* noop */ }
+        const offsets = (_verify && Array.isArray(_verify.offsets)) ? _verify.offsets.slice() : null;
+        if (!offsets || !offsets.length) return;   // nothing concrete to claim verified
+        const sel = _state._playerSelected;
+        const next = { offsets: offsets, stringCount: offsets.length, verifiedStrings: offsets.map(() => true) };
+        if (sel && sel.key) { next.instrument = sel.isBass ? 'bass' : 'guitar'; next.referencePitch = sel.refPitch; }
+        const opts = (sel && sel.key) ? { instrument: sel.key, provenance: 'verified' } : { provenance: 'verified' };
+        try { wt.set(next, opts); _verifiedPublished = true; } catch (_) { /* noop */ }
     }
 
     window._tunerAutoOpen = {

@@ -4,6 +4,12 @@
  * `fb` palette in tailwind.config.js.
  */
 
+/* Interface-size (Accessibility): the always-present UI-scale token. JS
+   (capabilities/interface-scale.js) overrides it on :root and drives the
+   visible scaling through the root font-size; this default keeps
+   `var(--fb-scale)` resolvable for any canvas/CSS consumer even when unset. */
+:root { --fb-scale: 1; }
+
 /* ── Text-selection policy (v3) ──────────────────────────────────────────────
    Accidental drag/double-click selection of app chrome (sidebar, transport, the
    note highway/HUD, buttons, labels) makes the UI look broken and is never
@@ -604,7 +610,7 @@ html[data-scoreboard="off"] #v3-live-performance-hud { display: none !important;
     align-items: center;
     justify-content: center;
     z-index: 1;
-    font-size: 32px;
+    font-size: 2rem;
     line-height: 1;
 }
 #v3-player-rail .section-practice-control--v3 .section-practice-pill-icon .v3-rail-svg,
@@ -877,7 +883,7 @@ html[data-scoreboard="off"] #v3-live-performance-hud { display: none !important;
     padding: 0 4px;
     display: flex; align-items: center; justify-content: center;
     background: #22d3ee; color: #0f172a;
-    font-size: 10px; font-weight: 800; line-height: 1;
+    font-size: 0.625rem; font-weight: 800; line-height: 1;
     border-radius: 999px; z-index: 2;
 }
 .v3-rail-badge[hidden] { display: none; }
@@ -1118,6 +1124,32 @@ body.font-display { font-family: Rubik, system-ui, sans-serif; }
 .fb-srow-stack .fb-srow-control { width: 100%; }
 .fb-srow-stack .fb-srow-control input[type="text"] { flex: 1 1 auto; min-width: 0; }
 .fb-srow-wide { width: 100%; }
+
+/* Segmented control + fine-tune (Accessibility → Interface size) */
+.fb-seg {
+    display: inline-flex; flex-wrap: wrap; gap: .25rem;
+    background: #0f172a; border: 1px solid rgba(51, 65, 85, .55);
+    border-radius: .7rem; padding: .3rem;
+}
+.fb-seg-btn {
+    appearance: none; border: none; cursor: pointer;
+    padding: .5rem .9rem; min-height: 2rem; border-radius: .5rem;
+    font-size: .82rem; font-weight: 600; color: #94a3b8; background: transparent;
+    transition: background .15s, color .15s;
+}
+.fb-seg-btn:hover { color: #e2e8f0; }
+.fb-seg-btn.active { background: #0ea5e9; color: #04263a; }
+.fb-seg-btn:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+.fb-finetune { margin-top: .6rem; }
+.fb-finetune > summary {
+    font-size: .78rem; font-weight: 600; color: #94a3b8; cursor: pointer;
+    list-style: none; display: inline-flex; align-items: center; gap: .35rem;
+}
+.fb-finetune > summary::-webkit-details-marker { display: none; }
+.fb-finetune > summary::before { content: "\25B8"; font-size: .7rem; transition: transform .15s; }
+.fb-finetune[open] > summary::before { transform: rotate(90deg); }
+.fb-finetune-body { display: flex; align-items: center; gap: 1rem; margin-top: .6rem; }
+.fb-seg-val { font-size: .8rem; color: #94a3b8; min-width: 3rem; text-align: right; }
 
 /* Toggle switch */
 .fb-switch { position: relative; display: inline-block; width: 2.6rem; height: 1.5rem; flex: none; }

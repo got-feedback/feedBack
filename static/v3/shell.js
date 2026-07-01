@@ -179,7 +179,7 @@
             const items = NAV.filter((n) => n.group === group);
             if (!items.length) continue;
             const itemsHTML = items.map((it) => navItemHTML(it) + promotedSlotHTML(it.key)).join('');
-            html += '<div><div class="v3-nav-group px-3 mb-1 text-[10px] uppercase tracking-wider font-semibold text-fb-textDim/70">' +
+            html += '<div><div class="v3-nav-group px-3 mb-1 text-[0.625rem] uppercase tracking-wider font-semibold text-fb-textDim/70">' +
                 group + '</div><div class="space-y-0.5">' + itemsHTML + '</div></div>';
         }
         nav.innerHTML = html;

@@ -60,6 +60,24 @@
             } catch (_) { /* file:// or sandboxed iframe */ }
         })();
     </script>
+    <!-- Interface size (Accessibility): apply the saved UI scale to the root
+         font-size BEFORE any stylesheet paints, so there is no flash-of-reflow
+         on load. Mirrors capabilities/interface-scale.js, which is the
+         authoritative owner and re-applies once it parses. Relative % (never a
+         px literal) so a raised browser/OS base font size is respected. -->
+    <script>
+        (function () {
+            try {
+                var raw = localStorage.getItem('v3-interface-scale');
+                if (raw == null) return;
+                var v = Math.min(1.5, Math.max(0.85, parseFloat(raw)));
+                if (!isFinite(v) || Math.abs(v - 1) < 0.001) return;
+                var el = document.documentElement;
+                el.style.setProperty('--fb-scale', String(v));
+                el.style.fontSize = (v * 100).toFixed(2) + '%';
+            } catch (_) { /* file:// or private mode */ }
+        })();
+    </script>
     <!-- fee[dB]ack mark (the [dB] motif). SVG primary, PNG fallback. -->
     <link rel="icon" type="image/svg+xml" href="/static/v3/brand/favicon.svg">
     <link rel="icon" type="image/png" sizes="32x32" href="/static/v3/brand/favicon-32.png">
@@ -96,6 +114,7 @@
     <script src="/static/capabilities/visualization.js"></script>
     <script src="/static/capabilities/note-detection.js"></script>
     <script src="/static/capabilities/midi-input.js"></script>
+    <script src="/static/capabilities/interface-scale.js"></script>
 </head>
 <body class="h-screen flex overflow-hidden bg-fb-sidebar text-fb-text font-display">
 
@@ -359,6 +378,7 @@
                  panels (manifest settings.category routes the others). -->
             <div class="fb-tabbar" id="settings-tabbar">
                 <button type="button" class="fb-tab" data-tab="gameplay">Gameplay</button>
+                <button type="button" class="fb-tab" data-tab="accessibility">Accessibility</button>
                 <button type="button" class="fb-tab" data-tab="audio">Audio</button>
                 <button type="button" class="fb-tab" data-tab="graphics">Graphics</button>
                 <button type="button" class="fb-tab" data-tab="keybinds">Keybinds</button>
@@ -536,6 +556,39 @@
                                 <span class="fb-switch-track"></span>
                             </label>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ ACCESSIBILITY ═══════════════════════════════════════════ -->
+            <div class="fb-tabpanel" data-tab="accessibility">
+                <div class="fb-tabpanel-head"><h3>Accessibility</h3></div>
+                <div class="fb-srows">
+                    <!-- Interface size -->
+                    <div class="fb-srow fb-srow-stack">
+                        <div style="display:flex; align-items:center; gap:1rem;">
+                            <span class="fb-srow-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V5a1 1 0 011-1h14a1 1 0 011 1v2M9 20h6M12 4v16"/></svg></span>
+                            <div class="fb-srow-main">
+                                <div class="fb-srow-title">Interface size</div>
+                                <div class="fb-srow-desc">Make the app&rsquo;s menus, buttons and text larger or smaller. This changes the <strong>app interface</strong> &mdash; not the notes on the note highway (set those under <strong>Graphics</strong>). On desktop you can also press <strong>Ctrl&nbsp;+</strong> / <strong>Ctrl&nbsp;&minus;</strong> to zoom the whole window.</div>
+                            </div>
+                        </div>
+                        <div class="fb-seg" id="setting-interface-size" role="group" aria-label="Interface size">
+                            <button type="button" class="fb-seg-btn" data-scale="0.90" aria-pressed="false" onclick="window.feedBack.scale.set(0.90)">Small</button>
+                            <button type="button" class="fb-seg-btn" data-scale="1.00" aria-pressed="false" onclick="window.feedBack.scale.set(1.00)">Medium</button>
+                            <button type="button" class="fb-seg-btn" data-scale="1.15" aria-pressed="false" onclick="window.feedBack.scale.set(1.15)">Large</button>
+                            <button type="button" class="fb-seg-btn" data-scale="1.30" aria-pressed="false" onclick="window.feedBack.scale.set(1.30)">Extra&nbsp;Large</button>
+                        </div>
+                        <p class="fb-srow-desc" style="margin-top:.55rem;">Larger sizes are recommended for large or high-resolution displays.</p>
+                        <details class="fb-finetune">
+                            <summary>Fine-tune size</summary>
+                            <div class="fb-finetune-body">
+                                <input type="range" id="setting-interface-size-slider" min="85" max="150" step="5" value="100"
+                                    oninput="window.feedBack.scale.set(this.value / 100)" class="fb-srow-wide slider-input"
+                                    aria-label="Interface size percent">
+                                <span class="fb-seg-val"><span id="setting-interface-size-val">100</span>%</span>
+                            </div>
+                        </details>
                     </div>
                 </div>
             </div>
@@ -1147,10 +1200,12 @@
     <script src="/static/v3/lessons.js"></script>
     <script src="/static/v3/dashboard.js"></script>
     <script src="/static/v3/settings.js"></script>
+    <script src="/static/v3/interface-size-ui.js"></script>
     <!-- First-run home tour: spotlights the home cards via the shared tour
          engine (tour-engine.js, loaded above). Auto-runs once after onboarding
          (triggered from profile.js finish()); replayable from the "?" menu. -->
     <script src="/static/v3/onboarding-tour.js"></script>
+    <script src="/static/v3/interface-size-nudge.js"></script>
     <script src="/static/v3/feedbarcade.js"></script>
     <script src="/static/v3/player-chrome.js"></script>
     <script>

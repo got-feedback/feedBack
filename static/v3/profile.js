@@ -82,10 +82,10 @@
             '<span class="text-base font-extrabold tracking-tight leading-none">' + (p.current_streak || 0) + ' DAYS</span></div>' +
             '<div class="flex items-end gap-2">' +
             '<div class="flex flex-col leading-none">' +
-            '<span class="text-gray-400 text-[10px] font-medium">Rank:</span>' +
+            '<span class="text-gray-400 text-[0.625rem] font-medium">Rank:</span>' +
             '<span class="text-xl font-bold leading-none">' + rank + '</span></div>' +
             '<div class="flex items-end gap-1">' + bars + '</div>' +
-            '<span class="text-[10px] font-semibold text-fb-gold leading-none">' + Number(balance).toLocaleString() + ' dB</span>' +
+            '<span class="text-[0.625rem] font-semibold text-fb-gold leading-none">' + Number(balance).toLocaleString() + ' dB</span>' +
             '</div></div></button>';
         // Equipped avatar frame (spec 010 cosmetics).
         if (window.v3Theme && typeof window.v3Theme.applyFrame === 'function') {
@@ -178,7 +178,7 @@
             '<div id="v3-profile-bests" class="text-sm text-fb-textDim">Play a song to start tracking your accuracy and best scores.</div>' +
             '</div>';
         const playerIdFooter = (_profile && _profile.player_hash
-            ? '<p class="text-center text-[10px] uppercase tracking-wider text-fb-textDim/60">player id ' + esc(_profile.player_hash.slice(0, 12)) + '</p>'
+            ? '<p class="text-center text-[0.625rem] uppercase tracking-wider text-fb-textDim/60">player id ' + esc(_profile.player_hash.slice(0, 12)) + '</p>'
             : '');
         root.innerHTML =
             '<div class="max-w-4xl mx-auto p-6 md:p-8">' +

@@ -296,7 +296,7 @@
             '<div class="shrink-0 flex flex-col gap-[3px] items-center justify-center">' + meter + '</div>' +
             '<div class="min-w-0 text-white text-center leading-none">' +
             '<div data-tuner-note class="text-2xl font-black italic tracking-tighter leading-none">' + esc(initNote) + '</div>' +
-            '<div data-tuner-hz class="text-[9px] text-gray-400 mt-0.5 tracking-wider truncate">' + hz + 'hz</div>' +
+            '<div data-tuner-hz class="text-[0.5625rem] text-gray-400 mt-0.5 tracking-wider truncate">' + hz + 'hz</div>' +
             '</div></button>' +
             '</div>';
         host.querySelector('[data-open-tuner]').addEventListener('click', (e) => {
@@ -399,7 +399,7 @@
             // Live working-tuning label: dim while you're still in your home tuning,
             // amber once you've retuned. Omitted if the host doesn't expose
             // workingTuning (feature-detect → the card looks exactly as before).
-            (wt ? '<span class="text-[9px] leading-none font-semibold max-w-full truncate px-0.5 ' +
+            (wt ? '<span class="text-[0.5625rem] leading-none font-semibold max-w-full truncate px-0.5 ' +
                 (wt.isHome ? 'text-fb-textDim' : 'text-amber-400') + '">' + esc(wt.short) + '</span>' : '') +
             '<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>' +
             '</button>' +
@@ -410,21 +410,21 @@
                 ? '<div class="flex items-center justify-between gap-2 pb-1 border-b border-fb-border/40">' +
                   '<div class="min-w-0"><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim">Now in</div>' +
                   '<div class="text-xs font-semibold text-amber-400 truncate flex items-center gap-1">' + esc(wt.label) + ' ' + provenanceGlyph(wt.provenance) + '</div></div>' +
-                  '<button type="button" data-inst-reset title="Reset this instrument to its home tuning" class="shrink-0 text-[11px] text-fb-textDim hover:text-fb-text border border-fb-border/40 hover:border-fb-border/70 rounded-md px-2 py-1 transition-colors">Back to default</button>' +
+                  '<button type="button" data-inst-reset title="Reset this instrument to its home tuning" class="shrink-0 text-[0.6875rem] text-fb-textDim hover:text-fb-text border border-fb-border/40 hover:border-fb-border/70 rounded-md px-2 py-1 transition-colors">Back to default</button>' +
                   '</div>'
                 : '') +
             instRow('Instrument', ['guitar', 'bass'].map((v) =>
                 pill('inst', v, v[0].toUpperCase() + v.slice(1), settings.instrument === v)).join('')) +
             instRow('Strings', STRING_COUNTS[settings.instrument].map((v) =>
                 pill('strings', v, v + '', settings.string_count === v)).join('')) +
-            '<div><div class="text-[10px] uppercase tracking-wider text-fb-textDim mb-1">Tuning</div>' +
+            '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">Tuning</div>' +
             '<select data-inst-tuning class="w-full bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1.5 text-xs text-fb-text outline-none focus:border-fb-primary">' +
             // An offset-array tuning has no named option — surface it as a
             // disabled, selected 'Custom' entry so the dropdown reflects reality
             // (picking a named tuning still works and replaces the custom one).
             (typeof settings.tuning === 'string' ? '' : '<option selected disabled>Custom</option>') +
             _tuningsForInstrument(settings.instrument, settings.string_count).map((t) => '<option' + (t === settings.tuning ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select></div>' +
-            '<div><div class="flex justify-between text-[10px] uppercase tracking-wider text-fb-textDim mb-1"><span>Reference pitch</span><span data-ref-val>' + settings.reference_pitch + ' Hz</span></div>' +
+            '<div><div class="flex justify-between text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1"><span>Reference pitch</span><span data-ref-val>' + settings.reference_pitch + ' Hz</span></div>' +
             '<input data-inst-ref type="range" min="430" max="450" step="1" value="' + settings.reference_pitch + '" class="w-full slider-input"></div>' +
             '</div></div>';
 
@@ -478,7 +478,7 @@
         });
     }
     function instRow(label, inner) {
-        return '<div><div class="text-[10px] uppercase tracking-wider text-fb-textDim mb-1">' + label + '</div><div class="flex flex-wrap gap-1">' + inner + '</div></div>';
+        return '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">' + label + '</div><div class="flex flex-wrap gap-1">' + inner + '</div></div>';
     }
     function pill(group, val, label, active) {
         return '<button type="button" data-pill="' + group + '" data-val="' + val + '" class="px-2 py-1 rounded-md text-xs ' +

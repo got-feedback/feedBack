@@ -67,7 +67,7 @@
         const l = fmtName(song);
         if (!l) return '';
         const c = l === 'FEEDPAK' ? 'bg-fb-primary text-white' : 'bg-black/70 text-fb-textDim';
-        return '<span class="absolute bottom-0 left-0 ' + c + ' text-[9px] font-bold px-1.5 py-0.5 rounded-tr-md tracking-wide">' + l + '</span>';
+        return '<span class="absolute bottom-0 left-0 ' + c + ' text-[0.5625rem] font-bold px-1.5 py-0.5 rounded-tr-md tracking-wide">' + l + '</span>';
     }
     // Inline pill for the hero (Pick/Continue) card, where the art is text-overlaid
     // and a corner badge would collide — sits next to the card's label instead.
@@ -75,7 +75,7 @@
         const l = fmtName(song);
         if (!l) return '';
         const c = l === 'FEEDPAK' ? 'bg-fb-primary/20 text-fb-primary' : 'bg-fb-card/80 text-fb-textDim';
-        return '<span class="' + c + ' text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide shrink-0">' + l + '</span>';
+        return '<span class="' + c + ' text-[0.5625rem] font-bold px-1.5 py-0.5 rounded tracking-wide shrink-0">' + l + '</span>';
     }
 
     // ── Continue-Playing resume ──────────────────────────────────────────---

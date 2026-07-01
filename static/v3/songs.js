@@ -659,7 +659,7 @@
         const l = fmtLabel(song);
         if (!l) return '';
         const c = l === 'FEEDPAK' ? 'bg-fb-primary text-white' : 'bg-black/70 text-fb-textDim';
-        return '<span class="absolute bottom-0 left-0 ' + c + ' text-[9px] font-bold px-1.5 py-0.5 rounded-tr-md tracking-wide">' + l + '</span>';
+        return '<span class="absolute bottom-0 left-0 ' + c + ' text-[0.5625rem] font-bold px-1.5 py-0.5 rounded-tr-md tracking-wide">' + l + '</span>';
     }
 
     // Personal-layer badges (P2): a difficulty pip + a tag count, painted from the
@@ -672,8 +672,8 @@
         const tags = song.tags || [];
         if (d == null && !tags.length) return '';
         let out = '<div class="absolute top-2 right-2 flex gap-1 opacity-100 group-hover:opacity-0 transition pointer-events-none">';
-        if (d != null) out += '<span class="bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded" title="Your difficulty: ' + esc(DIFF_LABELS[d] || d) + '">◆' + esc(d) + '</span>';
-        if (tags.length) out += '<span class="bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded" title="Tags: ' + esc(tags.join(', ')) + '">🏷' + tags.length + '</span>';
+        if (d != null) out += '<span class="bg-black/60 text-white text-[0.625rem] font-bold px-1.5 py-0.5 rounded" title="Your difficulty: ' + esc(DIFF_LABELS[d] || d) + '">◆' + esc(d) + '</span>';
+        if (tags.length) out += '<span class="bg-black/60 text-white text-[0.625rem] font-bold px-1.5 py-0.5 rounded" title="Tags: ' + esc(tags.join(', ')) + '">🏷' + tags.length + '</span>';
         return out + '</div>';
     }
 
@@ -685,7 +685,7 @@
     // card layout.
     function arrChipsHtml(song) {
         return (song.arrangements || []).slice(0, 4).map((a) =>
-            '<button data-arr="' + esc(a.index != null ? a.index : '') + '" title="Play ' + esc(a.name) + '" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800/60 text-fb-textDim hover:bg-fb-primary hover:text-white transition">' + esc(a.name) + '</button>').join('');
+            '<button data-arr="' + esc(a.index != null ? a.index : '') + '" title="Play ' + esc(a.name) + '" class="text-[0.625rem] px-1.5 py-0.5 rounded bg-gray-800/60 text-fb-textDim hover:bg-fb-primary hover:text-white transition">' + esc(a.name) + '</button>').join('');
     }
 
     // ⚑ multi-chart chip (P5c, design §7.1): the persistent "other versions
@@ -698,7 +698,7 @@
     function chartsChipHtml(song) {
         const n = song.chart_count;
         if (!(n >= 2) || !song.work_key) return '';
-        return '<button data-charts="' + esc(song.work_key) + '" title="' + n + ' charts of this song" aria-label="' + n + ' charts of this song" class="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-fb-primary/15 text-fb-primary border border-fb-primary/40 hover:bg-fb-primary hover:text-white transition">⚑ ' + n + ' charts</button>';
+        return '<button data-charts="' + esc(song.work_key) + '" title="' + n + ' charts of this song" aria-label="' + n + ' charts of this song" class="shrink-0 text-[0.625rem] px-1.5 py-0.5 rounded bg-fb-primary/15 text-fb-primary border border-fb-primary/40 hover:bg-fb-primary hover:text-white transition">⚑ ' + n + ' charts</button>';
     }
 
     // ── Tuning-match flags (working-tuning PR 6) ───────────────────────────────
@@ -776,10 +776,10 @@
                 ? ' data-tuning-chip data-tuning-offsets="' + esc(rawOffsets.join(',')) + '"'
                     + (chipIsBass ? ' data-tuning-bass="1"' : '') : '';
             if (targetNotes) {
-                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[9px] font-bold px-1.5 py-0.5 rounded-sm leading-tight max-w-[5.5rem] text-center"' + matchAttr + ' title="' + esc(badgeTitle) + '">'
+                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.5625rem] font-bold px-1.5 py-0.5 rounded-sm leading-tight max-w-[5.5rem] text-center"' + matchAttr + ' title="' + esc(badgeTitle) + '">'
                     + esc('Custom Tuning') + '<br><span class="font-semibold tracking-wide">' + esc(targetNotes) + '</span></span>';
             } else {
-                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[10px] font-bold px-1.5 py-0.5 rounded-sm"' + matchAttr + ' title="' + esc(badgeTitle) + '">' + esc(tuningLabel) + '</span>';
+                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.625rem] font-bold px-1.5 py-0.5 rounded-sm"' + matchAttr + ' title="' + esc(badgeTitle) + '">' + esc(tuningLabel) + '</span>';
             }
         }
         // Display-only (pointer-events-none) so a click falls through to the
@@ -871,7 +871,7 @@
             '<button data-act="' + esc(r.id) + '" class="w-full text-left px-3 py-1.5 hover:bg-fb-card/60 ' +
             (r.enabled === false ? 'opacity-40 cursor-not-allowed ' : '') +
             (r.destructive ? 'text-fb-accent' : 'text-fb-text') + '">' + esc(r.label) +
-            (r.plugin && r.plugin !== 'core' ? '<span class="text-[10px] text-fb-textDim ml-1">' + esc(r.plugin) + '</span>' : '') + '</button>').join('');
+            (r.plugin && r.plugin !== 'core' ? '<span class="text-[0.625rem] text-fb-textDim ml-1">' + esc(r.plugin) + '</span>' : '') + '</button>').join('');
         if (pos) {
             // Right-click: position the menu at the pointer (fixed, viewport-
             // relative), clamped so it never spills off the right/bottom edge.
@@ -945,7 +945,7 @@
                 ? window.displayTuningName(c.tuning_name || c.tuning) : (c.tuning_name || '');
             return '<button data-ver="' + esc(c.filename) + '" title="' + esc(c.filename) + '" class="w-full text-left px-3 py-1.5 hover:bg-fb-card/60 text-fb-text">' +
                 (c.is_representative ? '<span class="text-fb-primary">●</span> ' : '') + esc(c.title) +
-                (tl ? '<span class="text-[10px] text-fb-textDim ml-1">' + esc(tl) + '</span>' : '') +
+                (tl ? '<span class="text-[0.625rem] text-fb-textDim ml-1">' + esc(tl) + '</span>' : '') +
                 '</button>';
         }).join('');
         menu.querySelectorAll('[data-ver]').forEach((vb) => vb.addEventListener('click', (e) => {
@@ -1041,8 +1041,8 @@
               '<div class="min-w-0">' +
                 '<div class="text-sm text-fb-text truncate" title="' + esc(c.title) + '">' + esc(c.title) + '</div>' +
                 '<div class="text-xs text-fb-textDim truncate">' + esc(meta) + ' · ' + acc + '</div>' +
-                '<div class="text-[10px] text-fb-textDim/60 truncate" title="' + esc(c.filename) + '">' + esc(c.filename) + '</div>' +
-                (prefLabel ? '<div class="text-[10px] font-semibold text-fb-primary mt-0.5">' + esc(prefLabel) + '</div>' : '') +
+                '<div class="text-[0.625rem] text-fb-textDim/60 truncate" title="' + esc(c.filename) + '">' + esc(c.filename) + '</div>' +
+                (prefLabel ? '<div class="text-[0.625rem] font-semibold text-fb-primary mt-0.5">' + esc(prefLabel) + '</div>' : '') +
               '</div>' +
               '<button data-ch-play title="Play this chart" aria-label="Play this chart" class="shrink-0 w-8 h-8 rounded-full bg-fb-primary hover:bg-fb-primaryHi text-white text-sm leading-none">▶</button>' +
             '</div>' +
@@ -1075,7 +1075,7 @@
         // switch — the headline may drop because history stays with each chart
         // (motor mastery is arrangement-specific). Text only, no toast/sound.
         const switchNote = (opts && opts.switched)
-            ? '<div class="text-[11px] text-fb-primary/90 border border-fb-primary/30 rounded-md px-2 py-1.5">Practice history stays with each chart — your new pick starts from its own stats.</div>'
+            ? '<div class="text-[0.6875rem] text-fb-primary/90 border border-fb-primary/30 rounded-md px-2 py-1.5">Practice history stays with each chart — your new pick starts from its own stats.</div>'
             : '';
         dr.innerHTML =
             '<div class="p-5 space-y-4">' +
@@ -1092,7 +1092,7 @@
               '</div>' +
               (data.preferred_source === 'user'
                 ? '<button data-charts-auto class="w-full text-sm text-fb-textDim hover:text-fb-text border border-fb-border/50 rounded-md py-2">Reset to auto pick</button>'
-                : '<div class="text-[11px] text-fb-textDim">Auto pick sticks with a chart you\'ve practised; otherwise most complete → newest. Tap a chart to pin your keeper.</div>') +
+                : '<div class="text-[0.6875rem] text-fb-textDim">Auto pick sticks with a chart you\'ve practised; otherwise most complete → newest. Tap a chart to pin your keeper.</div>') +
             '</div>';
 
         dr.querySelector('[data-charts-close]').addEventListener('click', closeChartsDrawer);
@@ -1457,7 +1457,7 @@
 
                 '<div><div class="text-xs text-fb-textDim mb-1">Difficulty (for you)</div>' +
                 '<div class="flex flex-wrap gap-1 items-center">' + diffBtn('keep', 'Leave') + diffBtn(1, '1') + diffBtn(2, '2') + diffBtn(3, '3') + diffBtn(4, '4') + diffBtn(5, '5') + diffBtn('clear', 'Clear') + '</div>' +
-                '<div class="text-[11px] text-fb-textDim mt-1">"Leave" keeps each song&#39;s own value; a number or Clear applies to all ' + fns.length + '.</div></div>' +
+                '<div class="text-[0.6875rem] text-fb-textDim mt-1">"Leave" keeps each song&#39;s own value; a number or Clear applies to all ' + fns.length + '.</div></div>' +
 
                 '<div><div class="text-xs text-fb-textDim mb-1">Add tags to all</div>' +
                 '<div class="flex flex-wrap gap-1 mb-2">' + (addChips || '<span class="text-xs text-fb-textDim">None</span>') + '</div>' +
@@ -2040,7 +2040,7 @@
                     '<img src="' + esc(artUrl(s)) + '" alt="" loading="lazy" decoding="async" class="w-8 h-8 rounded object-cover bg-fb-card cursor-pointer' + (sel ? ' ring-2 ring-fb-primary' : '') + '" data-v3-play onerror="this.style.visibility=\'hidden\'">' +
                     '<span class="flex-1 min-w-0 cursor-pointer" data-v3-play><span class="block text-sm text-fb-text truncate">' + esc(s.title) + '</span></span>' +
                     (chips ? '<span class="hidden sm:flex items-center gap-1 shrink-0">' + chips + '</span>' : '') +
-                    (fl ? '<span class="text-[9px] font-bold px-1 py-0.5 rounded shrink-0 ' + (fl === 'FEEDPAK' ? 'bg-fb-primary/20 text-fb-primary' : 'bg-fb-card text-fb-textDim') + '">' + fl + '</span>' : '') +
+                    (fl ? '<span class="text-[0.5625rem] font-bold px-1 py-0.5 rounded shrink-0 ' + (fl === 'FEEDPAK' ? 'bg-fb-primary/20 text-fb-primary' : 'bg-fb-card text-fb-textDim') + '">' + fl + '</span>' : '') +
                     accuracyBadge(k, 'tree') +
                     // Same fav / save-for-later / overflow-menu cluster as the grid
                     // card. Always shown (like the arrangement chips), not hover-
@@ -2249,7 +2249,7 @@
                 '<button data-tag-rm="' + esc(t) + '" aria-label="Remove tag ' + esc(t) + '" class="text-fb-textDim hover:text-fb-accent leading-none">×</button></span>').join('')
             : '<span class="text-xs text-fb-textDim">No tags yet</span>';
         const suggest = (vocab || []).filter((v) => !applied.has(v.tag)).slice(0, 8).map((v) =>
-            '<button data-tag-add="' + esc(v.tag) + '" class="text-[11px] px-2 py-0.5 rounded-full bg-gray-800/60 text-fb-textDim hover:bg-fb-primary hover:text-white transition">' + esc(v.tag) + '</button>').join('');
+            '<button data-tag-add="' + esc(v.tag) + '" class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-gray-800/60 text-fb-textDim hover:bg-fb-primary hover:text-white transition">' + esc(v.tag) + '</button>').join('');
         const field = (id, label, val) =>
             '<div><label for="' + id + '" class="text-xs text-fb-textDim mb-1 block">' + label + '</label>' +
             '<input type="text" id="' + id + '" value="' + esc(val) + '" class="w-full bg-fb-card border border-fb-border/60 rounded-lg px-3 py-2 text-sm text-fb-text outline-none focus:border-fb-primary/60"></div>';
@@ -2260,22 +2260,22 @@
             '<div class="flex items-center gap-3">' +
             '<div class="relative group cursor-pointer shrink-0" data-det-art title="Change album art">' +
             '<img src="' + esc(art) + '" alt="" class="w-16 h-16 rounded-lg object-cover bg-fb-card" id="det-art-preview" onerror="this.style.visibility=\'hidden\'">' +
-            '<div class="absolute inset-0 bg-black/50 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-[10px] text-white">Change</div>' +
+            '<div class="absolute inset-0 bg-black/50 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-[0.625rem] text-white">Change</div>' +
             '<input type="file" accept="image/*" id="det-art-file" class="hidden"></div>' +
             '<div class="min-w-0"><div class="text-sm text-fb-text truncate" title="' + esc(song.title || song.filename) + '">' + esc(song.title || song.filename) + '</div>' +
             '<div class="mt-1"><button data-det-fav class="text-xs ' + (st.fav ? 'text-fb-accent' : 'text-fb-textDim hover:text-fb-text') + '">' + (st.fav ? '♥ Liked' : '♡ Like') + '</button>' +
-            '<span class="text-[10px] text-fb-textDim ml-1">a like, not a rating</span></div></div></div>' +
+            '<span class="text-[0.625rem] text-fb-textDim ml-1">a like, not a rating</span></div></div></div>' +
 
             // Identity — writes back into the feedpak FILE
             '<div class="space-y-3"><div class="flex items-center gap-2"><div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Identity</div>' +
-            '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800/70 text-fb-textDim border border-gray-700" title="These came from the song&#39;s feedpak. Editing them writes back to the file.">From pack</span></div>' +
+            '<span class="text-[0.625rem] px-1.5 py-0.5 rounded-full bg-gray-800/70 text-fb-textDim border border-gray-700" title="These came from the song&#39;s feedpak. Editing them writes back to the file.">From pack</span></div>' +
             field('det-title', 'Title', st.t) + field('det-artist', 'Artist', st.a) + field('det-album', 'Album', st.al) +
             '<div><label for="det-year" class="text-xs text-fb-textDim mb-1 block">Year</label><input type="text" inputmode="numeric" id="det-year" value="' + esc(st.y) + '" placeholder="e.g. 2024" class="w-full bg-fb-card border border-fb-border/60 rounded-lg px-3 py-2 text-sm text-fb-text outline-none focus:border-fb-primary/60"></div></div>' +
 
             // Personal practice layer — local, never shared
             '<div class="space-y-3 pt-1"><div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Your practice <span class="normal-case font-normal text-fb-textDim/70">· stays on this device</span></div>' +
             '<div><div class="flex items-center justify-between mb-1"><label class="text-xs text-fb-textDim">Difficulty (for you)</label>' +
-            '<button data-diff-clear class="text-[11px] text-fb-textDim hover:text-fb-text ' + (st.diff == null ? 'invisible' : '') + '">Clear</button></div>' +
+            '<button data-diff-clear class="text-[0.6875rem] text-fb-textDim hover:text-fb-text ' + (st.diff == null ? 'invisible' : '') + '">Clear</button></div>' +
             '<div class="flex gap-1 items-center">' + diffBtns + '<span class="text-xs text-fb-textDim ml-2">' + esc(st.diff ? DIFF_LABELS[st.diff] : 'Not set') + '</span></div></div>' +
             '<div><label for="det-tag-input" class="text-xs text-fb-textDim mb-1 block">Tags</label>' +
             '<div class="flex flex-wrap gap-1 mb-2" data-det-tags>' + tagChips + '</div>' +
@@ -2437,7 +2437,7 @@
             const rows = list.map((a) => {
                 const checked = st.sel.has(a.name) ? ' checked' : '';
                 const mapped = (a.canonical && a.canonical.toLowerCase() !== (a.name || '').toLowerCase())
-                    ? '<span class="text-[11px] text-fb-primary ml-1">→ ' + esc(a.canonical) + '</span>' : '';
+                    ? '<span class="text-[0.6875rem] text-fb-primary ml-1">→ ' + esc(a.canonical) + '</span>' : '';
                 return '<label class="flex items-center gap-2 px-2 py-1 rounded hover:bg-fb-card/50 cursor-pointer">' +
                     '<input type="checkbox" data-tidy-sel="' + esc(a.name) + '"' + checked + ' class="w-4 h-4 accent-fb-primary shrink-0">' +
                     '<span class="text-sm text-fb-text truncate flex-1">' + esc(a.name) + mapped + '</span>' +

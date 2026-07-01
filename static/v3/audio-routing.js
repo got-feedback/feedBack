@@ -71,7 +71,7 @@
             '<div class="flex items-center gap-2 text-xs text-fb-textDim mb-3">' +
             '<svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 18V5l12-2v13M9 13l12-2"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>' +
             '<span>Audio Routing</span></div>' +
-            '<div class="flex items-center gap-2 text-[11px] text-fb-textDim">' +
+            '<div class="flex items-center gap-2 text-[0.6875rem] text-fb-textDim">' +
             dot(st.inputAvailable) + '<span>Input</span>' +
             '<span class="flex-1 border-t border-dashed border-fb-border/70"></span>' +
             dot(st.effectActive) + '<span>VST/NAM/IR</span>' +

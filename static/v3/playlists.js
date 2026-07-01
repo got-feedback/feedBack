@@ -58,7 +58,7 @@
         const handle = opts.draggable
             ? '<span class="cursor-grab text-fb-textDim/60 px-1" title="Drag to reorder">⠿</span>' : '';
         const tuning = s.tuning_name
-            ? '<span class="ml-2 text-[10px] bg-fb-mid text-black font-bold px-1.5 py-0.5 rounded-sm">' + esc(s.tuning_name) + '</span>' : '';
+            ? '<span class="ml-2 text-[0.625rem] bg-fb-mid text-black font-bold px-1.5 py-0.5 rounded-sm">' + esc(s.tuning_name) + '</span>' : '';
         // ── Curated-album slot extras (P6) — mixes/saved emit none of this ──
         // A slot plays its RESOLVED chart (data-play-fn: the pinned file, or
         // the work's current keeper when the pinned file is gone) with its
@@ -76,9 +76,9 @@
             ? '<span class="text-xs font-bold shrink-0 ' + (opts.acc >= 0.9 ? 'text-fb-good' : opts.acc >= 0.5 ? 'text-fb-mid' : 'text-fb-low') + '">' + Math.round(opts.acc * 100) + '%</span>'
             : '';
         const pin = (isAlbum && s.arrangement)
-            ? '<span class="ml-2 text-[10px] bg-fb-primary/20 text-fb-primary font-bold px-1.5 py-0.5 rounded-sm" title="Pinned arrangement">' + esc(s.arrangement) + '</span>' : '';
+            ? '<span class="ml-2 text-[0.625rem] bg-fb-primary/20 text-fb-primary font-bold px-1.5 py-0.5 rounded-sm" title="Pinned arrangement">' + esc(s.arrangement) + '</span>' : '';
         const orphan = (isAlbum && s.resolved_from_orphan)
-            ? '<span class="ml-2 text-[10px] text-fb-textDim" title="The pinned chart is gone — playing this song\'s current keeper instead">(auto)</span>' : '';
+            ? '<span class="ml-2 text-[0.625rem] text-fb-textDim" title="The pinned chart is gone — playing this song\'s current keeper instead">(auto)</span>' : '';
         const slotBtn = (isAlbum && !missing)
             ? '<button data-slot aria-label="Choose chart / arrangement" title="Choose chart / arrangement" class="opacity-0 group-hover:opacity-100 text-fb-textDim hover:text-fb-text text-sm px-2">▾</button>' : '';
         return '<li data-fn="' + esc(s.filename) + '"' + playAttrs + (opts.draggable ? ' draggable="true"' : '') +
@@ -313,7 +313,7 @@
             '<label class="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-fb-card/60 cursor-pointer">' +
             '<input type="radio" name="' + name + '" value="' + esc(value) + '"' + (checked ? ' checked' : '') + ' class="accent-fb-primary mt-0.5">' +
             '<span class="min-w-0 flex-1"><span class="block text-sm text-fb-text truncate">' + label + '</span>' +
-            (sub ? '<span class="block text-[10px] text-fb-textDim truncate">' + sub + '</span>' : '') +
+            (sub ? '<span class="block text-[0.625rem] text-fb-textDim truncate">' + sub + '</span>' : '') +
             '</span></label>';
         // Checked = the stored pin; an orphaned slot (stored file gone from the
         // list) pre-checks the chart it currently resolves to, so Apply re-pins
@@ -322,9 +322,9 @@
         const chartRows = chartList.map((c) => radio(
             'slot-chart', c.filename,
             c.filename === slot.filename || (!slotInList && c.filename === curFn),
-            esc(c.title) + (c.is_representative ? ' <span class="text-[10px] text-fb-primary">● preferred</span>' : ''),
+            esc(c.title) + (c.is_representative ? ' <span class="text-[0.625rem] text-fb-primary">● preferred</span>' : ''),
             esc((c.tuning_name ? c.tuning_name + ' · ' : '') + c.filename))).join('');
-        const arrRows = [radio('slot-arr', '', !slot.arrangement, 'Full song <span class="text-[10px] text-fb-textDim">(default)</span>', '')]
+        const arrRows = [radio('slot-arr', '', !slot.arrangement, 'Full song <span class="text-[0.625rem] text-fb-textDim">(default)</span>', '')]
             .concat((slot.arrangements || []).map((a) => {
                 const name = (a && (a.smart_name || a.name)) || '';
                 if (!name) return '';

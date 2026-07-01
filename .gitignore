@@ -44,6 +44,12 @@ plugins/minigames/__pycache__/
 plugins/tuner/__pycache__/
 !plugins/input_setup/
 !plugins/input_setup/**
+!plugins/drum_highway_3d/
+!plugins/drum_highway_3d/**
+plugins/drum_highway_3d/__pycache__/
+!plugins/keys_highway_3d/
+!plugins/keys_highway_3d/**
+plugins/keys_highway_3d/__pycache__/
 node_modules/
 test-results/
 playwright-report/

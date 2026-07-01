@@ -52,7 +52,7 @@ jobs:
         run: pytest
 
       - name: Run JS plugin-API tests
-        run: node --test tests/js/*.test.js 'tests/plugins/*/js/*.test.js'
+        run: node --test tests/js/*.test.js 'tests/plugins/*/js/*.test.js' 'plugins/*/tests/*.test.js'
 
   tailwind-fresh:
     # Guard that the committed static/tailwind.min.css is in sync with source.

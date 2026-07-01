@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "RS+-style 3D falling-note piano highway fed by the Sloppak Notation Format, with Web MIDI input scoring.",
   "type": "visualization",
+  "bundled": true,
   "script": "screen.js",
   "standards": [
     "capability-pipelines.v1",

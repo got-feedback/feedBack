@@ -908,8 +908,52 @@
         streakFx: true,   // consecutive-hit escalation (bigger bursts)
         hitFx: 0.7,       // 0–1 master intensity for the hit-line kick
         vibrancy: 0.85,   // note-gem opacity + lane-guide strength
+        cinematic: true,  // rebalanced lighting (dimmer ambient, stronger key)
+        glow: 0.5,        // 0–1 emissive multiplier (0.5 = the stock look)
     };
     const FX_LS_PREFIX = 'keys3d_bg_';
+    // Theme id lives OUTSIDE FX_DEFAULTS (string, not bool/number) — its own
+    // localStorage key + validation against BG_THEMES.
+    const FX_LS_THEME = 'keys3d_bg_theme';
+
+    // Scene color themes — PORTED FROM highway_3d BG_THEMES (keep the ids,
+    // names and values in sync so a user's look carries across instruments).
+    // One pick drives clear/fog + the highway floor + the lane-edge rails;
+    // pitch-class note/key colors are identity and never themed.
+    //   clear/fog — background gradient anchor + distance fog
+    //   board     — the highway floor plane
+    //   laneDim   — the thin lane-edge rails (lane itself is pitch-colored)
+    const BG_THEMES = {
+        // 'default' is THIS plugin's original palette (fog 0x1a1a2e, floor
+        // 0x141422, rail 0x2a2a3e) — byte-identical for anyone who never
+        // touches the setting. Every OTHER id matches the guitar's table.
+        default:    { clear: 0x1a1a2e, fog: 0x1a1a2e, board: 0x141422, laneDim: 0x2a2a3e },
+        midnight:   { clear: 0x0a0e1a, fog: 0x0a0e1a, board: 0x080d1c, lane: 0x244fae, laneDim: 0x122a5e },
+        charcoal:   { clear: 0x16181c, fog: 0x16181c, board: 0x141417, lane: 0x525a66, laneDim: 0x282d34 },
+        deeppurple: { clear: 0x140a1e, fog: 0x140a1e, board: 0x0b0610, lane: 0x3a1f6e, laneDim: 0x1f1040 },
+        forest:     { clear: 0x0a1614, fog: 0x0a1614, board: 0x06100c, lane: 0x15602a, laneDim: 0x0a3318 },
+        warmslate:  { clear: 0x1c130b, fog: 0x1c130b, board: 0x0e0805, lane: 0x5e3a12, laneDim: 0x341f0a },
+        deepfocus:  { clear: 0x0c0c0d, fog: 0x0c0c0d, board: 0x060606, lane: 0x2f7fa0, laneDim: 0x163c4e },
+        deepsea:    { clear: 0x06222b, fog: 0x06222b, board: 0x03141a, lane: 0x0e5a63, laneDim: 0x063338 },
+        cathode:    { clear: 0x140b03, fog: 0x140b03, board: 0x0c0702, lane: 0x6e4a0e, laneDim: 0x3a2806 },
+        cathodegreen: { clear: 0x07301a, fog: 0x07301a, board: 0x031a0c, lane: 0x0e6e2a, laneDim: 0x073a18 },
+        hearth:     { clear: 0x280806, fog: 0x280806, board: 0x1a0606, lane: 0x7a2410, laneDim: 0x3f1409 },
+    };
+    function _bgThemeColors(id) { return BG_THEMES[id] || BG_THEMES.default; }
+    function readThemeSetting() {
+        try {
+            const id = localStorage.getItem(FX_LS_THEME);
+            if (id && BG_THEMES[id]) return id;
+        } catch (_) {}
+        return 'default';
+    }
+    window.keys3dSetTheme = function (id) {
+        if (!BG_THEMES[id]) return;
+        try { localStorage.setItem(FX_LS_THEME, id); } catch (_) {}
+        try {
+            window.dispatchEvent(new CustomEvent('keys3d:settings', { detail: { theme: id } }));
+        } catch (_) { /* dispatch unavailable — persisted value applies next init */ }
+    };
 
     function readFxSettings() {
         const fx = Object.assign({}, FX_DEFAULTS);
@@ -1155,6 +1199,7 @@
         // ── Visual FX state (guitar-highway parity) ─────────────────────
         let fx = readFxSettings();      // live snapshot, mutated by 'keys3d:settings'
         let _fxHandler = null;
+        let _fxThemeHandler = null;
         // Host adaptive-quality scale (bundle.renderScale, 0.25–1) —
         // multiplied into the device pixel ratio like highway_3d does.
         let _renderScale = 1;
@@ -1176,6 +1221,15 @@
         let _fxLastWall = 0;       // wall clock for FX integration
         let _hitGlowKick = 0;      // hit-line brightness kick, decays exp(-t*6)
         const _laneGuideMats = []; // lane guide materials (vibrancy slider)
+
+        // Theme/material handles (built by buildScene/buildKeyboardAndHighway;
+        // _applyTheme / _applyCinematic / the glow slider retune them live).
+        let _theme = readThemeSetting();
+        let ambLight = null, dirLight = null;
+        let _floorMat = null;
+        const _railMats = [];      // lane-edge rail materials (theme laneDim)
+        let _envRT = null;         // PMREM render target backing scene.environment
+        let _bgTex = null;         // vertical-gradient background texture
 
         // ── MIDI scoring + live feedback state ──────────────────────────
         let _layoutInfo = null;            // {layout, whiteCount} of current chart
@@ -1274,26 +1328,133 @@
             return (layoutEntry.slot - (whiteCount - 1) / 2) * WHITE_W;
         }
 
+        // Emissive multiplier from the Glow slider — 0.5 is neutral (the
+        // stock look), so `base * _glowMul()` leaves defaults byte-identical.
+        function _glowMul() {
+            return Math.min(1, Math.max(0, fx.glow)) * 2;
+        }
+
+        // Cinematic lighting: dimmer ambient + stronger key light. Off = the
+        // plugin's pre-parity values.
+        function _applyCinematic() {
+            if (!ambLight || !dirLight) return;
+            ambLight.intensity = fx.cinematic ? 0.55 : 0.75;
+            dirLight.intensity = fx.cinematic ? 1.3 : 1.1;
+        }
+
+        // Procedural "studio" environment for image-based lighting — the
+        // anti-plastic core: the clearcoat note gems and the piano-black
+        // keys need something to reflect. PORTED FROM drum_highway_3d
+        // _makeStudioEnv — keep in sync. Returns the PMREM RT or null.
+        function _makeStudioEnv(ThreeLib, renderer) {
+            if (!renderer) return null;
+            try {
+                const envScene = new ThreeLib.Scene();
+                const own = [];
+                const shellGeo = new ThreeLib.BoxGeometry(100, 100, 100);
+                const shellMat = new ThreeLib.MeshBasicMaterial({ color: 0x11131c, side: ThreeLib.BackSide });
+                envScene.add(new ThreeLib.Mesh(shellGeo, shellMat));
+                own.push(shellGeo, shellMat);
+                const strip = (w, h, hex, intensity, x, y, z, rx, ry) => {
+                    const g = new ThreeLib.PlaneGeometry(w, h);
+                    // DoubleSide: orientation-proof — the bake only runs once,
+                    // so the extra faces are free insurance.
+                    const m = new ThreeLib.MeshBasicMaterial({ color: hex, side: ThreeLib.DoubleSide });
+                    m.color.multiplyScalar(intensity);
+                    const mesh = new ThreeLib.Mesh(g, m);
+                    mesh.position.set(x, y, z);
+                    mesh.rotation.set(rx, ry, 0);
+                    envScene.add(mesh);
+                    own.push(g, m);
+                };
+                // Deliberate delta from drum_highway_3d: the strips run at
+                // a third of the drum scene's intensity — this scene is
+                // dominated by a WHITE keyboard and a sheened floor, and the
+                // drum-strength strips overexpose it into a milky bloom
+                // flood (screenshot-verified). The blacks' glints survive.
+                strip(60, 8, 0xdfe8ff, 6, 0, 45, 0, Math.PI / 2, 0);       // overhead key
+                strip(30, 50, 0xffd9a8, 2.5, -48, 5, 0, 0, Math.PI / 2);   // warm left wall
+                strip(30, 50, 0x9fd8ff, 2.5, 48, 5, 0, 0, -Math.PI / 2);   // cool right wall
+                const pmrem = new ThreeLib.PMREMGenerator(renderer);
+                const rt = pmrem.fromScene(envScene, 0.04);
+                pmrem.dispose();
+                for (const r of own) r.dispose();
+                return rt;
+            } catch (e) {
+                console.warn('[Keys-Hwy3D] studio env failed (continuing without IBL)', e);
+                return null;
+            }
+        }
+
+        function _disposeEnv() {
+            if (_envRT) { try { _envRT.dispose(); } catch (_) {} _envRT = null; }
+            if (_bgTex) { try { _bgTex.dispose(); } catch (_) {} _bgTex = null; }
+        }
+
+        // Vertical-gradient background: lighter above the horizon, the theme
+        // clear at the midline, darker toward the keyboard — depth the flat
+        // clear color never had. sRGB-tagged so the composer's output
+        // transform reads it correctly.
+        function _makeBgTexture(clearHex) {
+            const cnv = document.createElement('canvas');
+            cnv.width = 2; cnv.height = 256;
+            const ctx = cnv.getContext('2d');
+            const c = new T.Color(clearHex);
+            const top = c.clone().lerp(new T.Color(0xffffff), 0.10);
+            const bottom = c.clone().multiplyScalar(0.55);
+            const grad = ctx.createLinearGradient(0, 0, 0, 256);
+            grad.addColorStop(0, '#' + top.getHexString());
+            grad.addColorStop(0.55, '#' + c.getHexString());
+            grad.addColorStop(1, '#' + bottom.getHexString());
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 2, 256);
+            const tex = new T.CanvasTexture(cnv);
+            tex.colorSpace = T.SRGBColorSpace;
+            return tex;
+        }
+
+        // Apply the active theme to the live scene. Pitch-class note/key
+        // colors are identity — themes own the scene, not the notes.
+        function _applyTheme() {
+            const c = _bgThemeColors(_theme);
+            if (scene) {
+                if (_bgTex) { try { _bgTex.dispose(); } catch (_) {} }
+                _bgTex = _makeBgTexture(c.clear);
+                scene.background = _bgTex;
+                if (scene.fog) scene.fog.color.setHex(c.fog);
+            }
+            if (ren) ren.setClearColor(c.clear, 1);
+            if (_floorMat) _floorMat.color.setHex(c.board);
+            for (const m of _railMats) m.color.setHex(c.laneDim != null ? c.laneDim : 0x2a2a3e);
+        }
+
         function buildScene() {
             scene = new T.Scene();
-            // Explicit scene.background (not just the renderer clear color):
-            // the bloom EffectComposer's RenderPass + OutputPass handle a
-            // scene background color-space-correctly, while a bare clear
-            // color comes out visibly lightened under the ACES output
-            // transform (washed-out purple instead of the dark navy).
-            // drum_highway_3d / highway_3d set it the same way.
-            scene.background = new T.Color(FOG_COLOR);
-            scene.fog = new T.Fog(FOG_COLOR, FOG_START, FOG_END);
+            // Theme-driven gradient background (an explicit scene.background
+            // is also what keeps the composer's ACES output from washing out
+            // a bare clear color) + matching fog.
+            const themeCols = _bgThemeColors(_theme);
+            _bgTex = _makeBgTexture(themeCols.clear);
+            scene.background = _bgTex;
+            scene.fog = new T.Fog(themeCols.fog, FOG_START, FOG_END);
+            if (ren) ren.setClearColor(themeCols.clear, 1);
+
+            // Studio environment map — image-based lighting for the
+            // clearcoat gems / piano-black keys. Renderer-bound; disposed in
+            // teardown via _disposeEnv.
+            _envRT = _makeStudioEnv(T, ren);
+            if (_envRT) scene.environment = _envRT.texture;
 
             cam = new T.PerspectiveCamera(CAM_FOV, 1, 0.1, 2000 * K);
             _camX = 0; _camTargetX = 0; _camZoom = 1; _camTargetZoom = 1;
             cam.position.set(0, CAM_Y, CAM_Z);
             cam.lookAt(0, LOOK_Y, LOOK_Z);
 
-            const ambient = new T.AmbientLight(0xffffff, 0.75);
-            const dir = new T.DirectionalLight(0xffffff, 1.1);
-            dir.position.set(60 * K, 200 * K, 80 * K);
-            scene.add(ambient, dir);
+            ambLight = new T.AmbientLight(0xffffff, 0.75);
+            dirLight = new T.DirectionalLight(0xffffff, 1.1);
+            dirLight.position.set(60 * K, 200 * K, 80 * K);
+            scene.add(ambLight, dirLight);
+            _applyCinematic();
 
             keyboardGroup = new T.Group();
             notesGroup = new T.Group();
@@ -1434,13 +1595,23 @@
             let mat = _noteMatCache.get(key);
             if (mat) return mat;
             const col = noteColor(midi, hand);
-            mat = new T.MeshStandardMaterial({
+            // MeshPhysicalMaterial with a clearcoat: lacquered glass-gem
+            // look — a sharp coat highlight over a colored body, lit by the
+            // studio env map. This is the "not plastic" ask: the old matte
+            // MeshStandard (roughness 0.78, no envMap) had a dead surface.
+            // (~20-30% more fragment cost than MeshStandard on note pixels;
+            // acceptable — notes cover a modest screen fraction and all
+            // share one shader program.)
+            mat = new T.MeshPhysicalMaterial({
                 color: col,
                 vertexColors: true,         // multiply colour by the baked gem ramp
                 emissive: col,
-                emissiveIntensity: NOTE_EMISSIVE_BASE,
-                roughness: 0.78,            // matte — kills the glossy "plastic" highlight
+                emissiveIntensity: NOTE_EMISSIVE_BASE * _glowMul(),
+                roughness: 0.32,
                 metalness: 0.0,
+                clearcoat: 1.0,
+                clearcoatRoughness: 0.18,
+                envMapIntensity: 0.9,
                 transparent: true,
                 // Vibrancy-driven: 0.72 (airy, keys clearly visible through
                 // the gems) → 0.94 (solid, saturated). The old fixed 0.8
@@ -1632,6 +1803,7 @@
             _clearGroup(keyboardGroup);
             _hitGlowMats.length = 0;
             _laneGuideMats.length = 0;
+            _railMats.length = 0;
             keyMeshes = new Map();
             _keyAnim.clear();
             _keyFlash.clear();
@@ -1643,9 +1815,17 @@
             const hitZ = -WHITE_L / 2;
 
             // Highway floor receding to the vanishing point.
+            _floorMat = new T.MeshStandardMaterial({
+                color: _bgThemeColors(_theme).board,
+                // Stage-floor sheen (was matte 0.9): the env strips give the
+                // deck a soft reflection lane without mirroring the notes.
+                roughness: 0.55,
+                metalness: 0.15,
+                envMapIntensity: 0.25,
+            });
             const floor = new T.Mesh(
                 new T.PlaneGeometry(floorW, HIGHWAY_LEN),
-                new T.MeshStandardMaterial({ color: 0x141422, roughness: 0.9 }),
+                _floorMat,
             );
             floor.rotation.x = -Math.PI / 2;
             floor.position.set(0, -0.5 * K, -HIGHWAY_LEN / 2 + WHITE_L);
@@ -1706,8 +1886,10 @@
                 keyboardGroup.add(strip);
                 // Thin brighter rails at the lane edges for crisp separation.
                 const railMat = new T.MeshBasicMaterial({
-                    color: 0x2a2a3e, transparent: true, opacity: 0.5, depthWrite: false,
+                    color: (() => { const c = _bgThemeColors(_theme); return c.laneDim != null ? c.laneDim : 0x2a2a3e; })(),
+                    transparent: true, opacity: 0.5, depthWrite: false,
                 });
+                _railMats.push(railMat);
                 const rail = new T.Mesh(new T.PlaneGeometry(0.6 * K, guideLen), railMat);
                 rail.rotation.x = -Math.PI / 2;
                 rail.position.set(keyX(entry, whiteCount) - WHITE_W / 2, laneY + 0.05 * K, hitZ - guideLen / 2);
@@ -1736,7 +1918,11 @@
                     // intensity up by proximity.
                     emissive: noteColor(midi, 'rh'),
                     emissiveIntensity: 0,
-                    roughness: 0.55,
+                    // Anti-plastic: glossy piano black with visible strip
+                    // reflections; whites keep a subtle ivory sheen (they're
+                    // already near-white — env light saturates them fast).
+                    roughness: black ? 0.22 : 0.42,
+                    envMapIntensity: black ? 1.3 : 0.3,
                 });
                 const mesh = new T.Mesh(black ? blackGeo : whiteGeo, material);
                 // Positions place the geometry where the old centred boxes
@@ -2055,6 +2241,9 @@
         }
 
         function updateScene(now) {
+            // Rest emissive with the Glow slider applied — computed once so
+            // the per-note '!==' guards stay effective at any glow value.
+            const _restEmissive = NOTE_EMISSIVE_BASE * _glowMul();
             const hitZ = -WHITE_L / 2;
 
             // Pan the camera x to follow the active hand: a hit-line-weighted
@@ -2136,8 +2325,8 @@
                 if (past <= 0) {
                     if (mesh.scale.z !== 1) mesh.scale.set(1, 1, 1);
                     mesh.position.z = z;
-                    if (mesh.material.emissiveIntensity !== NOTE_EMISSIVE_BASE) {
-                        mesh.material.emissiveIntensity = NOTE_EMISSIVE_BASE;
+                    if (mesh.material.emissiveIntensity !== _restEmissive) {
+                        mesh.material.emissiveIntensity = _restEmissive;
                     }
                 } else {
                     const remaining = len - past;        // = hitZ - backZ, length still up the runway
@@ -2147,14 +2336,14 @@
                     // Glow as it's eaten — intensifies the more of the note is consumed.
                     const consumed = Math.min(1, past / len);
                     mesh.material.emissiveIntensity =
-                        NOTE_EMISSIVE_BASE + (CONSUME_GLOW - NOTE_EMISSIVE_BASE) * (0.45 + 0.55 * consumed);
+                        (NOTE_EMISSIVE_BASE + (CONSUME_GLOW - NOTE_EMISSIVE_BASE) * (0.45 + 0.55 * consumed)) * _glowMul();
                 }
             }
             // Apply the approach-glow (a wrong-note red flash owns emissive meanwhile).
             for (const [midi, km] of keyMeshes) {
                 if (_keyFlash.has(midi)) continue;
                 const g = km.userData.glow || 0;
-                km.material.emissiveIntensity = g * g * KEY_GLOW_STRENGTH; // ease → pops near the hit-line
+                km.material.emissiveIntensity = g * g * KEY_GLOW_STRENGTH * _glowMul(); // ease → pops near the hit-line
             }
             for (const entry of markerSprites) {
                 const z = scrollZ(entry.t, now, hitZ, TS);
@@ -2457,6 +2646,13 @@
                 window.removeEventListener('keys3d:settings', _fxHandler);
                 _fxHandler = null;
             }
+            if (_fxThemeHandler) {
+                window.removeEventListener('keys3d:settings', _fxThemeHandler);
+                _fxThemeHandler = null;
+            }
+            _disposeEnv();
+            _railMats.length = 0;
+            ambLight = dirLight = _floorMat = null;
             const sm = window.slopsmith;
             if (sm && typeof sm.off === 'function') {
                 if (_songHandler) sm.off('song:loaded', _songHandler);
@@ -2507,6 +2703,10 @@
                 if (_isReady) teardown();
                 highwayCanvas = canvas;
                 fx = readFxSettings();
+                // Persisted string settings refresh here too — a theme saved
+                // while no instance was listening must not come up stale on a
+                // later init().
+                _theme = readThemeSetting();
                 loadThree().then(() => {
                     if (!highwayCanvas) return; // destroyed before load resolved
                     try {
@@ -2530,7 +2730,23 @@
                         // Vibrancy is baked into built materials — retint
                         // the live scene without a chart rebuild.
                         if ('vibrancy' in d.fx) _applyVibrancy();
+                        if ('cinematic' in d.fx) _applyCinematic();
+                        if ('glow' in d.fx) {
+                            // Material emissive bases are also per-frame
+                            // (updateScene) — only the cached/cloned rest
+                            // values need a nudge here.
+                            const base = NOTE_EMISSIVE_BASE * _glowMul();
+                            for (const m of _noteMatCache.values()) m.emissiveIntensity = base;
+                        }
                     };
+                    _fxThemeHandler = (ev) => {
+                        const d = ev && ev.detail;
+                        if (d && d.theme && BG_THEMES[d.theme]) {
+                            _theme = d.theme;
+                            _applyTheme();
+                        }
+                    };
+                    window.addEventListener('keys3d:settings', _fxThemeHandler);
                     window.addEventListener('keys3d:settings', _fxHandler);
                     _injectHud();
                     _isReady = true;
@@ -2687,6 +2903,9 @@
         judgeHit,
         sweepMissed,
         readFxSettings,
+        readThemeSetting,
+        _bgThemeColors,
+        BG_THEMES,
         FX_DEFAULTS,
         _classifyTiming,
     };

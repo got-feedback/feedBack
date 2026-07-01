@@ -37,6 +37,12 @@ tunes one of these, mirror the change here (and in `drum_highway_3d`):
   colors (green/cyan/amber) + the 40%-window classifier
 - `_ssActive()` — host splitscreen probe (minus the guitar's focus-API
   checks, which it needs for input routing and we don't)
+- `BG_THEMES` / `_bgThemeColors()` — the scene theme table (same ids/values
+  as the guitar's, except `default` which is this plugin's original
+  palette); one pick drives background gradient + floor + lane rails
+- `_makeStudioEnv()` — procedural PMREM studio environment (shared with
+  drum_highway_3d; RoomEnvironment isn't vendored)
+- `_applyCinematic()` — ambient/key rebalance (values tuned per plugin)
 
 ## License
 

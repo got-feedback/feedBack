@@ -11,7 +11,51 @@
     <!-- Graphics -->
     <div class="mt-3">
         <h4 class="text-xs font-medium text-gray-300 mb-2">Graphics</h4>
-        <label for="keysh3d-fx-bloom" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+
+        <label for="keysh3d-fx-theme" class="text-xs font-medium text-gray-400 mb-1 block">Scene theme</label>
+        <select id="keysh3d-fx-theme"
+            onchange="window.keys3dSetTheme && window.keys3dSetTheme(this.value)"
+            class="w-full bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 outline-none">
+            <option value="default">Default (original)</option>
+            <option value="midnight">Midnight</option>
+            <option value="charcoal">Charcoal</option>
+            <option value="deeppurple">Deep Purple</option>
+            <option value="forest">Forest</option>
+            <option value="warmslate">Warm Slate</option>
+            <option value="deepfocus">Deep Focus</option>
+            <option value="deepsea">Deep Sea</option>
+            <option value="cathode">Cathode</option>
+            <option value="cathodegreen">Cathode Green</option>
+            <option value="hearth">Hearth</option>
+        </select>
+        <p class="text-xs text-gray-500 mt-1 mb-3">
+            Background gradient, floor and lane rails — the same theme names
+            as the guitar highway. Pitch-class note colours never change.
+        </p>
+
+        <label for="keysh3d-fx-cinematic" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+            <input type="checkbox" id="keysh3d-fx-cinematic" checked
+                onchange="window.keys3dSetFx && window.keys3dSetFx('cinematic', this.checked)">
+            Cinematic lighting
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            Dimmer ambience, stronger key light — deeper shading on the keys
+            and gems.
+        </p>
+
+        <label for="keysh3d-fx-glow" class="text-xs font-medium text-gray-400 mb-1 mt-3 block">
+            Glow strength <span id="keysh3d-fx-glow-val" class="text-gray-500 font-mono">0.50</span>
+        </label>
+        <input type="range" id="keysh3d-fx-glow"
+            min="0" max="1" step="0.05" value="0.5"
+            oninput="window.keys3dSetFx && window.keys3dSetFx('glow', this.value); document.getElementById('keysh3d-fx-glow-val').textContent = parseFloat(this.value).toFixed(2)"
+            class="w-full">
+        <p class="text-xs text-gray-500 mt-1">
+            How hard the notes, key glow and sustain consume-flash
+            self-illuminate (0.5 = stock). Pairs with bloom.
+        </p>
+
+        <label for="keysh3d-fx-bloom" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer mt-3">
             <input type="checkbox" id="keysh3d-fx-bloom" checked
                 onchange="window.keys3dSetFx && window.keys3dSetFx('bloom', this.checked)">
             Glow (bloom)
@@ -95,6 +139,7 @@
             hydrateFxBool('sparks', 'keysh3d-fx-sparks');
             hydrateFxBool('timingFx', 'keysh3d-fx-timing');
             hydrateFxBool('streakFx', 'keysh3d-fx-streak');
+            hydrateFxBool('cinematic', 'keysh3d-fx-cinematic');
             const hydrateFxRange = (key, elId, valId) => {
                 const n = parseFloat(localStorage.getItem('keys3d_bg_' + key));
                 if (!Number.isFinite(n)) return;
@@ -104,6 +149,12 @@
             };
             hydrateFxRange('hitFx', 'keysh3d-fx-hitfx', 'keysh3d-fx-hitfx-val');
             hydrateFxRange('vibrancy', 'keysh3d-fx-vibrancy', 'keysh3d-fx-vibrancy-val');
+            hydrateFxRange('glow', 'keysh3d-fx-glow', 'keysh3d-fx-glow-val');
+            const storedTheme = localStorage.getItem('keys3d_bg_theme');
+            const themeSel = document.getElementById('keysh3d-fx-theme');
+            if (storedTheme && Array.from(themeSel.options).some(o => o.value === storedTheme)) {
+                themeSel.value = storedTheme;
+            }
         } catch (e) {
             console.warn('[Keys-Hwy3D settings] hydration failed:', e);
         }

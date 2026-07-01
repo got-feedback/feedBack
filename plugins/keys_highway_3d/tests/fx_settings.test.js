@@ -109,3 +109,27 @@ test('FX defaults: hit-FX + vibrancy controls ship enabled', () => {
     assert.equal(FX_DEFAULTS.hitFx, 0.7);
     assert.equal(FX_DEFAULTS.vibrancy, 0.85);
 });
+
+test('themes: table ids match the guitar highway, default is the stock palette', () => {
+    const { BG_THEMES, _bgThemeColors, readThemeSetting } = load().slopsmithViz_keys_highway_3d.__test;
+    assert.deepEqual(Object.keys(BG_THEMES), [
+        'default', 'midnight', 'charcoal', 'deeppurple', 'forest', 'warmslate',
+        'deepfocus', 'deepsea', 'cathode', 'cathodegreen', 'hearth',
+    ]);
+    // 'default' preserves THIS plugin's original look.
+    assert.equal(BG_THEMES.default.clear, 0x1a1a2e);
+    assert.equal(BG_THEMES.default.board, 0x141422);
+    assert.equal(BG_THEMES.default.laneDim, 0x2a2a3e);
+    assert.equal(_bgThemeColors('nonsense'), BG_THEMES.default);
+    assert.equal(readThemeSetting(), 'default'); // no localStorage in the vm
+    for (const [id, t] of Object.entries(BG_THEMES)) {
+        assert.equal(t.clear, t.fog, id + ' clear==fog (horizon dissolve)');
+        assert.ok(t.laneDim != null, id + ' rail color');
+    }
+});
+
+test('FX defaults: theme-PR controls ship enabled at stock-neutral values', () => {
+    const { FX_DEFAULTS } = load().slopsmithViz_keys_highway_3d.__test;
+    assert.equal(FX_DEFAULTS.cinematic, true);
+    assert.equal(FX_DEFAULTS.glow, 0.5);   // 0.5 = 1.0x multiplier (stock)
+});

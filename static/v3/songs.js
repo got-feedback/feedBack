@@ -228,6 +228,19 @@
         return !!(tree.querySelector('[data-fn]') || tree.querySelector('details'));
     }
 
+    // ── Multi-chart grouping (P5c, design §7.1) ─────────────────────────────
+    // The grid queries with group=1 so charts of the same work collapse to ONE
+    // card — the representative (preferred/auto-pick) chart — with rows carrying
+    // chart_count + work_key from the materialized work_display read-model
+    // (P5a/P5b). group must ride BOTH the page fetch and the rail's stats fetch
+    // so page, total and sort_letters all count works identically — a
+    // works-vs-charts mismatch would break the rail's cumulative-seek math and
+    // the sizer geometry. Grouping is default-ON per the design; the persisted
+    // per-view toggle is P5e — it lands here. Only the local provider implements
+    // group=; smart collections and remote providers ignore it and stay flat
+    // (their rows then carry no chart_count, so no ⚑ chips render).
+    function groupingActive() { return true; }
+
     function queryParams(extra, opts) {
         const f = state.filters;
         const skipArtistAlbum = opts && opts.catalog;
@@ -660,6 +673,20 @@
             '<button data-arr="' + esc(a.index != null ? a.index : '') + '" title="Play ' + esc(a.name) + '" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800/60 text-fb-textDim hover:bg-fb-primary hover:text-white transition">' + esc(a.name) + '</button>').join('');
     }
 
+    // ⚑ multi-chart chip (P5c, design §7.1): the persistent "other versions
+    // exist" cue on a grouped card. Rendered ONLY when the grouped query says
+    // this card stands for 2+ charts of one work (chart_count = work_display
+    // group_size, P5a) — a single-chart card emits nothing, so its markup stays
+    // byte-identical to an ungrouped card. First in the chip row + shrink-0 so
+    // the overflow-hidden row clips arrangement chips before it ever clips the
+    // cue. The chip is the Charts-drawer opener; the drawer itself is P5d, so
+    // until it lands the click is a feature-detected no-op (see wireCards).
+    function chartsChipHtml(song) {
+        const n = song.chart_count;
+        if (!(n >= 2) || !song.work_key) return '';
+        return '<button data-charts="' + esc(song.work_key) + '" title="' + n + ' charts of this song" aria-label="' + n + ' charts of this song" class="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-fb-primary/15 text-fb-primary border border-fb-primary/40 hover:bg-fb-primary hover:text-white transition">⚑ ' + n + ' charts</button>';
+    }
+
     // ── Tuning-match flags (working-tuning PR 6) ───────────────────────────────
     // Colour each song's tuning chip by whether your CURRENT working tuning covers
     // it: green = play it now, amber = needs a retune. Uses the tuner plugin's
@@ -741,6 +768,7 @@
             ? '<input type="checkbox" data-select class="absolute top-2 left-2 z-20 w-5 h-5 accent-fb-primary pointer-events-none"' + (state.selected.has(key) ? ' checked' : '') + '>'
             : '';
         const arrChips = arrChipsHtml(song);
+        const chartsChip = chartsChipHtml(song);
         // Plugin-contributed card actions placed 'inline' (in the hover action
         // row) or 'overlay' (centered over the art). Menu-placed actions live in
         // the ⋮ menu (openCardMenu); rendering these here means plugins using
@@ -778,7 +806,7 @@
             // Always emit the chip row (even when empty) at a FIXED single-line
             // height — uniform card height is what makes the windowed grid's
             // absolute-position math exact (.v3-card-chips in v3.css).
-            '<div class="v3-card-chips flex gap-1 mt-1">' + arrChips + '</div>' +
+            '<div class="v3-card-chips flex gap-1 mt-1">' + chartsChip + arrChips + '</div>' +
             '</div>';
     }
 
@@ -840,6 +868,15 @@
                 const idx = ab.getAttribute('data-arr');
                 playCard(song, idx === '' ? undefined : Number(idx));
             }));
+            // ⚑ charts chip → the Charts drawer (P5d). Feature-detected so P5c
+            // ships the cue before the drawer exists: with no opener global the
+            // click is a no-op (never a card play — the chip row sits outside
+            // [data-v3-play], stopPropagation is belt-and-braces).
+            el.querySelector('[data-charts]')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const open = window.__fbOpenChartsDrawer;
+                if (typeof open === 'function') open(e.currentTarget.getAttribute('data-charts'), song);
+            });
             el.querySelector('[data-fav]')?.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 const btn = e.currentTarget;
@@ -1234,6 +1271,7 @@
         const epoch = state.epoch;
         const prom = (async () => {
             const extra = { size: PAGE_SIZE };
+            if (groupingActive()) extra.group = 1;
             const prevCursor = state.keysetOk ? state.pageCursors[p - 1] : null;
             if (prevCursor) extra.after = prevCursor; else extra.page = p;
             const data = await jget('/api/library?' + queryParams(extra).toString());
@@ -1414,7 +1452,11 @@
         // Present letters for the active sort+filter (filter-synced; counts
         // songs). `sort_letters=1` opts into the active-sort breakdown so the
         // dashboard / v2 tree (which read only `letters`) skip the extra query.
-        const stats = await jget('/api/library/stats?' + queryParams({ sort_letters: 1 }).toString());
+        // group must MATCH the grid's page fetches (see groupingActive) so the
+        // rail's per-letter counts sum to the same works total the sizer uses.
+        const railParams = { sort_letters: 1 };
+        if (groupingActive()) railParams.group = 1;
+        const stats = await jget('/api/library/stats?' + queryParams(railParams).toString());
         if (_railToken !== myToken || !railVisible()) {                 // changed mid-fetch
             if (_railToken === myToken) rail.classList.add('hidden');
             return;

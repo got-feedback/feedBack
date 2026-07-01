@@ -189,7 +189,32 @@
         return { isBass, sc, key: (isBass ? 'bass' : 'guitar') + '-' + sc };
     }
 
-    async function _playerTuning() {
+    // Memoize the player's tuning: it depends only on /api/settings + the working
+    // tuning, which change on instrument:changed / working-tuning-changed (NOT per song).
+    // Without this, a consumer that evaluates coverage for many items at once — the
+    // library's per-song tuning-match chips — would fire one /api/settings fetch PER item
+    // per paint. Cache the promise so they all share one read; invalidate on the events
+    // that change the answer, AND expire after a short TTL so a settings write that
+    // doesn't emit an event (e.g. the input-setup flow) still heals within seconds.
+    let _playerTuningPromise = null;
+    let _playerTuningAt = 0;
+    const _PLAYER_TUNING_TTL_MS = 3000;
+    function _playerTuning() {
+        const now = (typeof Date !== 'undefined' && Date.now) ? Date.now() : 0;
+        if (!_playerTuningPromise || (now - _playerTuningAt) > _PLAYER_TUNING_TTL_MS) {
+            _playerTuningAt = now;
+            const p = _computePlayerTuning();
+            _playerTuningPromise = p;
+            // Never pin a transient failure: if the read yields null (or rejects), drop
+            // the cache so the next call retries. A real result stays until invalidation/TTL.
+            p.then((r) => { if (r == null && _playerTuningPromise === p) _playerTuningPromise = null; },
+                () => { if (_playerTuningPromise === p) _playerTuningPromise = null; });
+        }
+        return _playerTuningPromise;
+    }
+    function _invalidatePlayerTuning() { _playerTuningPromise = null; }
+
+    async function _computePlayerTuning() {
         const u = window._tunerUtils;
         if (!u) return null;
         // Instrument IDENTITY (which instrument is selected) + the static fallback
@@ -408,10 +433,12 @@
         // switches instrument. Drop the cached selection so a publish-on-clear can't write
         // to the previously-selected instrument's slot; the next coverage read re-resolves
         // it. Until then _publishWorkingTuning skips (safe — no mis-slotted write).
-        window.feedBack.on('instrument:changed', () => { _state._playerSelected = null; _invalidateCoverageCache(); });
+        window.feedBack.on('instrument:changed', () => {
+            _state._playerSelected = null; _invalidatePlayerTuning(); _invalidateCoverageCache();
+        });
         // A retune (working tuning published on a tuner clear) changes coverage for the
-        // current song — drop the cached report so a re-evaluation recomputes it.
-        window.feedBack.on('working-tuning-changed', _invalidateCoverageCache);
+        // current song — drop the cached player tuning + report so a re-evaluation recomputes.
+        window.feedBack.on('working-tuning-changed', () => { _invalidatePlayerTuning(); _invalidateCoverageCache(); });
     }
 
     // ── Player sync helpers ───────────────────────────────────────────

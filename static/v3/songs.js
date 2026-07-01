@@ -630,8 +630,10 @@
         for (const chip of chips) {
             const offs = chip.getAttribute('data-tuning-offsets').split(',').map(Number);
             if (!offs.length || offs.some((n) => !isFinite(n))) continue;
+            // Pass the instrument so coverage uses the right base pitches (bass vs guitar).
+            const arrangement = chip.dataset.tuningBass === '1' ? 'Bass' : 'Lead';
             let rep = null;
-            try { rep = await cov({ tuning: offs, stringCount: offs.length }); } catch (_) { rep = null; }
+            try { rep = await cov({ tuning: offs, stringCount: offs.length, arrangement: arrangement }); } catch (_) { rep = null; }
             if (token !== _tuningDecorToken) return;   // superseded by a re-paint / tuning change
             if (rep) _applyChipMatch(chip, rep.covered ? 'match' : 'retune');
         }
@@ -661,8 +663,15 @@
             const pos = 'absolute top-2 ' + (state.selectMode ? 'left-9' : 'left-2');
             // Tag the chip with its offsets so decorateTuningChips() can colour it
             // green (matches your current tuning) / amber (needs a retune) after paint.
+            // Also flag a bass-only song (every arrangement is a bass part) so coverage
+            // scores its bass tuning against the bass base pitches, not guitar — otherwise
+            // a 4-string bass tuning read as guitar can false-match a guitar player.
+            const chipArrs = song.arrangements || [];
+            const chipIsBass = chipArrs.length > 0
+                && chipArrs.every((a) => /\bbass\b/i.test((a && a.name) || ''));
             const matchAttr = (rawOffsets && rawOffsets.length)
-                ? ' data-tuning-chip data-tuning-offsets="' + esc(rawOffsets.join(',')) + '"' : '';
+                ? ' data-tuning-chip data-tuning-offsets="' + esc(rawOffsets.join(',')) + '"'
+                    + (chipIsBass ? ' data-tuning-bass="1"' : '') : '';
             if (targetNotes) {
                 tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[9px] font-bold px-1.5 py-0.5 rounded-sm leading-tight max-w-[5.5rem] text-center"' + matchAttr + ' title="' + esc(badgeTitle) + '">'
                     + esc('Custom Tuning') + '<br><span class="font-semibold tracking-wide">' + esc(targetNotes) + '</span></span>';

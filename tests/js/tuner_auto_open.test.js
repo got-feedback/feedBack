@@ -591,9 +591,11 @@ test('a configured standard-guitar player still covers a standard song', async (
     const covered = await sandbox.window._tunerAutoOpen.coveredByPlayerInstrument(E_STANDARD);
     assert.equal(covered, true, 'a known standard guitar covers a standard song (no regression)');
 });
-// ── #657 fix (#680): coverage is deduped — the auto-open gate and the badge cue both
-// call coverageReport() on the same song:ready; they must share ONE /api/settings fetch.
-test('coverage reports for the same song share one settings fetch, and a new song refetches', async () => {
+// ── #657 fix (#680) + #668 fix: coverage is deduped, and the player tuning is memoized
+// across songs (it depends on the selected instrument, not the song). Many coverage
+// calls — the auto-open gate, the badge cue, AND the library's per-song tuning-match
+// chips — share ONE /api/settings fetch until the instrument / working tuning changes.
+test('coverage reports share one /api/settings fetch across songs (player tuning memoized)', async () => {
     const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
     let settingsFetches = 0;
     const origFetch = sandbox.window.fetch;
@@ -605,8 +607,27 @@ test('coverage reports for the same song share one settings fetch, and a new son
     const [a, b] = await Promise.all([api.coverageReport(DROP_D), api.coverageReport(DROP_D)]);
     assert.equal(settingsFetches, 1, 'concurrent reports for the same song share one fetch');
     assert.deepEqual(a, b);
-    // A new song invalidates the cache → a fresh fetch.
+    // A different song re-evaluates coverage but reuses the memoized player tuning — the
+    // player didn't retune or switch instruments, so no second /api/settings read.
     api.onSongLoading();
     await api.coverageReport(E_STANDARD);
-    assert.equal(settingsFetches, 2, 'a new song refetches');
+    assert.equal(settingsFetches, 1, 'a different song reuses the memoized player tuning — no refetch');
+});
+
+// ── #668 fix: a transient /api/settings failure must NOT be pinned by the player-tuning
+// memo — the next read retries (else one hiccup freezes coverage as "unknown" for good).
+test('a transient /api/settings failure is not cached — the next coverage read retries', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    let failNext = true;
+    const origFetch = sandbox.window.fetch;
+    sandbox.window.fetch = (url) => {
+        if (String(url).includes('/api/settings') && failNext) { failNext = false; return Promise.reject(new Error('boom')); }
+        return origFetch(url);
+    };
+    const api = sandbox.window._tunerAutoOpen;
+    const r1 = await api.coverageReport(DROP_D);        // settings read failed → conservative "none" report
+    assert.equal(r1.retune.length, 0, 'a fetch failure yields the empty/unknown report');
+    api.onSongLoading();                                // clear the coverage cache to force a recompute
+    const r2 = await api.coverageReport(DROP_D);        // retry: settings now readable → a real report
+    assert.equal(r2.retune.length, 1, 'the retry actually computes coverage (Drop-D low string vs standard)');
 });

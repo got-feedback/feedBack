@@ -544,3 +544,36 @@ test('publish skips when the instrument could not be confidently resolved (setti
     sandbox.window._tunerAutoOpen.publishWorkingTuning(DROP_D);
     assert.equal(sets.length, 0);
 });
+
+// ── #655 fix: transactional open — a dismiss during the audio-start await must not
+// re-enable the tuner afterward (no zombie enabled-but-hidden state). See issue #675.
+test('dismiss during the audio-start await does not leave a zombie enabled tuner', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    // Minimal UI so real enable() gets past the panel-show line to the audio-start await
+    // (the default sandbox _tunerUI is a no-op that never creates uiContainer).
+    const el = () => ({
+        classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+        querySelector: () => null, appendChild() {}, remove() {}, style: {},
+    });
+    const origTunerUI = sandbox.window._tunerUI;   // the sandbox's full no-op method set
+    sandbox.window._tunerUI = (state, actions) => {
+        const api = origTunerUI(state, actions);
+        state.uiContainer = el();
+        state.vizContainer = el();
+        state.skipBtn = el();
+        api.showMicError = api.showMicError || (() => {});
+        return api;
+    };
+    // The OPEN's audio start resolves only AFTER a ×/Skip dismiss has landed — i.e. the
+    // user dismissed while audio was starting. (disable()'s own background-audio resume
+    // is a later call and resolves at once.)
+    let firstStart = true;
+    sandbox.window._tunerAudio.start = () => {
+        if (!firstStart) return Promise.resolve();
+        firstStart = false;
+        return Promise.resolve().then(() => { sandbox.window.tuner.disable(); });
+    };
+    await sandbox.window.tuner.enable({ auto: true });
+    assert.equal(sandbox.window._tunerAutoOpen.getState().enabled, false,
+        'a mid-open dismiss must win — the tuner stays disabled, not enabled-but-hidden');
+});

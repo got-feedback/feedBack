@@ -2136,7 +2136,22 @@
     // browsers — _autoMatchViz gates webgl2 contextType on _canRun3D
     // before installing the renderer, so non-WebGL2 environments will
     // skip past this and pick the 2D one.
+    //
+    // Steal-guard (bundling): `has_drum_tab` is a PACK-level flag, and Auto
+    // mode is first-match-wins in plugin order — `drum_highway_3d` sorts
+    // before `highway_3d`, so matching on the flag alone would take every
+    // full-band pack away from the guitar highway even when the active
+    // arrangement is Lead/Bass. Only auto-claim when the ACTIVE arrangement
+    // is a drum part, or when nothing more specific can render the song
+    // (no keys notation, no guitar-family arrangement). A drummer on a
+    // full-band pack picks this viz from the picker as before; instrument-
+    // selector routing (server.py highway_ws) will auto-route once a drums
+    // selector entry lands.
     window.slopsmithViz_drum_highway_3d.matchesArrangement = function (songInfo) {
-        return !!(songInfo && songInfo.has_drum_tab);
+        if (!songInfo || !songInfo.has_drum_tab) return false;
+        const arr = songInfo.arrangement || '';
+        if (/\b(?:drums?|percussion)\b/i.test(arr)) return true;
+        if (songInfo.has_notation) return false;
+        return !/\b(?:lead|rhythm|bass|combo|guitar)\b/i.test(arr);
     };
 })();

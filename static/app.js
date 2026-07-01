@@ -6015,19 +6015,30 @@ function _releaseAutoplay(gen) {
     _autoplayStart = null;
     if (typeof start === 'function') start();
 }
+let _autoplayHoldToken = 0;
 window.feedBack.holdAutoplay = function () {
     const gen = _autoplayGen;
+    const token = ++_autoplayHoldToken;   // this hold's identity — a stale release from an earlier hold is a no-op
     _autoplayHeld = true;
     if (_autoplayBackstop) clearTimeout(_autoplayBackstop);
-    // Fail-open: a hold that's never released (wedged plugin / lost event) must
-    // never permanently block the song.
+    // Fail-open: a hold that's never released (a plugin that claimed but wedged before
+    // it could decide) must never permanently block the song. Once the holder commits
+    // to an intentional, user-dismissable hold it calls release.settle() to cancel this
+    // — so the backstop can't cut off e.g. a user still tuning past the timeout.
     _autoplayBackstop = setTimeout(() => _releaseAutoplay(gen), AUTOPLAY_HOLD_BACKSTOP_MS);
     let released = false;
-    return function release() {
-        if (released || gen !== _autoplayGen) return;
+    function release() {
+        if (released || gen !== _autoplayGen || token !== _autoplayHoldToken) return;
         released = true;
         _releaseAutoplay(gen);
+    }
+    // Cancel the fail-open backstop WITHOUT releasing: the holder has taken explicit
+    // responsibility for releasing (on dismiss), and a song switch clears the hold anyway.
+    release.settle = function () {
+        if (gen !== _autoplayGen || token !== _autoplayHoldToken) return;
+        if (_autoplayBackstop) { clearTimeout(_autoplayBackstop); _autoplayBackstop = null; }
     };
+    return release;
 };
 window.feedBack.on('song:ready', () => {
     if (!_pendingAutostart) return;

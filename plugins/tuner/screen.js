@@ -430,6 +430,9 @@
             await window.tuner.enable({ auto: true });
             if (myGen !== _autoOpenGeneration) return;
             _gateClaimed = true;   // tuner is open → keep the autoplay gate until it's dismissed
+            // The hold is now intentional and user-dismissable — cancel the fail-open
+            // backstop so it can't start playback while the player is still tuning.
+            if (_autoplayRelease && typeof _autoplayRelease.settle === 'function') _autoplayRelease.settle();
         } catch (e) {
             console.warn('Tuner: auto-open failed:', e && e.message ? e.message : e);
             if (_lastAutoOpenSessionKey === sessionKey) _lastAutoOpenSessionKey = null;
@@ -445,7 +448,11 @@
         if (_onAutoOpenSongLoading || !window.feedBack?.on) return;
         _onAutoOpenSongLoading = _onAutoOpenSongLoadingHandler;
         _onAutoOpenSongReady = async () => {
+            const myGen = _autoOpenGeneration;
             await _maybeAutoOpenOnTuningChange();
+            // A newer song:loading may have superseded us while awaiting — it owns the
+            // gate/_gateClaimed now, so don't release its hold based on our stale view.
+            if (myGen !== _autoOpenGeneration) return;
             if (!_gateClaimed) _releaseGate();   // not gating this song → let it play
         };
         window.feedBack.on('song:loading', _onAutoOpenSongLoading);

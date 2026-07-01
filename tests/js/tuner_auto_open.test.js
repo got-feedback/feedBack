@@ -493,6 +493,10 @@ test('the autoplay gate is a generic core hook with a fail-open backstop (app.js
     assert.match(appSrc, /AUTOPLAY_HOLD_BACKSTOP_MS/);                       // fail-open: never strand the song
     assert.match(appSrc, /if \(_autoplayHeld\) \{ _autoplayStart = start;/); // a gated start is stashed
     assert.match(appSrc, /_clearAutoplayHold\(\);[\s\S]{0,160}emit\('song:loading'/); // reset before plugins re-claim
+    // Per-hold identity: a stale release from an earlier hold must not clear a later one.
+    assert.match(appSrc, /token !== _autoplayHoldToken/);
+    // settle(): a committed holder can cancel the fail-open backstop (no timed release).
+    assert.match(appSrc, /release\.settle = function/);
     // The hook is generic — app.js still doesn't reference the tuner's internals.
     assert.doesNotMatch(appSrc, /_tunerAutoOpen|maybeAutoOpenOnTuningChange/);
 });
@@ -503,6 +507,12 @@ test('the tuner gates playback via holdAutoplay (screen.js)', () => {
     assert.match(src, /_gateClaimed = true/);                   // kept when the tuner opens
     assert.match(src, /if \(!_gateClaimed\) _releaseGate\(\)/);  // released when we don't open
     assert.match(src, /_releaseGate\(\);[\s\S]{0,80}dismissing a gated/); // released on dismiss
+    // Once open, the tuner settles the hold so the 12s backstop can't start playback
+    // while the player is still tuning.
+    assert.match(src, /_autoplayRelease\.settle\(\)/);
+    // The async song:ready handler is generation-guarded so it can't release a NEWER
+    // song's gate after its await.
+    assert.match(src, /_onAutoOpenSongReady = async \(\) => \{[\s\S]{0,320}myGen !== _autoOpenGeneration\) return;[\s\S]{0,120}_releaseGate/);
 });
 
 test('gate escape hatch: auto-open offers "Back to library" (+ Esc) and hides the × (ui.js/screen.js)', () => {

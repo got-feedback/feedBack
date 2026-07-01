@@ -71,11 +71,19 @@
         var offsets = Array.isArray(st.offsets) ? st.offsets : null;
         var nameFor = window.displayTuningName
             || (window.feedBack && window.feedBack.displayTuningName);
-        var homeLabel = tuningLabel();
+        // Resolve BOTH the home tuning and the working tuning through the SAME namer so
+        // "home?" is a like-for-like comparison — comparing a raw settings string ('Custom'
+        // / 'E Standard') against a from-offsets name would mislabel a real home tuning.
+        var homeLabel = (typeof nameFor === 'function')
+            ? (nameFor(typeof settings.tuning === 'string' ? settings.tuning : null,
+                Array.isArray(settings.tuning) ? settings.tuning : null) || tuningLabel())
+            : tuningLabel();
         var label = (offsets && typeof nameFor === 'function') ? nameFor(null, offsets) : homeLabel;
         return {
             label: label,
             short: label.replace(/ Standard\b/, ' Std').replace(/Custom Tuning/, 'Custom'),
+            // Home = no explicit working offsets, OR the working tuning names the same as
+            // the profile's home tuning (both via `nameFor`, so the compare is consistent).
             isHome: !offsets || label === homeLabel,
             provenance: st.provenance === 'verified' ? 'verified' : 'assumed',
         };
@@ -167,13 +175,14 @@
                 accepted = !(body && body.error);
             }
         } catch (e) { /* non-fatal — leave settings unchanged */ }
-        if (!accepted) return;
+        if (!accepted) return false;
         Object.assign(settings, patch);
         if (sm && sm.emit) sm.emit('instrument:changed', {
             instrument: settings.instrument, stringCount: settings.string_count, tuning: settings.tuning,
         });
         pushToTuner();
         renderTuner(); // reflect new tuning on the tuner card
+        return true;
     }
 
     // Drive the tuner plugin's instrument + tuning from the selection.
@@ -441,12 +450,15 @@
             // unsupported instrument+tuning combo.
             const newSc = counts.includes(settings.string_count) ? settings.string_count : counts[0];
             const tunings = _tuningsForInstrument(v, newSc);
-            await saveSettings({
+            const ok = await saveSettings({
                 instrument: v,
                 string_count: newSc,
                 tuning: tunings.includes(settings.tuning) ? settings.tuning : (tunings[0] || settings.tuning),
             });
-            setWorkingInstrument(v, newSc);   // surface THIS instrument's own working tuning
+            // Only move the working-tuning context once the switch was actually persisted —
+            // otherwise the selector stays on the old instrument while the card shows the
+            // new one's tuning (settings and workingTuning desync on a rejected save).
+            if (ok) setWorkingInstrument(v, newSc);   // surface THIS instrument's own working tuning
             renderInstrument(); keepOpen();
         }));
         menu.querySelectorAll('[data-pill="strings"]').forEach((b) => b.addEventListener('click', async () => {
@@ -477,6 +489,11 @@
 
     async function boot() {
         await Promise.all([loadTunings(), loadSettings()]);
+        // NB: we deliberately do NOT call setWorkingInstrument() here. The host seeds its
+        // current instrument from the same /api/settings on boot and emits
+        // working-tuning-changed on hydration (which re-renders this card), so the card
+        // aligns without us pre-touching the state — calling setCurrentInstrument() early
+        // would set the capability's `_touched` flag and suppress that seed.
         renderInstrument();
         renderTuner();
         pushToTuner(); // sync the tuner to the persisted selection on load

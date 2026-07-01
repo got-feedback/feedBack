@@ -905,33 +905,122 @@
         finishBatch();
     }
 
-    // Prompt for a target playlist (pick a listed number, or type a new name to
-    // create it) and add the given song filenames to it. Shared by the
-    // select-mode batch bar and the per-card ⋮ menu's single-song add. Returns
-    // the playlist id (or null if cancelled).
+    // Modern "Add to playlist" picker - replaces the old run-on numbered prompt
+    // ("1. Foo  2. Bar ...", which didn't scale past a couple of playlists). Shows a
+    // checkbox list of playlists with membership PRE-CHECK (a song already in a
+    // playlist shows checked; a multi-song selection shows the indeterminate box
+    // when only some are in), an inline "New playlist" row, and a search box once
+    // the list is long. Toggling a row adds/removes the given songs via the
+    // existing REST; only rows the user actually TOUCHED are changed. Resolves
+    // true if any change was applied, else null (cancelled / no-op). Shared by the
+    // per-card more-menu and the select-mode batch bar.
+    function openPlaylistPicker(fns) {
+        return new Promise((resolve) => { (async () => {
+            const lists = ((await jget('/api/playlists')) || []).filter((p) => !p.system_key);
+            // Pre-check membership: fetch each playlist's songs once (playlists are
+            // few, and this is a one-off on open, not a hot path). ALL selected in
+            // -> checked; SOME -> indeterminate.
+            const counts = await Promise.all(lists.map(async (p) => {
+                const pl = await jget('/api/playlists/' + p.id);
+                const has = new Set(((pl && pl.songs) || []).map((s) => s.filename));
+                return fns.reduce((n, fn) => n + (has.has(fn) ? 1 : 0), 0);
+            }));
+            const rows = lists.map((p, i) => ({
+                id: p.id, name: p.name, count: p.count || 0,
+                initial: counts[i] === fns.length ? 'all' : (counts[i] > 0 ? 'some' : 'none'),
+                checked: counts[i] === fns.length, touched: false,
+            }));
+
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
+            let query = '';
+            const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(null); } };
+            function done(applied) { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(applied || null); }
+            document.addEventListener('keydown', onKey);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+
+            const boxFor = (r) => r.touched ? (r.checked ? '☑' : '☐')
+                : (r.initial === 'all' ? '☑' : r.initial === 'some' ? '▣' : '☐');
+            function rowHtml(r) {
+                return '<button type="button" data-pl="' + esc(String(r.id)) + '" class="w-full flex items-center gap-3 px-3 py-2 rounded-md hover:bg-white/5 text-left">' +
+                    '<span class="text-lg leading-none w-5 text-fb-primary">' + boxFor(r) + '</span>' +
+                    '<span class="flex-1 truncate text-sm text-fb-text">' + esc(r.name) + '</span>' +
+                    '<span class="text-xs text-fb-textDim">' + (r.count || 0) + '</span></button>';
+            }
+            function listHtml() {
+                const q = query.trim().toLowerCase();
+                const shown = q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows;
+                if (!shown.length) return '<p class="text-sm text-fb-textDim text-center py-6">' + (rows.length ? 'No matches.' : 'No playlists yet - create one above.') + '</p>';
+                return shown.map(rowHtml).join('');
+            }
+            function bindRows() {
+                overlay.querySelectorAll('[data-pl]').forEach((b) => b.addEventListener('click', () => {
+                    const r = rows.find((x) => String(x.id) === b.getAttribute('data-pl'));
+                    if (!r) return;
+                    r.touched = true; r.checked = !r.checked;
+                    repaintList();
+                }));
+            }
+            function repaintList() { const el = overlay.querySelector('[data-list]'); if (el) { el.innerHTML = listHtml(); bindRows(); } }
+            async function createNew() {
+                const inp = overlay.querySelector('[data-new]');
+                const name = ((inp && inp.value) || '').trim();
+                if (!name) return;
+                const created = await jsend('POST', '/api/playlists', { name });
+                if (created && created.id) {
+                    rows.unshift({ id: created.id, name: created.name || name, count: 0, initial: 'none', checked: true, touched: true });
+                    query = ''; paint();
+                    overlay.querySelector('[data-new]')?.focus();
+                }
+            }
+            async function apply() {
+                // Act only where the final state differs from what's already stored.
+                const acts = rows.filter((r) => r.touched && ((r.checked && r.initial !== 'all') || (!r.checked && r.initial !== 'none')));
+                for (const r of acts) {
+                    for (const fn of fns) {
+                        try {
+                            if (r.checked) await fetch('/api/playlists/' + r.id + '/songs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: fn }) });
+                            else await fetch('/api/playlists/' + r.id + '/songs/' + encodeURIComponent(fn), { method: 'DELETE' });
+                        } catch (e) { /* */ }
+                    }
+                }
+                if (window.v3Playlists) { try { window.v3Playlists.refresh(); } catch (e) { /* */ } }
+                if (acts.length && window.fbNotify) {
+                    try { window.fbNotify.show({ title: 'Playlists updated', message: 'Updated ' + acts.length + ' playlist' + (acts.length === 1 ? '' : 's'), icon: '\U0001f3b5' }); } catch (e) { /* */ }
+                }
+                done(acts.length ? true : null);
+            }
+            function paint() {
+                overlay.innerHTML =
+                    '<div class="bg-fb-card rounded-xl border border-fb-border/50 w-full max-w-md p-5 space-y-4" role="dialog" aria-label="Add to playlist">' +
+                    '<div class="flex items-center justify-between"><h3 class="text-lg font-semibold text-fb-text">Add ' + fns.length + ' song' + (fns.length === 1 ? '' : 's') + ' to playlist</h3>' +
+                    '<button type="button" data-x class="text-fb-textDim hover:text-fb-text text-xl leading-none">✕</button></div>' +
+                    '<div class="flex gap-2"><input data-new type="text" placeholder="+ New playlist name" class="' + btnCtrl + ' flex-1"><button type="button" data-create class="bg-fb-card/60 hover:bg-fb-card border border-fb-border/50 text-fb-text px-3 rounded-md text-sm">Create</button></div>' +
+                    (rows.length > 8 ? '<input data-search type="text" placeholder="Search playlists..." class="' + btnCtrl + ' w-full" value="' + esc(query) + '">' : '') +
+                    '<div data-list class="max-h-72 overflow-y-auto v3-scroll -mx-1 px-1">' + listHtml() + '</div>' +
+                    '<div class="flex justify-end"><button type="button" data-done class="bg-fb-primary hover:bg-fb-primaryHi text-white text-sm font-medium px-5 py-2 rounded-md">Done</button></div>' +
+                    '</div>';
+                overlay.querySelector('[data-x]').addEventListener('click', () => done(null));
+                overlay.querySelector('[data-done]').addEventListener('click', apply);
+                overlay.querySelector('[data-create]').addEventListener('click', createNew);
+                overlay.querySelector('[data-new]').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); createNew(); } });
+                const s = overlay.querySelector('[data-search]');
+                if (s) s.addEventListener('input', (e) => { query = e.target.value; repaintList(); });
+                bindRows();
+            }
+
+            document.body.appendChild(overlay);
+            paint();
+            (overlay.querySelector('[data-search]') || overlay.querySelector('[data-new]'))?.focus();
+        })(); });
+    }
+
+    // Open the picker for the given song filenames. Shared by the select-mode
+    // batch bar and the per-card more-menu. Resolves truthy if a change was applied.
     async function addFilenamesToPlaylist(filenames) {
         const fns = Array.from(filenames || []);
         if (!fns.length) return null;
-        const lists = (await jget('/api/playlists')) || [];
-        const choices = lists.filter((p) => !p.system_key);
-        const labels = choices.map((p, i) => (i + 1) + '. ' + p.name).join('   ');
-        const ans = ((await window.uiPrompt({
-            title: 'Add ' + fns.length + ' song' + (fns.length === 1 ? '' : 's') + ' to a playlist',
-            label: (labels ? labels + ' ' : '') + 'Type a number above, or a new playlist name:',
-            okLabel: 'Add',
-            placeholder: 'Number or new playlist name',
-        })) || '').trim();
-        if (!ans) return null;
-        let pid = null;
-        const num = parseInt(ans, 10);
-        if (!isNaN(num) && choices[num - 1]) pid = choices[num - 1].id;
-        else { const created = await jsend('POST', '/api/playlists', { name: ans }); pid = created && created.id; }
-        if (!pid) return null;
-        for (const fn of fns) {
-            try { await fetch('/api/playlists/' + pid + '/songs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: fn }) }); } catch (e) { /* */ }
-        }
-        if (window.v3Playlists) { try { window.v3Playlists.refresh(); } catch (e) { /* */ } }
-        return pid;
+        return openPlaylistPicker(fns);
     }
 
     async function batchAddToPlaylist() {

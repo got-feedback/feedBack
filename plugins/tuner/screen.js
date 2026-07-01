@@ -13,6 +13,10 @@
     let _lastAutoOpenSessionKey = null;
     let _autoOpenDismissedSessionKey = null;
     let _autoOpenGeneration = 0;
+    // Bumped on every enable()/disable() so an in-flight open (which awaits audio start
+    // with the panel already visible) can detect it was dismissed mid-open and NOT flip
+    // _state.enabled on afterwards — avoiding a zombie enabled-but-hidden tuner.
+    let _openGen = 0;
     let _onAutoOpenSongLoading = null;
     let _onAutoOpenSongReady = null;
 
@@ -540,6 +544,7 @@
 
     async function enable(opts) {
         if (_state.enabled) return;
+        const myOpen = ++_openGen;   // this open's token; a disable()/newer open invalidates it
         // An AUTO-open (the "this song needs a different tuning" nudge) must
         // PERSIST: it is NOT dismissed by the autoplay song:play that follows
         // song entry, a stray click, or a same-screen re-emit — only by the
@@ -612,6 +617,10 @@
                 { deviceId: _state.selectedDeviceId, channel: _state.selectedChannel, audioInputMode: _state.audioInputMode },
                 _tunerUIApi.updateUI
             );
+            // The panel is visible (with ×/Skip) across the audio-start await above, so a
+            // dismiss can land here. If so, disable() already tore the panel down and
+            // bumped _openGen — do NOT flip enabled on (that would leave enabled-but-hidden).
+            if (myOpen !== _openGen) return;
             _state.enabled = true;
             if (window.tuner?.updateButtons) window.tuner.updateButtons();
         } catch (e) {
@@ -622,6 +631,7 @@
     }
 
     function disable() {
+        _openGen++;   // invalidate any in-flight enable() so it won't re-enable after this teardown
         const wasEnabled = _state.enabled;
         const wasAutoOpened = _state.autoOpened;
         const onPlayer = document.getElementById('player')?.classList.contains('active');

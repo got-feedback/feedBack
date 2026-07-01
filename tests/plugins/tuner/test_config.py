@@ -95,6 +95,20 @@ class TestConfigPersistence:
         client.post("/api/plugins/tuner/config", json={"audioInputMode": "browser"})
         assert client.get("/api/plugins/tuner/config").json()["audioInputMode"] == "browser"
 
+    def test_auto_open_defaults_false(self, client):
+        assert client.get("/api/plugins/tuner/config").json()["autoOpenOnTuningChange"] is False
+
+    def test_auto_open_true_accepted(self, client):
+        client.post("/api/plugins/tuner/config", json={"autoOpenOnTuningChange": True})
+        assert client.get("/api/plugins/tuner/config").json()["autoOpenOnTuningChange"] is True
+
+    def test_auto_open_fail_closed_on_non_bool(self, client):
+        # A hand-edited / bad-client non-boolean (e.g. the string "false") must NOT be
+        # coerced to True by bool() — the opt-in stays off.
+        for bad in ("false", "0", "1", "yes", 1, {}):
+            client.post("/api/plugins/tuner/config", json={"autoOpenOnTuningChange": bad})
+            assert client.get("/api/plugins/tuner/config").json()["autoOpenOnTuningChange"] is False, bad
+
     def test_disabled_tunings_strips_entries_without_colon(self, client):
         client.post("/api/plugins/tuner/config", json={
             "disabledTunings": ["guitar-6:Drop D", "legacy-entry", "bass-4:Standard"]

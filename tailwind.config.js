@@ -45,7 +45,7 @@ module.exports = {
                     cardMuted: '#0b1220', // inset wells
                     primary: '#0ea5e9',   // sky — primary actions, active nav, progress fill
                     primaryHi: '#38bdf8', // hover
-                    accent: '#ef4444',    // red — destructive, low-accuracy
+                    accent: '#ef4444',    // red — Support Us, destructive, low-accuracy
                     text: '#f8fafc',      // primary text
                     textDim: '#94a3b8',   // secondary text
                     border: '#334155',    // hairlines / card borders

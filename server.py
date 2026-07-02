@@ -772,6 +772,23 @@ class MetadataDB:
             self.conn.execute("ALTER TABLE playlists ADD COLUMN rules TEXT")
         except sqlite3.OperationalError:
             pass
+        # Curated album (P6, metadata-design §7.2): a playlists row with
+        # kind='album' is a hand-picked, ORDERED practice set of works with a
+        # chosen chart per slot — the repeatable gameplay loop. Reuses the
+        # playlist machinery wholesale (membership/order/cover/queue); the whole
+        # schema delta is this `kind` discriminator plus two per-slot columns:
+        # `arrangement` = the pinned arrangement NAME (names survive rescans;
+        # the client resolves name→index at play), `work_key` = stamped at
+        # add-time so a slot whose pinned chart is later deleted can self-heal
+        # to the work's CURRENT preferred at read (never rewritten). Additive,
+        # idempotent — same pattern as `rules` above.
+        for _ddl in ("ALTER TABLE playlists ADD COLUMN kind TEXT",
+                     "ALTER TABLE playlist_songs ADD COLUMN arrangement TEXT",
+                     "ALTER TABLE playlist_songs ADD COLUMN work_key TEXT"):
+            try:
+                self.conn.execute(_ddl)
+            except sqlite3.OperationalError:
+                pass
         # Wishlist / "wanted" (feedBack#636 item 4): a persisted, actionable
         # list of songs the user does NOT own yet — the *arr "Wanted/Monitored"
         # analogue. Unlike playlists (which reference owned local songs by
@@ -2023,7 +2040,7 @@ class MetadataDB:
     def list_playlists(self) -> list[dict]:
         from urllib.parse import quote
         rows = self.conn.execute(
-            "SELECT id, name, system_key, created_at, updated_at FROM playlists "
+            "SELECT id, name, system_key, created_at, updated_at, kind FROM playlists "
             "WHERE rules IS NULL "          # smart collections live in the source picker, not here
             "ORDER BY (system_key IS NULL), name COLLATE NOCASE"
         ).fetchall()
@@ -2041,18 +2058,19 @@ class MetadataDB:
             ).fetchall()
             out.append({
                 "id": pid, "name": r[1], "system_key": r[2],
-                "created_at": r[3], "updated_at": r[4],
+                "created_at": r[3], "updated_at": r[4], "kind": r[5],
                 "count": self._playlist_count(pid),
                 "art_urls": [f"/api/song/{quote(a[0])}/art" for a in arts],
             })
         return out
 
-    def create_playlist(self, name: str, system_key: str | None = None) -> dict:
+    def create_playlist(self, name: str, system_key: str | None = None,
+                        kind: str | None = None) -> dict:
         with self._lock:
             cur = self.conn.execute(
-                "INSERT INTO playlists (name, system_key, created_at, updated_at) "
-                "VALUES (?, ?, datetime('now'), datetime('now'))",
-                (name, system_key),
+                "INSERT INTO playlists (name, system_key, kind, created_at, updated_at) "
+                "VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                (name, system_key, kind),
             )
             self.conn.commit()
             pid = cur.lastrowid
@@ -2167,30 +2185,76 @@ class MetadataDB:
         # get_playlist uniformly 404s on a collection id — collections are
         # managed only through /api/collections.
         head = self.conn.execute(
-            "SELECT id, name, system_key, created_at, updated_at FROM playlists "
+            "SELECT id, name, system_key, created_at, updated_at, kind FROM playlists "
             "WHERE id = ? AND rules IS NULL", (pid,)
         ).fetchone()
         if not head:
             return None
+        is_album = head[5] == "album"
+        # Mixes hide dead songs (race-free; not deleted on scan). An ALBUM keeps
+        # every slot: a slot whose pinned chart was deleted self-heals to the
+        # work's current preferred at READ (§7.2 orphan-at-play — never a
+        # membership rewrite), and reports `missing` when the whole work is gone
+        # so the practice set keeps its denominator visible.
+        dead_filter = "" if is_album else "AND s.filename IS NOT NULL"
         rows = self.conn.execute(
-            """SELECT ps.filename, ps.position, s.title, s.artist, s.tuning_name
+            f"""SELECT ps.filename, ps.position, s.title, s.artist, s.tuning_name,
+                       ps.arrangement, ps.work_key, s.arrangements,
+                       (s.filename IS NULL) AS dead
                FROM playlist_songs ps LEFT JOIN songs s ON s.filename = ps.filename
-               WHERE ps.playlist_id = ?
-                 -- hide dead songs (race-free; not deleted on scan)
-                 AND s.filename IS NOT NULL
+               WHERE ps.playlist_id = ? {dead_filter}
                ORDER BY ps.position, ps.filename""",
             (pid,),
         ).fetchall()
         from urllib.parse import quote
-        songs = [{
-            "filename": r[0], "position": r[1],
-            "title": r[2] or r[0], "artist": r[3] or "", "tuning_name": r[4] or "",
-            "art_url": f"/api/song/{quote(r[0])}/art",
-        } for r in rows]
+        songs = []
+        for r in rows:
+            entry = {
+                "filename": r[0], "position": r[1],
+                "title": r[2] or r[0], "artist": r[3] or "", "tuning_name": r[4] or "",
+                "art_url": f"/api/song/{quote(r[0])}/art",
+            }
+            if is_album:
+                entry["arrangement"] = r[5]
+                entry["work_key"] = r[6]
+                try:
+                    entry["arrangements"] = _ensure_smart_names(json.loads(r[7]) if r[7] else [])
+                except Exception:
+                    entry["arrangements"] = []
+                if r[8]:
+                    entry.update(self._resolve_album_orphan(r[6]))
+            songs.append(entry)
         return {
             "id": head[0], "name": head[1], "system_key": head[2],
             "created_at": head[3], "updated_at": head[4], "songs": songs,
+            **({"kind": head[5]} if head[5] else {}),
         }
+
+    def _resolve_album_orphan(self, work_key: str | None) -> dict:
+        """A deleted album slot resolves to its work's CURRENT preferred/auto
+        pick at read (§7.2): the slot plays `resolved_filename` today, and if
+        the pinned file reappears (rescan) it simply resolves back to itself —
+        no rewrite in either direction. A work with no charts left reports
+        `missing` (the row stays, dimmed, so the set's denominator is honest)."""
+        if work_key:
+            self._ensure_work_display()
+            row = self.conn.execute(
+                "SELECT wd.filename, s.title, s.artist, s.tuning_name, s.arrangements "
+                "FROM work_display wd JOIN songs s ON s.filename = wd.filename "
+                "WHERE wd.effective_work_key = ? AND wd.is_group_representative = 1",
+                (work_key,)).fetchone()
+            if row:
+                from urllib.parse import quote
+                try:
+                    arrs = _ensure_smart_names(json.loads(row[4]) if row[4] else [])
+                except Exception:
+                    arrs = []
+                return {"resolved_filename": row[0], "title": row[1] or row[0],
+                        "artist": row[2] or "", "tuning_name": row[3] or "",
+                        "arrangements": arrs,
+                        "art_url": f"/api/song/{quote(row[0])}/art",
+                        "resolved_from_orphan": True}
+        return {"missing": True}
 
     def add_playlist_song(self, pid: int, filename: str):
         with self._lock:
@@ -2198,18 +2262,67 @@ class MetadataDB:
             # is a separate step, so a concurrent delete_playlist could land
             # between them and leave an orphan playlist_songs row. Returning None
             # lets the handler answer 404 instead of inserting an orphan.
-            if not self.conn.execute("SELECT 1 FROM playlists WHERE id = ?", (pid,)).fetchone():
+            row = self.conn.execute("SELECT kind FROM playlists WHERE id = ?", (pid,)).fetchone()
+            if not row:
                 return None
+            # Album slots stamp the work identity at ADD time (§7.2 "resolved to
+            # preferred once at add, pinned thereafter") — it's what lets a
+            # later-deleted chart's slot self-heal to the work's current keeper.
+            wk = self.work_key_for(filename) if row[0] == "album" else None
             nxt = self.conn.execute(
                 "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_songs WHERE playlist_id = ?", (pid,)
             ).fetchone()[0]
             cur = self.conn.execute(
-                "INSERT OR IGNORE INTO playlist_songs (playlist_id, filename, position) VALUES (?, ?, ?)",
-                (pid, filename, nxt),
+                "INSERT OR IGNORE INTO playlist_songs (playlist_id, filename, position, work_key) "
+                "VALUES (?, ?, ?, ?)",
+                (pid, filename, nxt, wk),
             )
             self.conn.execute("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", (pid,))
             self.conn.commit()
             return cur.rowcount > 0
+
+    _SLOT_KEEP = object()   # sentinel: "leave the arrangement pin unchanged"
+
+    def update_playlist_slot(self, pid: int, filename: str,
+                             new_filename: str | None = None,
+                             arrangement=_SLOT_KEEP):
+        """Edit ONE album slot in place (§7.2): pin/clear its arrangement (a
+        NAME — names survive rescans; None clears back to full-song) and/or swap
+        the slot's chart for another chart of the SAME work, keeping position +
+        pin — the per-slot pick is deliberately independent of the work's
+        global preferred. Returns the slot's (possibly new) filename, or None
+        when the slot doesn't exist, the swap target isn't a chart of the
+        slot's work, or it's already in the playlist."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT position, work_key FROM playlist_songs "
+                "WHERE playlist_id = ? AND filename = ?", (pid, filename)).fetchone()
+            if not row:
+                return None
+            out_fn = filename
+            if new_filename and new_filename != filename:
+                # Same-work guard: the stored stamp wins (works even when the
+                # pinned file is gone); fall back to computing from the row.
+                wk_slot = row[1] or self.work_key_for(filename)
+                if not wk_slot or self.work_key_for(new_filename) != wk_slot:
+                    return None
+                if self.conn.execute(
+                        "SELECT 1 FROM playlist_songs WHERE playlist_id = ? AND filename = ?",
+                        (pid, new_filename)).fetchone():
+                    return None
+                self.conn.execute(
+                    "UPDATE playlist_songs SET filename = ?, work_key = ? "
+                    "WHERE playlist_id = ? AND filename = ?",
+                    (new_filename, wk_slot, pid, filename))
+                out_fn = new_filename
+            if arrangement is not self._SLOT_KEEP:
+                self.conn.execute(
+                    "UPDATE playlist_songs SET arrangement = ? "
+                    "WHERE playlist_id = ? AND filename = ?",
+                    (arrangement, pid, out_fn))
+            self.conn.execute("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", (pid,))
+            self.conn.commit()
+        return out_fn
 
     def remove_playlist_song(self, pid: int, filename: str) -> bool:
         with self._lock:
@@ -7041,7 +7154,12 @@ def api_create_playlist(data: dict):
     name = _clean_str(data.get("name"))
     if not (1 <= len(name) <= 100):
         return JSONResponse({"error": "Playlist name must be 1–100 characters."}, status_code=400)
-    return meta_db.create_playlist(name)
+    # kind='album' = a curated album (§7.2): hand-picked works, a chosen chart
+    # per slot, played front-to-back on the queue. Absent/None = a regular mix.
+    kind = _clean_str(data.get("kind")) or None
+    if kind not in (None, "album"):
+        return JSONResponse({"error": "kind must be 'album' or omitted"}, status_code=400)
+    return meta_db.create_playlist(name, kind=kind)
 
 
 @app.get("/api/playlists/{pid}")
@@ -7096,6 +7214,36 @@ def api_add_playlist_song(pid: int, data: dict):
         return JSONResponse({"error": "not found"}, status_code=404)
     pl = meta_db.get_playlist(pid)
     return pl if pl is not None else JSONResponse({"error": "not found"}, status_code=404)
+
+
+@app.patch("/api/playlists/{pid}/songs/{filename:path}")
+def api_update_playlist_slot(pid: int, filename: str, data: dict):
+    """Edit one curated-album slot: {"arrangement": name|null} pins/clears the
+    slot's arrangement; {"chart_filename": fn} swaps the slot to another chart
+    of the same work (position + pin kept). Albums only — a mix has no slots."""
+    pl = meta_db.get_playlist(pid)
+    if pl is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if pl.get("kind") != "album":
+        return JSONResponse({"error": "Slot editing is for albums."}, status_code=400)
+    kwargs = {}
+    if "chart_filename" in data:
+        new_fn = _clean_str(data.get("chart_filename"))
+        if not new_fn:
+            return JSONResponse({"error": "chart_filename must be a filename"}, status_code=400)
+        kwargs["new_filename"] = new_fn
+    if "arrangement" in data:
+        arr = data.get("arrangement")
+        if arr is not None and not (isinstance(arr, str) and 1 <= len(arr.strip()) <= 100):
+            return JSONResponse({"error": "arrangement must be a name or null"}, status_code=400)
+        kwargs["arrangement"] = arr.strip() if isinstance(arr, str) else None
+    if not kwargs:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    if meta_db.update_playlist_slot(pid, filename, **kwargs) is None:
+        return JSONResponse(
+            {"error": "no such slot, or the chart isn't a version of this song"},
+            status_code=400)
+    return meta_db.get_playlist(pid)
 
 
 @app.delete("/api/playlists/{pid}/songs/{filename:path}")

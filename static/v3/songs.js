@@ -1922,6 +1922,7 @@
             if (L !== lastDrag) { lastDrag = L; jumpToLetter(L, smooth); }
         };
         rail.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 || e.isPrimary === false) return;  // primary tap only; ignore right/middle-click + secondary touches
             const btn = e.target.closest('.v3-azrail-letter');
             if (!btn) return;
             railBtns = [...rail.querySelectorAll('.v3-azrail-letter')];

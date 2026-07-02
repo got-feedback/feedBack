@@ -584,7 +584,8 @@
                             <summary>Fine-tune size</summary>
                             <div class="fb-finetune-body">
                                 <input type="range" id="setting-interface-size-slider" min="85" max="150" step="5" value="100"
-                                    oninput="window.feedBack.scale.set(this.value / 100)" class="fb-srow-wide slider-input"
+                                    oninput="window.feedBack.scale.set(this.value / 100, { persist: false })"
+                                    onchange="window.feedBack.scale.set(this.value / 100)" class="fb-srow-wide slider-input"
                                     aria-label="Interface size percent">
                                 <span class="fb-seg-val"><span id="setting-interface-size-val">100</span>%</span>
                             </div>

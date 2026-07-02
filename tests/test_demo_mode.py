@@ -91,6 +91,12 @@ def test_demo_off_settings_post_not_blocked(tmp_path, monkeypatch):
     ("GET",    "/api/plugins/updates"),
     ("POST",   "/api/plugins/highway_3d/files"),
     ("DELETE", "/api/plugins/highway_3d/files"),
+    # Enrichment (P8): review writes + the MusicBrainz search proxy (the
+    # proxy would spend the shared rate limit for anonymous demo visitors).
+    ("POST",   "/api/enrichment/review/some-file/accept"),
+    ("POST",   "/api/enrichment/review/some-file/reject"),
+    ("POST",   "/api/enrichment/review/some-file/pick"),
+    ("GET",    "/api/enrichment/search"),
 ])
 def test_demo_on_blocked_routes_return_403(tmp_path, monkeypatch, method, path):
     server, client = _make_client(tmp_path, monkeypatch, demo=True)

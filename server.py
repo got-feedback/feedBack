@@ -47,6 +47,10 @@ import sloppak as sloppak_mod
 import drums as drums_mod
 import notation as notation_mod
 import loosefolder as loosefolder_mod
+# Pure text-matching engine for MusicBrainz enrichment (P8): denoise/score/
+# tier classification + response parsing. No network/DB in there — the
+# throttled transport and the song_enrichment writes live in this module.
+import mb_match
 # Metadata extraction lives in a side-effect-free module so ProcessPool
 # scan workers can import + unpickle _scan_one without re-running this
 # module's import-time side effects (see lib/scan_worker.py).
@@ -230,6 +234,11 @@ _DEMO_BLOCKED: list[tuple[str, re.Pattern]] = [
     ("POST",   re.compile(r"^/api/progression/events$")),
     ("POST",   re.compile(r"^/api/shop/buy$")),
     ("POST",   re.compile(r"^/api/shop/equip$")),
+    # Enrichment (P8): review writes mutate the local match cache, and the
+    # search proxy relays to MusicBrainz — neither belongs to anonymous demo
+    # visitors (the proxy would spend the shared rate limit on their behalf).
+    ("POST",   re.compile(r"^/api/enrichment/review/.+$")),
+    ("GET",    re.compile(r"^/api/enrichment/search$")),
 ]
 
 
@@ -850,6 +859,19 @@ class MetadataDB:
         """)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_enrichment_hash ON song_enrichment(content_hash)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_enrichment_state ON song_enrichment(match_state)")
+        # P8 (the matcher): `candidates` holds the review tier's ranked
+        # candidate list (JSON) so the Match-Review drawer never re-queries
+        # MusicBrainz just to render; `last_attempt_at` anchors the failed-row
+        # retry backoff (epoch seconds). Idempotent ALTERs, same pattern as
+        # the `songs` migrations above.
+        for ddl in (
+            "ALTER TABLE song_enrichment ADD COLUMN candidates TEXT",
+            "ALTER TABLE song_enrichment ADD COLUMN last_attempt_at REAL",
+        ):
+            try:
+                self.conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
         # Progression (spec 010): instrument paths, challenges, quests, the
         # Decibels wallet, and the cosmetics shop. Targets/titles live in the
         # bundled content (data/progression/); these tables hold only player
@@ -2586,30 +2608,35 @@ class MetadataDB:
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
     def enrichment_pending(self, limit: int = 500) -> list[dict]:
-        """Songs whose enrichment row needs (re)matching: no row yet, or an
-        `unscanned`/`matched` row whose content_hash no longer matches the
-        song's current metadata (an edit changed the identity → re-match).
-        `manual` rows are the user's pinned pick and are NEVER re-queued;
-        `failed` rows wait for the matcher's backoff policy (next slice) rather
-        than being re-queued here every pass."""
+        """Songs whose enrichment row needs (re)matching: no row yet, or a
+        row whose content_hash no longer matches the song's current metadata
+        (an edit changed the identity → re-match), or an `unscanned` row.
+        `manual` rows are the user's pinned pick and are NEVER re-queued.
+        `matched`/`review`/`failed` rows with an UNCHANGED hash are settled
+        here — a review row stands until the user acts, and a failed row
+        retries only via the matcher's backoff policy (enrichment_failed_rows)
+        rather than being re-queued every pass. An identity edit (say, the
+        user fixes the typo that made matching fail) re-queues any of them
+        immediately via the hash mismatch."""
         # Read under _lock: the worker commits on this shared connection under
         # _lock, so an unlocked SELECT could interleave with its execute+commit.
         with self._lock:
             rows = self.conn.execute(
-                "SELECT s.filename, s.artist, s.title, s.album, s.duration, "
+                "SELECT s.filename, s.artist, s.title, s.album, s.year, s.duration, "
                 "e.content_hash, e.match_state "
                 "FROM songs s LEFT JOIN song_enrichment e ON e.filename = s.filename "
-                "WHERE s.title != '' AND (e.filename IS NULL OR e.match_state IN ('unscanned', 'matched')) "
+                "WHERE s.title != '' AND (e.filename IS NULL "
+                "OR e.match_state IN ('unscanned', 'matched', 'review', 'failed')) "
                 "ORDER BY s.filename LIMIT ?", (max(1, int(limit)),)).fetchall()
         out = []
-        for fn, artist, title, album, duration, ehash, state in rows:
+        for fn, artist, title, album, year, duration, ehash, state in rows:
             h = self.enrichment_content_hash(artist, title, album, duration)
             # No row yet, still unmatched, or the identity changed under a
-            # match → needs the matcher. A matched row with an unchanged hash
-            # is settled (idempotence).
+            # settled row → needs the matcher. A settled row with an
+            # unchanged hash stays settled (idempotence).
             if state is None or state == "unscanned" or ehash != h:
                 out.append({"filename": fn, "artist": artist, "title": title,
-                            "album": album, "duration": duration,
+                            "album": album, "year": year, "duration": duration,
                             "content_hash": h, "match_state": state})
         return out
 
@@ -2641,6 +2668,14 @@ class MetadataDB:
                 "                     WHEN song_enrichment.content_hash IS NOT excluded.content_hash "
                 "                     THEN 'unscanned' "
                 "                     ELSE song_enrichment.match_state END, "
+                # An identity change restarts the failure backoff too — the
+                # accumulated attempts belonged to the OLD identity (e.g. the
+                # user just fixed the typo that made matching fail).
+                "  attempts = CASE WHEN song_enrichment.match_state = 'manual' "
+                "                  THEN song_enrichment.attempts "
+                "                  WHEN song_enrichment.content_hash IS NOT excluded.content_hash "
+                "                  THEN 0 "
+                "                  ELSE song_enrichment.attempts END, "
                 "  content_hash = CASE WHEN song_enrichment.match_state = 'manual' "
                 "                      THEN song_enrichment.content_hash "
                 "                      ELSE excluded.content_hash END",
@@ -2654,19 +2689,21 @@ class MetadataDB:
                 "SELECT filename, content_hash, match_state, match_source, match_score, attempts, "
                 "mb_recording_id, mb_release_id, mb_artist_id, isrc, "
                 "canon_artist, canon_album, canon_title, canon_year, canon_artist_sort, "
-                "genres, art_cache_path, art_state, fetched_at "
+                "genres, art_cache_path, art_state, fetched_at, candidates, last_attempt_at "
                 "FROM song_enrichment WHERE filename = ?", (filename,)).fetchone()
         if not row:
             return None
         keys = ("filename", "content_hash", "match_state", "match_source", "match_score",
                 "attempts", "mb_recording_id", "mb_release_id", "mb_artist_id", "isrc",
                 "canon_artist", "canon_album", "canon_title", "canon_year",
-                "canon_artist_sort", "genres", "art_cache_path", "art_state", "fetched_at")
+                "canon_artist_sort", "genres", "art_cache_path", "art_state", "fetched_at",
+                "candidates", "last_attempt_at")
         out = dict(zip(keys, row))
-        try:
-            out["genres"] = json.loads(out["genres"]) if out["genres"] else []
-        except (ValueError, TypeError):
-            out["genres"] = []
+        for k in ("genres", "candidates"):
+            try:
+                out[k] = json.loads(out[k]) if out[k] else []
+            except (ValueError, TypeError):
+                out[k] = []
         return out
 
     def enrichment_state_counts(self) -> dict:
@@ -2678,6 +2715,156 @@ class MetadataDB:
                 "SELECT e.match_state, COUNT(*) FROM song_enrichment e "
                 "JOIN songs s ON s.filename = e.filename GROUP BY e.match_state").fetchall()
         return {r[0]: r[1] for r in rows}
+
+    def enrichment_song_row(self, filename: str) -> dict | None:
+        """The identity fields the matcher/scorer keys on, for one song."""
+        row = self.conn.execute(
+            "SELECT filename, artist, title, album, year, duration "
+            "FROM songs WHERE filename = ?", (filename,)).fetchone()
+        if not row:
+            return None
+        return dict(zip(("filename", "artist", "title", "album", "year", "duration"), row))
+
+    def enrichment_failed_rows(self, limit: int = 500) -> list[dict]:
+        """`failed` rows that MAY retry, with the fields the backoff policy
+        (worker-side) needs to decide eligibility. `rejected` rows are the
+        user's explicit "none of these" — never auto-retried (an identity
+        edit re-queues them through enrichment_pending's hash mismatch
+        instead)."""
+        rows = self.conn.execute(
+            "SELECT s.filename, s.artist, s.title, s.album, s.year, s.duration, "
+            "e.attempts, e.last_attempt_at "
+            "FROM songs s JOIN song_enrichment e ON e.filename = s.filename "
+            "WHERE s.title != '' AND e.match_state = 'failed' "
+            "AND COALESCE(e.match_source, '') != 'rejected' "
+            "ORDER BY s.filename LIMIT ?", (max(1, int(limit)),)).fetchall()
+        out = []
+        for fn, artist, title, album, year, duration, attempts, last_at in rows:
+            out.append({"filename": fn, "artist": artist, "title": title,
+                        "album": album, "year": year, "duration": duration,
+                        "content_hash": self.enrichment_content_hash(artist, title, album, duration),
+                        "attempts": attempts or 0, "last_attempt_at": last_at})
+        return out
+
+    def enrichment_cache_lookup(self, content_hash: str, exclude_filename: str = "") -> dict | None:
+        """A settled match for the same identity hash — another chart of the
+        same recording already matched/pinned → copy it, no network (design
+        §5 step 1: the local match-cache)."""
+        row = self.conn.execute(
+            "SELECT match_score, mb_recording_id, mb_release_id, mb_artist_id, isrc, "
+            "canon_artist, canon_album, canon_title, canon_year, canon_artist_sort, genres "
+            "FROM song_enrichment WHERE content_hash = ? AND filename != ? "
+            "AND match_state IN ('matched', 'manual') AND mb_recording_id IS NOT NULL "
+            "LIMIT 1", (content_hash, exclude_filename or "")).fetchone()
+        if not row:
+            return None
+        try:
+            genres = json.loads(row[10]) if row[10] else []
+        except (ValueError, TypeError):
+            genres = []
+        return {
+            "score": row[0],
+            "recording_id": row[1], "release_id": row[2] or "", "artist_id": row[3] or "",
+            "isrc": row[4] or "", "artist": row[5] or "", "album": row[6] or "",
+            "title": row[7] or "", "year": row[8] or "", "artist_sort": row[9] or "",
+            "genres": genres,
+        }
+
+    def apply_enrichment_match(self, filename: str, content_hash: str, state: str,
+                               source: str | None = None, score: float | None = None,
+                               cand: dict | None = None, candidates: list | None = None,
+                               bump_attempts: bool = False,
+                               allow_manual_overwrite: bool = False) -> bool:
+        """The single writer for every matcher/review outcome. Writes the
+        full lifecycle row: state + source + score, the canonical fields a
+        confident match supplies (`cand`), and/or the review tier's ranked
+        `candidates`. Returns False without touching anything when the row is
+        `manual` and the caller isn't explicitly acting for the user — the
+        never-overwrite-manual contract lives HERE so no future call path
+        can forget it. Art-cache fields are preserved verbatim (they belong
+        to the art slice, not the matcher)."""
+        cand = cand or {}
+        now = time.time()
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT match_state, attempts, art_cache_path, art_state, fetched_at "
+                "FROM song_enrichment WHERE filename = ?", (filename,)).fetchone()
+            if cur and cur[0] == "manual" and not allow_manual_overwrite:
+                return False
+            attempts = int(cur[1] or 0) if cur else 0
+            if bump_attempts:
+                attempts += 1
+            fetched_at = (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                          if state in ("matched", "manual", "review")
+                          else (cur[4] if cur else None))
+            self.conn.execute(
+                "INSERT OR REPLACE INTO song_enrichment (filename, content_hash, "
+                "match_state, match_source, match_score, attempts, "
+                "mb_recording_id, mb_release_id, mb_artist_id, isrc, "
+                "canon_artist, canon_album, canon_title, canon_year, canon_artist_sort, "
+                "genres, art_cache_path, art_state, fetched_at, candidates, last_attempt_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (filename, content_hash, state, source, score, attempts,
+                 cand.get("recording_id") or None, cand.get("release_id") or None,
+                 cand.get("artist_id") or None, cand.get("isrc") or None,
+                 cand.get("artist") or None, cand.get("album") or None,
+                 cand.get("title") or None, cand.get("year") or None,
+                 cand.get("artist_sort") or None,
+                 json.dumps(cand.get("genres") or []) if cand else "[]",
+                 cur[2] if cur else None, cur[3] if cur else None,
+                 fetched_at,
+                 json.dumps(candidates) if candidates else None,
+                 now if state == "failed" else None))
+            self.conn.commit()
+        return True
+
+    def set_enrichment_manual(self, filename: str, cand: dict, source: str = "search") -> bool:
+        """User-pinned match (review Accept / manual search-and-pick). The
+        highest-authority state: never auto-reset, survives identity edits.
+        `source` records HOW it was pinned ('review' = accepted a proposed
+        candidate, 'search' = picked from a manual search)."""
+        song = self.enrichment_song_row(filename)
+        if not song:
+            return False
+        h = self.enrichment_content_hash(
+            song["artist"], song["title"], song["album"], song["duration"])
+        return self.apply_enrichment_match(
+            filename, h, "manual", source=source, score=1.0, cand=cand,
+            allow_manual_overwrite=True)
+
+    def set_enrichment_rejected(self, filename: str) -> bool:
+        """User said "none of these candidates" — clear any canonical values
+        and park the row as failed/rejected (never auto-retried; an identity
+        edit re-queues it). Refused for `manual` rows: un-pinning a pick the
+        user explicitly made is not a review-drawer action."""
+        row = self.get_enrichment(filename)
+        if not row or row["match_state"] not in ("review", "matched"):
+            return False
+        return self.apply_enrichment_match(
+            filename, row["content_hash"], "failed", source="rejected",
+            score=None, candidates=row.get("candidates") or None)
+
+    def enrichment_review_queue(self, limit: int = 200) -> list[dict]:
+        """The Match-Review drawer's queue: review-tier rows joined to their
+        (still-existing) songs, with the stored candidate list parsed."""
+        rows = self.conn.execute(
+            "SELECT e.filename, s.title, s.artist, s.album, s.year, s.duration, s.mtime, "
+            "e.match_score, e.candidates, e.attempts "
+            "FROM song_enrichment e JOIN songs s ON s.filename = e.filename "
+            "WHERE e.match_state = 'review' "
+            "ORDER BY s.artist COLLATE NOCASE, s.title COLLATE NOCASE, e.filename "
+            "LIMIT ?", (max(1, int(limit)),)).fetchall()
+        out = []
+        for fn, title, artist, album, year, duration, mtime, score, cands, attempts in rows:
+            try:
+                candidates = json.loads(cands) if cands else []
+            except (ValueError, TypeError):
+                candidates = []
+            out.append({"filename": fn, "title": title, "artist": artist,
+                        "album": album, "year": year, "duration": duration,
+                        "mtime": mtime, "match_score": score,
+                        "candidates": candidates, "attempts": attempts or 0})
+        return out
 
     def _estd_set(self) -> set[str]:
         """Get set of filenames that have a retuned variant (_EStd_ or _DropD_) in the DB."""
@@ -2733,6 +2920,7 @@ class MetadataDB:
                      mastery: list[str] | None = None,
                      tags_has: list[str] | None = None,
                      user_difficulty_in: list[str] | None = None,
+                     match_states: list[str] | None = None,
                      naming_mode: str = "legacy",
                      include_intrinsic: bool = True) -> tuple[str, list]:
         """Shared WHERE-clause builder for query_page / query_artists /
@@ -2798,6 +2986,21 @@ class MetadataDB:
             where += (" AND filename IN (SELECT filename FROM song_user_meta "
                       f"WHERE user_difficulty IN ({ph}))")
             params += _diffs
+        # Match facet (P8) = the song's enrichment lifecycle state, from the
+        # separate song_enrichment table (same EXISTS idiom as mastery above).
+        # 'matched' folds in 'manual' (a user pin IS a match); 'pending' means
+        # no verdict yet (no row, or still unscanned). OR within the set.
+        if match_states:
+            _esub = "SELECT 1 FROM song_enrichment e WHERE e.filename = songs.filename"
+            _mstates = {
+                "review": f"EXISTS ({_esub} AND e.match_state = 'review')",
+                "matched": f"EXISTS ({_esub} AND e.match_state IN ('matched', 'manual'))",
+                "unmatched": f"EXISTS ({_esub} AND e.match_state = 'failed')",
+                "pending": f"NOT EXISTS ({_esub} AND e.match_state != 'unscanned')",
+            }
+            _msel = [_mstates[b] for b in match_states if b in _mstates]
+            if _msel:
+                where += " AND (" + " OR ".join(_msel) + ")"
         if q:
             where += " AND (title LIKE ? COLLATE NOCASE OR artist LIKE ? COLLATE NOCASE OR album LIKE ? COLLATE NOCASE)"
             params += [f"%{q}%"] * 3
@@ -3228,6 +3431,7 @@ class MetadataDB:
                    mastery: list[str] | None = None,
                    tags_has: list[str] | None = None,
                    user_difficulty_in: list[str] | None = None,
+                   match_states: list[str] | None = None,
                    after: str | None = None,
                    group: bool = False,
                    naming_mode: str = "legacy") -> tuple[list[dict], int]:
@@ -3258,6 +3462,7 @@ class MetadataDB:
             stems_has=stems_has, stems_lacks=stems_lacks,
             has_lyrics=has_lyrics, tunings=tunings, mastery=mastery,
             tags_has=tags_has, user_difficulty_in=user_difficulty_in,
+            match_states=match_states,
             naming_mode=naming_mode, include_intrinsic=not group,
         )
         ifrag, iparams = "", []
@@ -3595,6 +3800,7 @@ class MetadataDB:
                     stems_lacks: list[str] | None = None,
                     has_lyrics: int | None = None,
                     tunings: list[str] | None = None,
+                    match_states: list[str] | None = None,
                     sort: str = "artist",
                     want_sort_letters: bool = False,
                     group: bool = False,
@@ -3624,7 +3830,8 @@ class MetadataDB:
             artist_filter=artist_filter, album_filter=album_filter,
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode,
+            has_lyrics=has_lyrics, tunings=tunings, match_states=match_states,
+            naming_mode=naming_mode,
             include_intrinsic=not group,
         )
         if group:
@@ -4390,7 +4597,8 @@ def _require_library_provider_capability(provider: object, capability: str) -> N
     )
 
 
-_OPTIONAL_NEW_PROVIDER_KWARGS = ("naming_mode", "sort", "want_sort_letters", "after")
+_OPTIONAL_NEW_PROVIDER_KWARGS = ("naming_mode", "sort", "want_sort_letters", "after",
+                                 "mastery", "match_states")
 
 
 def _filter_provider_kwargs(method: object, kwargs: dict) -> dict:
@@ -5229,13 +5437,14 @@ def _scan_runner():
     _kick_enrich()
 
 
-# ── Metadata enrichment worker (P7 — plumbing) ────────────────────────────────
+# ── Metadata enrichment worker (P7 plumbing + P8 matcher) ─────────────────────
 # A single throttled daemon thread + queue, mirroring _kick_scan/_scan_runner
 # (single-flight + coalescing; NOT a pool — external lookups are rate-limited
-# to ~1/s, which makes a pool pointless). This slice ships the full lifecycle
-# around a NO-OP matcher: the queue walk, the identity hashing, the throttle
-# seam, and the status surface — so the real text matcher (next slice) replaces
-# exactly one function (_enrich_one) and inherits everything else.
+# to ~1/s, which makes a pool pointless). P7 shipped the lifecycle; P8 fills
+# in the matcher (_enrich_one): local cache → manifest mbid/isrc exact keys →
+# MusicBrainz text search, scored into auto/review/failed tiers by
+# lib/mb_match.py. Wrong-match is worse than slow (design §5): medium
+# confidence goes to the Match-Review queue, never straight to canonical.
 
 _enrich_kick_lock = threading.Lock()
 _enrich_pending_pass = False
@@ -5265,19 +5474,220 @@ def _enrich_throttle():
     _enrich_last_fetch = time.monotonic()
 
 
+class EnrichTransportError(Exception):
+    """Network-level enrichment failure — offline, DNS, MusicBrainz down or
+    rate-limiting. Pauses the current pass (rows keep their state and no
+    attempt is consumed); the next kick (scan-complete / the 5-min periodic
+    rescan) retries naturally."""
+
+
+_MB_API_ROOT = "https://musicbrainz.org/ws/2"
+_enrich_ua_cache: str | None = None
+
+
+def _enrich_user_agent() -> str:
+    """MusicBrainz etiquette requires a real identifying User-Agent
+    (app/version + contact URL); anonymous defaults get throttled/blocked."""
+    global _enrich_ua_cache
+    if _enrich_ua_cache is None:
+        version = "unknown"
+        try:
+            vf = Path(__file__).parent / "VERSION"
+            if vf.exists():
+                version = vf.read_text().strip() or "unknown"
+        except (OSError, UnicodeDecodeError):
+            pass
+        _enrich_ua_cache = f"feedBack/{version} (https://github.com/got-feedback/feedBack)"
+    return _enrich_ua_cache
+
+
+def _enrich_network_enabled() -> bool:
+    """False = the matcher runs local-only (hash stamping, cache copies) and
+    never opens a socket. FEEDBACK_ENRICH_OFFLINE is the explicit user
+    kill-switch (privacy / air-gapped installs); FEEDBACK_SKIP_STARTUP_TASKS
+    marks the test/CI environment, where pytest must never reach the network
+    no matter what a test triggers."""
+    return not (_env_flag("FEEDBACK_ENRICH_OFFLINE")
+                or _env_flag("FEEDBACK_SKIP_STARTUP_TASKS"))
+
+
+def _mb_http_get(path: str, params: dict) -> dict | None:
+    """The ONE place enrichment touches the network (tests fake exactly this
+    seam). Throttled (≤1 req/s via _enrich_throttle), identified (real
+    User-Agent), offline-guarded. Returns the parsed JSON body, or None for
+    a 404 lookup; raises EnrichTransportError for anything network-shaped.
+    NEVER call this while holding meta_db._lock — fetch outside, write
+    inside."""
+    if not _enrich_network_enabled():
+        raise EnrichTransportError("enrichment network disabled")
+    import requests  # declared in requirements.txt; lazy so tests never need it
+    _enrich_throttle()
+    try:
+        resp = requests.get(
+            f"{_MB_API_ROOT}/{path.lstrip('/')}",
+            params={**params, "fmt": "json"},
+            headers={"User-Agent": _enrich_user_agent()},
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        raise EnrichTransportError(str(e)) from e
+    if resp.status_code == 404:
+        return None
+    if resp.status_code == 503:
+        # MusicBrainz signals rate-limit pressure with 503 — back the whole
+        # pass off rather than hammering on.
+        raise EnrichTransportError("musicbrainz 503 (rate limited)")
+    if resp.status_code != 200:
+        raise EnrichTransportError(f"musicbrainz HTTP {resp.status_code}")
+    try:
+        return resp.json()
+    except ValueError as e:
+        raise EnrichTransportError("bad JSON from musicbrainz") from e
+
+
+def _mb_search_recordings(artist, title, limit: int = 8) -> list[dict]:
+    """Text search (tier 2–4): denoised Lucene query over /recording."""
+    query = mb_match.build_recording_query(artist, title)
+    if not query:
+        return []
+    body = _mb_http_get("recording", {"query": query, "limit": limit})
+    return mb_match.parse_search_response(body or {})
+
+
+def _mb_lookup_recording(mbid: str) -> dict | None:
+    """Direct lookup for a manifest-carried recording MBID (tier 0)."""
+    body = _mb_http_get(
+        f"recording/{mbid}",
+        {"inc": "artist-credits+releases+release-groups+isrcs+genres"})
+    return mb_match.parse_recording_doc(body) if body else None
+
+
+def _mb_lookup_isrc(isrc: str) -> list[dict]:
+    """Recordings registered under a manifest-carried ISRC (tier 1)."""
+    body = _mb_http_get(
+        f"isrc/{isrc}", {"inc": "artist-credits+releases+release-groups"})
+    if not body:
+        return []
+    docs = body.get("recordings") or []
+    return [c for c in (mb_match.parse_recording_doc(d) for d in docs) if c]
+
+
+# Strict shapes for the manifest's optional identity keys (feedpak spec §5.1).
+# Validated before use — the mbid is interpolated into a URL path, so junk or
+# hostile manifest values must never reach the request line.
+_MBID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_ISRC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$")
+
+
+def _manifest_exact_ids(filename: str) -> dict:
+    """Optional `mbid`/`isrc` from the pack manifest — the spec's additive
+    identity keys. Feature-detected: packs published before that spec
+    revision simply lack them and fall through to text matching. READ-only:
+    enrichment never writes anything into pack files."""
+    try:
+        dlc = _get_dlc_dir()
+        if not dlc:
+            return {}
+        p = _resolve_dlc_path(dlc, filename)
+        if p is None or not p.exists() or not sloppak_mod.is_sloppak(p):
+            return {}
+        manifest = sloppak_mod.load_manifest(p) or {}
+    except Exception:
+        return {}
+    out = {}
+    mbid = str(manifest.get("mbid", "") or "").strip().lower()
+    if _MBID_RE.match(mbid):
+        out["mbid"] = mbid
+    isrc = str(manifest.get("isrc", "") or "").strip().upper()
+    if _ISRC_RE.match(isrc):
+        out["isrc"] = isrc
+    return out
+
+
+# Failed-row retry backoff: 1 h after the first failed attempt, doubling per
+# attempt, capped at a week — a permanently-unmatchable obscure chart must
+# not re-hammer MusicBrainz on every scan kick.
+_ENRICH_BACKOFF_BASE = 3600.0
+_ENRICH_BACKOFF_CAP = 7 * 86400.0
+
+
+def _enrich_backoff_elapsed(attempts, last_attempt_at, now: float) -> bool:
+    if not last_attempt_at:
+        return True
+    delay = min(_ENRICH_BACKOFF_BASE * (2 ** max(0, int(attempts or 1) - 1)),
+                _ENRICH_BACKOFF_CAP)
+    return (now - float(last_attempt_at)) >= delay
+
+
+# Review tier keeps a short ranked candidate list for the drawer; more than a
+# handful is noise the user has to scroll past.
+_ENRICH_MAX_CANDIDATES = 5
+
+
 def _enrich_one(row: dict) -> None:
-    """P7's NO-OP matcher: stamp/refresh the row's identity hash (which also
-    drops a stale match back to `unscanned`, never a `manual` pick) and stop.
-    The text-match pipeline replaces this function; anything that reaches the
-    network must go through _enrich_throttle() and must not hold meta_db._lock
-    across the fetch."""
-    meta_db.upsert_enrichment_stub(row["filename"], row["content_hash"])
+    """The matcher (P8; replaces P7's no-op). Precedence per design §5:
+
+    1. local match-cache by content_hash — another chart of the same
+       recording already matched/pinned → copy it, NO network;
+    2. manifest `mbid` (tier 0) / `isrc` (tier 1) exact keys → direct
+       lookup, auto;
+    3. text search → scored tiers: auto (high) / review (medium — a human
+       confirms before anything canonicalizes) / failed (low, retried on
+       backoff).
+
+    Never touches a `manual` row (the writer enforces it). Network errors
+    raise EnrichTransportError so the pass pauses instead of burning
+    attempts while offline."""
+    fn, chash = row["filename"], row["content_hash"]
+
+    cached = meta_db.enrichment_cache_lookup(chash, exclude_filename=fn)
+    if cached:
+        score = cached.pop("score", None)
+        meta_db.apply_enrichment_match(fn, chash, "matched", source="cache",
+                                       score=score, cand=cached)
+        return
+
+    ids = _manifest_exact_ids(fn)
+    if ids.get("mbid"):
+        cand = _mb_lookup_recording(ids["mbid"])
+        if cand:
+            meta_db.apply_enrichment_match(fn, chash, "matched", source="mbid",
+                                           score=1.0, cand=cand)
+            return
+        # A 404'd mbid (typo'd manifest) falls through to the text tiers.
+    if ids.get("isrc"):
+        cands = mb_match.rank_candidates(row, _mb_lookup_isrc(ids["isrc"]))
+        if cands:
+            meta_db.apply_enrichment_match(fn, chash, "matched", source="isrc",
+                                           score=1.0, cand=cands[0])
+            return
+
+    ranked = mb_match.rank_candidates(row, _mb_search_recordings(row.get("artist"), row.get("title")))
+    best = ranked[0] if ranked else None
+    tier = mb_match.classify(row, best, best["score"]) if best else "none"
+    if tier == "auto":
+        meta_db.apply_enrichment_match(fn, chash, "matched", source="text",
+                                       score=best["score"], cand=best)
+    elif tier == "review":
+        meta_db.apply_enrichment_match(fn, chash, "review", source="text",
+                                       score=best["score"],
+                                       candidates=ranked[:_ENRICH_MAX_CANDIDATES])
+    else:
+        meta_db.apply_enrichment_match(fn, chash, "failed", source="text",
+                                       score=(best["score"] if best else None),
+                                       candidates=ranked[:_ENRICH_MAX_CANDIDATES] or None,
+                                       bump_attempts=True)
 
 
 def _background_enrich():
-    """One pass over the rows needing (re)matching. A single bounded pass —
-    with the no-op matcher, `unscanned` rows legitimately stay unscanned, so
-    looping until the queue drains would spin forever."""
+    """One bounded pass, two phases. Phase 1 stamps/refreshes identity-hash
+    stubs for every song whose identity is new or changed — pure-local, so
+    hashes stay fresh (and stale matches drop back to `unscanned`) even
+    fully offline. Phase 2 runs the matcher over those rows plus any
+    `failed` rows whose backoff has elapsed; a transport failure pauses it
+    (state untouched, no attempt burned) and the next kick retries. Offline
+    (kill-switch or the test env) skips phase 2 entirely. Never drains in a
+    loop — a dead network would make that spin forever."""
     _enrich_status["processed"] = 0
     try:
         pending = meta_db.enrichment_pending(limit=100000)
@@ -5286,13 +5696,44 @@ def _background_enrich():
         return
     for row in pending:
         try:
-            _enrich_one(row)
+            meta_db.upsert_enrichment_stub(row["filename"], row["content_hash"])
         except Exception as e:
-            log.warning("enrichment failed for %s: %s", row.get("filename"), e)
+            log.warning("enrichment stub failed for %s: %s", row.get("filename"), e)
         _enrich_status["processed"] += 1
     _enrich_status["last_pass_at"] = time.time()
-    if pending:
-        log.info("Enrichment pass: %d rows refreshed", len(pending))
+
+    if not _enrich_network_enabled():
+        if pending:
+            log.info("Enrichment pass: %d rows stamped (network disabled — matching skipped)", len(pending))
+        return
+
+    now = time.time()
+    retriable = []
+    try:
+        retriable = [r for r in meta_db.enrichment_failed_rows(limit=100000)
+                     if _enrich_backoff_elapsed(r.get("attempts"), r.get("last_attempt_at"), now)]
+    except Exception:
+        log.exception("enrichment: failed-row query failed")
+    matched = 0
+    for row in pending + retriable:
+        try:
+            _enrich_one(row)
+            matched += 1
+        except EnrichTransportError as e:
+            log.info("enrichment: network unavailable, pass paused (%s)", e)
+            break
+        except Exception as e:
+            log.warning("enrichment failed for %s: %s", row.get("filename"), e)
+            try:
+                # Park the row on the failure backoff instead of retrying a
+                # poisoned input every pass.
+                meta_db.apply_enrichment_match(
+                    row["filename"], row["content_hash"], "failed",
+                    source="error", bump_attempts=True)
+            except Exception:
+                pass
+    if pending or retriable:
+        log.info("Enrichment pass: %d rows stamped, %d matched", len(pending), matched)
 
 
 def _kick_enrich() -> bool:
@@ -5805,6 +6246,104 @@ def enrichment_status():
         "states": meta_db.enrichment_state_counts(),
         "total_songs": meta_db.count(),
     }
+
+
+@app.get("/api/enrichment/review")
+def api_enrichment_review(limit: int = 200):
+    """The Match-Review queue: songs whose text match landed in the medium-
+    confidence review tier, each with its stored candidate list — the drawer
+    renders straight from this, no MusicBrainz round-trip."""
+    limit = max(1, min(int(limit), 500))
+    return {
+        "songs": meta_db.enrichment_review_queue(limit=limit),
+        "total_review": meta_db.enrichment_state_counts().get("review", 0),
+    }
+
+
+@app.post("/api/enrichment/review/{filename:path}/accept")
+def api_enrichment_accept(filename: str, data: dict = Body(...)):
+    """Accept one of the stored review candidates: the row becomes a
+    user-pinned `manual` match (never auto-reset). Display-only, like every
+    enrichment write — nothing touches the pack file."""
+    recording_id = str((data or {}).get("recording_id") or "")
+    row = meta_db.get_enrichment(filename)
+    if not row or row["match_state"] != "review":
+        raise HTTPException(status_code=404, detail="no review row for this song")
+    cand = next((c for c in (row.get("candidates") or [])
+                 if c.get("recording_id") == recording_id), None)
+    if not cand:
+        raise HTTPException(status_code=404, detail="candidate not in the stored list")
+    if not meta_db.set_enrichment_manual(filename, cand, source="review"):
+        raise HTTPException(status_code=404, detail="unknown song")
+    return {"ok": True, "enrichment": meta_db.get_enrichment(filename)}
+
+
+@app.post("/api/enrichment/review/{filename:path}/reject")
+def api_enrichment_reject(filename: str):
+    """"None of these" — clears any canonical values and parks the row as
+    failed/rejected (never auto-retried; editing the song's metadata
+    re-queues it). Valid from `review` or `matched`, never from `manual`."""
+    if not meta_db.set_enrichment_rejected(filename):
+        raise HTTPException(status_code=404, detail="no rejectable match for this song")
+    return {"ok": True, "enrichment": meta_db.get_enrichment(filename)}
+
+
+# The candidate fields a manual pick is allowed to carry — the payload comes
+# from our own /api/enrichment/search proxy, but the route re-sanitizes so a
+# hand-rolled client can't stuff arbitrary keys/types into the cache row.
+_CAND_STR_FIELDS = ("recording_id", "title", "artist", "artist_id",
+                    "artist_sort", "release_id", "album", "year", "isrc")
+
+
+def _sanitize_candidate(raw: dict) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    out = {k: str(raw.get(k) or "") for k in _CAND_STR_FIELDS}
+    if not out["recording_id"] or not out["title"]:
+        return None
+    genres = raw.get("genres") or []
+    out["genres"] = [str(g) for g in genres if isinstance(g, str)][:5] \
+        if isinstance(genres, list) else []
+    return out
+
+
+@app.post("/api/enrichment/review/{filename:path}/pick")
+def api_enrichment_pick(filename: str, data: dict = Body(...)):
+    """Fix-match / manual search-and-pick: pin a candidate the user found via
+    /api/enrichment/search (not limited to the stored review list — this is
+    the escape hatch for a wrong auto-match too). Sets `manual`, the
+    highest-authority state."""
+    cand = _sanitize_candidate((data or {}).get("candidate"))
+    if not cand:
+        raise HTTPException(status_code=400, detail="candidate needs recording_id + title")
+    if not meta_db.set_enrichment_manual(filename, cand, source="search"):
+        raise HTTPException(status_code=404, detail="unknown song")
+    return {"ok": True, "enrichment": meta_db.get_enrichment(filename)}
+
+
+@app.get("/api/enrichment/search")
+def api_enrichment_search(artist: str = "", title: str = "", limit: int = 8,
+                          filename: str = ""):
+    """Manual-search proxy to MusicBrainz (throttled + identified like the
+    background matcher — a user typing in the drawer must not sidestep the
+    rate limit). `filename` optionally scores results against that song's
+    stored identity (year/duration corroboration) instead of just the typed
+    text. Sync route on purpose: FastAPI runs it in the threadpool, so the
+    throttle's sleep never blocks the event loop."""
+    if not (artist.strip() or title.strip()):
+        raise HTTPException(status_code=400, detail="artist or title required")
+    limit = max(1, min(int(limit), 25))
+    try:
+        cands = _mb_search_recordings(artist, title, limit=limit)
+    except EnrichTransportError as e:
+        return JSONResponse({"error": "musicbrainz unavailable", "detail": str(e)},
+                            status_code=503)
+    ref = None
+    if filename:
+        ref = meta_db.enrichment_song_row(filename)
+    if ref is None:
+        ref = {"artist": artist, "title": title}
+    return {"candidates": mb_match.rank_candidates(ref, cands)}
 
 
 @app.get("/api/startup-status")
@@ -6405,7 +6944,8 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
                        stems_has: str = "", stems_lacks: str = "",
                        has_lyrics: str = "", tunings: str = "", provider: str = "local",
                        mastery: str = "", tags: str = "", user_difficulty: str = "",
-                       after: str = "", group: int = 0, naming_mode: str = "legacy"):
+                       match: str = "", after: str = "", group: int = 0,
+                       naming_mode: str = "legacy"):
     """Paginated library search through the selected library provider.
 
     `after` is an opaque keyset cursor (feedBack#636 item 3): pass back the
@@ -6433,6 +6973,7 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
         mastery=_split_csv(mastery),
         tags_has=_split_csv(tags),
         user_difficulty_in=_split_csv(user_difficulty),
+        match_states=_split_csv(match),
         **_library_filter_args(
             q=q, favorites=favorites, format=format,
             artist=artist, album=album,
@@ -6544,6 +7085,7 @@ async def library_stats(favorites: int = 0, q: str = "", format: str = "",
                         arrangements_has: str = "", arrangements_lacks: str = "",
                         stems_has: str = "", stems_lacks: str = "",
                         has_lyrics: str = "", tunings: str = "", provider: str = "local",
+                        match: str = "",
                         sort: str = "artist", sort_letters: int = 0,
                         group: int = 0, naming_mode: str = "legacy"):
     """Aggregate stats for the UI. Accepts the same filter params as
@@ -6561,6 +7103,10 @@ async def library_stats(favorites: int = 0, q: str = "", format: str = "",
         sort=sort,
         want_sort_letters=bool(sort_letters),
         group=bool(group),
+        # The match facet rides the stats call too — the A–Z rail's letter
+        # counts must agree with the grid under the facet or its cumulative
+        # seek + sizer geometry break.
+        match_states=_split_csv(match),
         **_library_filter_args(
             q=q, favorites=favorites, format=format,
             artist=artist, album=album,

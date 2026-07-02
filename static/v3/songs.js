@@ -59,7 +59,7 @@
         artist: '', album: '',
         grouping: true,     // one card per song (multi-chart grouping); persisted
 
-        filters: { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [] },
+        filters: { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [] },
         page: 0, total: 0, loading: false, built: false, accuracy: {}, tuningNames: [],
         artistCatalog: [], renderedHash: '',
         scrollBound: false,
@@ -110,6 +110,7 @@
         const f = state.filters;
         return f.arr_has.length + f.arr_lacks.length + f.stem_has.length + f.stem_lacks.length +
             (f.lyrics ? 1 : 0) + f.tunings.length + (f.mastery ? f.mastery.length : 0) +
+            (f.match ? f.match.length : 0) +
             (state.artist ? 1 : 0) + (state.album ? 1 : 0);
     }
 
@@ -133,6 +134,7 @@
                 lyrics: f.lyrics || '',
                 tunings: [...(f.tunings || [])].sort(),
                 mastery: [...(f.mastery || [])].sort(),
+                match: [...(f.match || [])].sort(),
             },
         });
     }
@@ -155,10 +157,15 @@
         const f = saved.filters;
         if (f && typeof f === 'object') {
             const arr = (x) => (Array.isArray(x) ? x.slice() : []);
+            // mastery + match are session-only facets (deliberately not
+            // persisted), but the restored object must still CARRY the keys —
+            // the filter drawer indexes f.mastery/f.match unconditionally, so
+            // dropping them here breaks the drawer for anyone with saved prefs.
             state.filters = {
                 arr_has: arr(f.arr_has), arr_lacks: arr(f.arr_lacks),
                 stem_has: arr(f.stem_has), stem_lacks: arr(f.stem_lacks),
                 lyrics: f.lyrics || '', tunings: arr(f.tunings),
+                mastery: [], match: [],
             };
         }
     }
@@ -263,6 +270,7 @@
         if (f.lyrics) p.set('has_lyrics', f.lyrics);
         if (f.tunings.length) p.set('tunings', f.tunings.join(','));
         if (f.mastery && f.mastery.length) p.set('mastery', f.mastery.join(','));
+        if (f.match && f.match.length) p.set('match', f.match.join(','));
         Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
         return p;
     }
@@ -2029,6 +2037,9 @@
             section('Lyrics', ['', '1', '0'].map((v) => '<button data-lyrics="' + v + '" class="px-2 py-1 rounded-md text-xs border ' + (f.lyrics === v ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + (v === '' ? 'Any' : v === '1' ? 'Has lyrics' : 'No lyrics') + '</button>').join('')) +
             // Progress (mastery bands) — multi-select; server filters via song_stats.
             section('Progress', [['mastered', 'Mastered'], ['in_progress', 'In progress'], ['not_started', 'Not started']].map((it) => '<button data-mastery="' + it[0] + '" class="px-2 py-1 rounded-md text-xs border ' + (f.mastery.includes(it[0]) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + it[1] + '</button>').join('')) +
+            // Match (P8) — the song's metadata-match lifecycle state, a triage
+            // facet for the enrichment layer. Session-only, like Progress.
+            section('Match', [['review', 'To review'], ['matched', 'Matched'], ['unmatched', 'Unmatched'], ['pending', 'Not scanned']].map((it) => '<button data-match="' + it[0] + '" class="px-2 py-1 rounded-md text-xs border ' + (f.match.includes(it[0]) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + it[1] + '</button>').join('')) +
             section('Tuning', (state.tuningNames || []).map((t) => {
                 // Filter on the server's grouping key (raw offsets for customs)
                 // so two "Custom Tuning" entries are distinct; show their target
@@ -2080,11 +2091,12 @@
             renderDrawer();
             reload();     // re-fetches grid + rail with/without group=1, saves prefs
         });
+        d.querySelectorAll('[data-match]').forEach((b) => b.addEventListener('click', () => { const v = b.getAttribute('data-match'); const i = f.match.indexOf(v); if (i >= 0) f.match.splice(i, 1); else f.match.push(v); renderDrawer(); }));
         d.querySelector('[data-drawer-save]')?.addEventListener('click', saveCurrentAsCollection);
         d.querySelector('[data-drawer-tidy]')?.addEventListener('click', openArtistTidyUp);
         d.querySelector('[data-drawer-close]')?.addEventListener('click', closeDrawer);
         d.querySelector('[data-drawer-clear]')?.addEventListener('click', async () => {
-            state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [] };
+            state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [] };
             state.artist = '';
             state.album = '';
             renderDrawer();
@@ -2540,7 +2552,12 @@
             '<div class="max-w-7xl mx-auto px-6 md:px-8 pb-8">' +
             '<div id="v3-songs-toolbar" class="sticky z-20 -mx-6 md:-mx-8 px-6 md:px-8 py-3 mb-4 bg-fb-sidebar/95 backdrop-blur border-b border-fb-border/40">' +
             '<div class="flex flex-col md:flex-row md:items-end justify-between gap-4">' +
-            '<div><p class="text-fb-textDim text-sm" id="v3-songs-count"></p></div>' +
+            // The match-review chip is ambient tool-state (design §11): only
+            // rendered when matches are waiting, silent otherwise. Populated +
+            // shown by match-review.js (window.__fbMatchReviewChip), which
+            // also owns the drawer the click opens.
+            '<div class="flex items-baseline gap-3"><p class="text-fb-textDim text-sm" id="v3-songs-count"></p>' +
+            '<button id="v3-songs-match-review" class="hidden text-xs text-fb-primary hover:text-fb-primaryHi border border-fb-primary/40 rounded-full px-2.5 py-0.5"></button></div>' +
             '<div class="flex flex-wrap gap-2">' +
             (providers.length > 1 ? '<select id="v3-songs-provider" class="' + ctrl + '">' + provOpts + '</select>' : '') +
             '<select id="v3-songs-artist" class="' + ctrl + ' max-w-[11rem]" aria-label="Artist">' + artistSelectHtml() + '</select>' +
@@ -2599,6 +2616,10 @@
         });
         byId('v3-songs-filters').addEventListener('click', openDrawer);
         byId('v3-songs-overlay').addEventListener('click', closeDrawer);
+        // Match-review chip: feature-detected (match-review.js owns the
+        // drawer + the count; absent → the chip just stays hidden).
+        byId('v3-songs-match-review')?.addEventListener('click', () => { if (window.__fbOpenMatchReview) window.__fbOpenMatchReview(); });
+        if (window.__fbMatchReviewChip) window.__fbMatchReviewChip();
         byId('v3-songs-upload').addEventListener('click', () => {
             const legacy = document.getElementById('upload-songs-file');
             // Upload targets the LOCAL library + scan; watchUploadScan refreshes

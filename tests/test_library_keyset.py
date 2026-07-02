@@ -73,7 +73,10 @@ def _walk_offset(client, sort, size, total):
     return seen
 
 
-@pytest.mark.parametrize("sort", ["artist", "artist-desc", "title", "title-desc", "recent"])
+# artist/artist-desc left out: their ORDER BY carries a title secondary
+# (grid cards read alphabetically within an artist, like the tree), which
+# the two-term cursor cannot seek — they page by OFFSET (covered below).
+@pytest.mark.parametrize("sort", ["title", "title-desc", "recent"])
 def test_keyset_matches_offset_exactly(client, server_mod, sort):
     _seed(server_mod, 25)
     offset_order = _walk_offset(client, sort, 7, 25)
@@ -87,15 +90,17 @@ def test_stable_tiebreak_on_equal_keys(client, server_mod):
     # 25 songs, all the SAME artist → the artist sort is decided entirely by the
     # filename tiebreak. Both pagers must still cover all 25 with no dupe.
     _seed(server_mod, 25, shared_artist=True)
-    keyset_order = _walk_keyset(client, "artist", 6, 25)
+    keyset_order = _walk_offset(client, "artist", 6, 25)
     assert len(keyset_order) == 25 and len(set(keyset_order)) == 25
     assert keyset_order == sorted(keyset_order)      # tiebreak is filename ASC
 
 
 def test_first_page_has_cursor_and_no_after_is_offset(client, server_mod):
     _seed(server_mod, 5)
+    body = client.get("/api/library", params={"sort": "title", "size": 2}).json()
+    assert body["next_cursor"]                       # keyset sort: cursor offered
     body = client.get("/api/library", params={"sort": "artist", "size": 2}).json()
-    assert body["next_cursor"]                       # cursor offered
+    assert body["next_cursor"] is None               # artist sorts page by OFFSET
     assert [s["filename"] for s in body["songs"]] == ["song00.archive", "song01.archive"]
 
 
@@ -111,7 +116,7 @@ def test_legacy_dir_desc_keysets_correctly(client, server_mod):
     _seed(server_mod, 20)
     offset_order, page = [], 0
     while True:
-        body = client.get("/api/library", params={"sort": "artist", "dir": "desc", "size": 6, "page": page}).json()
+        body = client.get("/api/library", params={"sort": "title", "dir": "desc", "size": 6, "page": page}).json()
         if not body["songs"]:
             break
         offset_order.extend(s["filename"] for s in body["songs"])
@@ -119,7 +124,7 @@ def test_legacy_dir_desc_keysets_correctly(client, server_mod):
     keyset, cursor, guard = [], "", 0
     while len(keyset) < 20 and guard < 25:
         guard += 1
-        params = {"sort": "artist", "dir": "desc", "size": 6}
+        params = {"sort": "title", "dir": "desc", "size": 6}
         if cursor:
             params["after"] = cursor
         body = client.get("/api/library", params=params).json()
@@ -131,7 +136,7 @@ def test_legacy_dir_desc_keysets_correctly(client, server_mod):
     assert len(set(keyset)) == 20
 
 
-@pytest.mark.parametrize("sort", ["artist", "artist-desc", "recent"])
+@pytest.mark.parametrize("sort", ["recent"])
 def test_keyset_handles_null_sort_keys(client, server_mod, sort):
     # NULL artist/mtime (corrupt/legacy rows past put()'s '' defaults) sort
     # first in ASC / last in DESC; keyset must cover them exactly like OFFSET.

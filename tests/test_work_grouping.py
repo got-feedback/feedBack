@@ -158,11 +158,13 @@ def test_grouped_keyset_pagination(client, server):
     for i in range(5):
         _put(server, f"w{i}_a.archive", f"Song {i}", "Artist")
         _put(server, f"w{i}_b.archive", f"Song {i}", "Artist")   # 2 charts per work
-    body = client.get("/api/library", params={"group": 1, "size": 3}).json()
+    # Title sort: artist sorts page by OFFSET now (title-secondary ordering),
+    # and this test PROVES the grouped keyset, so it pins a keyset sort.
+    body = client.get("/api/library", params={"group": 1, "size": 3, "sort": "title"}).json()
     assert body["total"] == 5 and len(body["songs"]) == 3
     cur = body["next_cursor"]
     assert cur
-    body2 = client.get("/api/library", params={"group": 1, "size": 3, "after": cur}).json()
+    body2 = client.get("/api/library", params={"group": 1, "size": 3, "sort": "title", "after": cur}).json()
     assert len(body2["songs"]) == 2
     p1 = {s["filename"] for s in body["songs"]}
     p2 = {s["filename"] for s in body2["songs"]}

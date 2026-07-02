@@ -2003,6 +2003,11 @@
     async function loadTree() {
         const host = document.getElementById('v3-songs-tree');
         if (!host) return;
+        // The list view always groups artist -> album (query_artists has no
+        // free sort) — when the picked sort is something else, say so instead
+        // of silently ignoring it ("why does the sort do nothing here?").
+        const _treeSortNote = railSortColumn() === 'artist' ? ''
+            : '<p class="text-xs text-fb-textDim mb-3">List view groups by artist — the selected sort applies to the card grid.</p>';
         // Capture expanded groups BEFORE the "Loading…" wipe below, so a reload
         // (e.g. toggling select mode) restores them instead of collapsing all.
         const openArtists = new Set(
@@ -2022,7 +2027,7 @@
         }
         if (!artists.length) { host.innerHTML = '<p class="text-fb-textDim text-sm">Nothing here.</p>'; return; }
         artists.forEach((a) => (a.albums || []).forEach((al) => (al.songs || []).forEach((s) => { state.songsById[cardKey(s)] = s; })));
-        host.innerHTML = artists.map((a) =>
+        host.innerHTML = _treeSortNote + artists.map((a) =>
             '<details data-artist="' + esc(a.name) + '"' + (openArtists.has(a.name) ? ' open' : '') + ' class="border-b border-fb-border/40"><summary class="cursor-pointer py-2 text-fb-text flex items-center justify-between">' +
             '<span>' + esc(a.name) + '</span><span class="text-xs text-fb-textDim">' + esc(a.song_count) + '</span></summary>' +
             '<div class="pl-3 pb-2 space-y-2">' + (a.albums || []).map((al) =>

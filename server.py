@@ -451,8 +451,12 @@ def _apply_pending_db_restore(config_dir: Path) -> None:
 # TOTAL — which also fixes a latent OFFSET skip/dupe across equal-key rows.
 # (column, collate-clause, primary-direction) — tiebreak is always `filename` ASC.
 _KEYSET_SORTS = {
-    "artist": ("artist", "COLLATE NOCASE", "ASC"),
-    "artist-desc": ("artist", "COLLATE NOCASE", "DESC"),
+    # artist/artist-desc left OUT deliberately: their ORDER BY carries a
+    # title secondary (so cards within an artist read alphabetically, like
+    # the tree view) which a two-term (value, filename) cursor can't seek
+    # correctly — they page by OFFSET, which is measured-trivial at real
+    # library sizes. Restore them with a composite sort-key column if
+    # 50k-song libraries ever make OFFSET hurt.
     "title": ("title", "COLLATE NOCASE", "ASC"),
     "title-desc": ("title", "COLLATE NOCASE", "DESC"),
     "recent": ("mtime", "", "DESC"),
@@ -3501,7 +3505,13 @@ class MetadataDB:
             where += self._GROUP_REP_PREDICATE
 
         sort_map = {
-            "artist": "artist COLLATE NOCASE", "artist-desc": "artist COLLATE NOCASE DESC",
+            # Artist sorts order WITHIN an artist by title (the tree view's
+            # artist -> album -> title feel) instead of raw filename — the
+            # "list is organised, cards look random" report. Direction is
+            # baked per entry (the legacy `dir=desc` append would otherwise
+            # land on the title term); title stays ascending under Z->A.
+            "artist": "artist COLLATE NOCASE ASC, title COLLATE NOCASE ASC",
+            "artist-desc": "artist COLLATE NOCASE DESC, title COLLATE NOCASE ASC",
             "title": "title COLLATE NOCASE", "title-desc": "title COLLATE NOCASE DESC",
             "recent": "mtime DESC",
             # Tuning sort uses musical distance from E Standard

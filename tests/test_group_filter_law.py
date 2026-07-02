@@ -184,7 +184,9 @@ def test_grouped_keyset_pagination_with_intrinsic_filter(client, server):
              arrangements=1, tuning="Drop D")
     seen, cursor = [], None
     for _ in range(10):
-        params = {"group": 1, "tunings": "Drop D", "size": 2, "sort": "artist"}
+        # Title sort — the keyset proof needs a sort that still keysets
+        # (artist sorts page by OFFSET since the title-secondary change).
+        params = {"group": 1, "tunings": "Drop D", "size": 2, "sort": "title"}
         if cursor:
             params["after"] = cursor
         body = client.get("/api/library", params=params).json()

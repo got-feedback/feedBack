@@ -2354,7 +2354,12 @@
         document.querySelectorAll('[data-fn="' + sel + '"] [data-fav]').forEach((btn) => {
             btn.textContent = fav ? '♥' : '♡';
             btn.setAttribute('aria-pressed', fav ? 'true' : 'false');
-            btn.classList.toggle('text-fb-accent', fav); btn.classList.toggle('text-white', !fav);
+            // Swap exactly the idle colour this heart was rendered with (grid =
+            // text-white, tree/List view = text-fb-textDim) — mirrors wireCards.
+            // A hardcoded text-white toggle would leave List-View rows' text-fb-textDim
+            // in place, so the heart changed glyph but stayed dim (never turned red).
+            const idle = btn.getAttribute('data-fav-idle') || 'text-white';
+            btn.classList.toggle('text-fb-accent', fav); btn.classList.toggle(idle, !fav);
         });
     }
 

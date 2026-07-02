@@ -40,6 +40,16 @@ test('the shared fav handler swaps the declared idle colour, not a hardcoded one
         'the hardcoded text-white idle toggle must be removed');
 });
 
+test('the drawer fav-sync (_patchCardFav) swaps the declared idle colour too', () => {
+    // Toggling the like from the Song Details drawer patches the rendered card's
+    // heart via _patchCardFav; it must honour each heart's data-fav-idle the same
+    // way the click handler does, or List-View rows keep the dim-heart bug (#654).
+    assert.match(src, /function _patchCardFav[\s\S]*?getAttribute\('data-fav-idle'\)[\s\S]*?classList\.toggle\(\s*idle\s*,\s*!fav\s*\)/,
+        '_patchCardFav must restore the per-context idle colour (idle), not a hardcoded text-white');
+    assert.doesNotMatch(src, /classList\.toggle\('text-white',\s*!fav\)/,
+        '_patchCardFav must not hardcode the text-white idle toggle');
+});
+
 test('the fav toggle keeps the in-memory song model in sync', () => {
     // So a virtualized grid recycle / tree re-render renders the new state,
     // not a stale favorite=false read from state.songsById.

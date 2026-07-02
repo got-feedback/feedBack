@@ -132,3 +132,10 @@ def test_fileinfo_includes_match_verdict(server, client):
 def test_fileinfo_missing_and_traversal(server, client):
     assert client.get("/api/chart/ghost.sloppak/fileinfo").status_code == 404
     assert client.get("/api/chart/..%2f..%2fetc%2fpasswd/fileinfo").status_code in (403, 404)
+
+
+def test_fileinfo_non_chart_file_is_404(server, client):
+    """A stray non-song file the user keeps under DLC_DIR must not have its
+    path/size/mtime exposed — the route is charts only, not a filesystem stat."""
+    (server.DLC_DIR / "private-notes.txt").write_text("secret", encoding="utf-8")
+    assert client.get("/api/chart/private-notes.txt/fileinfo").status_code == 404

@@ -913,14 +913,18 @@
             }
             if (id === '__playlist') { await addFilenamesToPlaylist([song.filename]); return; }
             if (id === '__save') { if (window.v3Saved) await window.v3Saved.toggle(song.filename); return; }
-            if (id === '__fixmatch') { if (window.__fbFixMatch) window.__fbFixMatch(song); return; }
+            // Per-chart metadata actions follow the DISPLAYED chart (playTarget),
+            // like Play — under an intrinsic filter that's the matching member,
+            // not the group representative. (__remove stays on `song`: it needs
+            // the group's work_key/chart_count and pre-ticks the shown chart.)
+            if (id === '__fixmatch') { if (window.__fbFixMatch) window.__fbFixMatch(playTarget); return; }
             if (id === '__refreshmeta') {
                 // Silent on success (hearing-safe, like the rest of the match
                 // layer) — the re-match trickles in through the normal pass.
-                await jsend('POST', '/api/enrichment/refresh/' + enc(song.filename));
+                await jsend('POST', '/api/enrichment/refresh/' + enc(playTarget.filename));
                 return;
             }
-            if (id === '__getinfo') { openGetInfo(song); return; }
+            if (id === '__getinfo') { openGetInfo(playTarget); return; }
             if (id === '__remove') { await removeSongsFlow(song); return; }
             if (reg) await reg.run(id, song, { source: 'v3-songs' });
         }));

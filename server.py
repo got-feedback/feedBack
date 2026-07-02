@@ -7192,18 +7192,26 @@ def api_chart_fileinfo(filename: str):
         raise HTTPException(status_code=403, detail="forbidden")
     if not p.exists():
         raise HTTPException(status_code=404, detail="not found")
-    st = p.stat()
+    # Restrict to actual charts — sloppak or loose song. Without this the route
+    # would stat ANY file the user happens to keep under DLC_DIR (e.g. notes),
+    # leaking its path/size; the app only recognises these two song formats.
     is_pak = sloppak_mod.is_sloppak(p)
+    is_loose = loosefolder_mod.is_loose_song(p)
+    if not (is_pak or is_loose):
+        raise HTTPException(status_code=404, detail="not a chart")
+    st = p.stat()
     info = {
         "filename": filename,
         "path": str(p),
         "folder": str(p.parent),
-        "format": "sloppak" if is_pak else (
-            "loose" if loosefolder_mod.is_loose_song(p) else "other"),
+        "format": "sloppak" if is_pak else "loose",
         # Directory-form songs report the tree's total (covers loose folders
-        # and dir-form paks); zip-form paks report the archive size.
+        # and dir-form paks); zip-form paks report the archive size. Symlinked
+        # entries are skipped so a link inside the folder can't pull in — or
+        # leak the size of — a file outside it.
         "size": (st.st_size if p.is_file()
-                 else sum(f.stat().st_size for f in p.rglob("*") if f.is_file())),
+                 else sum(f.stat().st_size for f in p.rglob("*")
+                          if f.is_file() and not f.is_symlink())),
         "mtime": st.st_mtime,
     }
     if is_pak:

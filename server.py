@@ -10231,15 +10231,16 @@ _GAP_FILL_KEYS = ("album", "year", "genres", "mbid", "isrc")
 
 
 def _gap_fill_manifest_absent(manifest: dict, key: str) -> bool:
-    """A key is a GAP when it's missing or carries no information (empty
-    string / empty list / year 0 — the writer's own "cleared" forms). A
-    non-empty author value is never a gap, whatever we think of it."""
-    if key not in manifest:
-        return True
-    val = manifest.get(key)
-    if val is None or val == "" or val == []:
-        return True
-    return key == "year" and str(val).strip() in ("0", "")
+    """A key is a GAP only when it's genuinely MISSING from the manifest.
+
+    Gap-fill is append-only: the writer's never-clobber guard raises on ANY
+    key already present, and appending a second `album:` line to a manifest
+    that already carries `album: ''` would just create a duplicate YAML key.
+    So a present-but-empty value (None / '' / [] / year 0) is NOT a gap the
+    append-only writer can fill — offering it in the preview would only lead
+    to a POST the writer refuses. Present-but-empty keys are therefore left
+    to the metadata editor (which re-serializes and can replace in place)."""
+    return key not in manifest
 
 
 def _gap_fill_proposals(cache_key: str, resolved) -> tuple[dict, str]:

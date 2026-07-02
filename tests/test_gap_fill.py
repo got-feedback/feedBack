@@ -109,11 +109,36 @@ def test_preview_excludes_author_set_keys(server, client):
     assert {"genres", "mbid", "isrc"} <= got
 
 
-def test_preview_treats_empty_values_as_gaps(server, client):
+def test_preview_excludes_present_but_empty_keys(server, client):
+    """Gap-fill is append-only, so a present-but-empty value (album: '',
+    year: 0) is NOT a gap the writer can fill — appending would duplicate the
+    key, and the never-clobber guard refuses any present key. The preview must
+    therefore not offer it (those are the metadata editor's job to re-serialize),
+    while genuinely-absent keys are still offered."""
     make_dir_sloppak(server, "a.sloppak", BASE_MANIFEST + "album: ''\nyear: 0\n")
     seed_match(server, "a.sloppak")
     got = {m["key"] for m in client.get("/api/song/a.sloppak/gap-fill").json()["missing"]}
-    assert {"album", "year"} <= got
+    assert "album" not in got and "year" not in got
+    assert {"genres", "mbid", "isrc"} <= got
+
+
+def test_write_present_but_empty_key_is_refused_not_500(server, client):
+    """The preview↔writer contract must agree: a POST for a present-but-empty
+    key is turned away with a clean 409 (never offered → skipped), never a 500
+    from the writer's never-clobber guard, and the file is left untouched."""
+    d = make_dir_sloppak(server, "a.sloppak", BASE_MANIFEST + "album: ''\nyear: 0\n")
+    seed_match(server, "a.sloppak")
+    before = (d / "manifest.yaml").read_text(encoding="utf-8")
+    r = client.post("/api/song/a.sloppak/gap-fill", json={"keys": ["album", "year"]})
+    assert r.status_code == 409
+    assert sorted(r.json()["skipped"]) == ["album", "year"]
+    assert (d / "manifest.yaml").read_text(encoding="utf-8") == before
+    assert not (d / "manifest.yaml.bak").exists()   # nothing written → no backup
+    # A genuinely-absent key alongside the empty ones still writes cleanly.
+    r = client.post("/api/song/a.sloppak/gap-fill", json={"keys": ["album", "genres"]})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "written": {"genres": ["hard rock", "rock"]},
+                        "skipped": ["album"]}
 
 
 def test_preview_requires_confirmed_match(server, client):

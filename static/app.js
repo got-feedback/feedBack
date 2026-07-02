@@ -6778,6 +6778,14 @@ window.feedBack.playQueue = (function () {
         start: start, advance: advance, hasNext: hasNext, active: active, clear: clear,
         source: function () { return source; },
         remaining: function () { return active() ? list.length - idx - 1 : 0; },
+        // What's coming, for consumers that RENDER the queue (a results
+        // screen's "Up next: … starting in 10s" strip) without reaching into
+        // queue internals. Null when nothing follows.
+        peekNext: function () {
+            return hasNext()
+                ? { filename: list[idx + 1], index: idx + 1, total: list.length }
+                : null;
+        },
     };
 })();
 

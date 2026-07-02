@@ -5457,6 +5457,9 @@ _enrich_status = {"running": False, "processed": 0, "last_pass_at": None}
 # Minimum spacing between EXTERNAL lookups (design: ≤1 req/s + local cache).
 _ENRICH_MIN_INTERVAL = 1.1
 _enrich_last_fetch = 0.0
+# Serializes throttling across the background daemon thread AND the sync
+# /api/enrichment/search route (FastAPI runs sync routes in a threadpool).
+_enrich_throttle_lock = threading.Lock()
 
 
 def _enrichment_art_dir() -> Path:
@@ -5473,10 +5476,14 @@ def _enrich_throttle():
     before every network request — and must NOT hold meta_db._lock across the
     request (fetch outside the lock, write inside)."""
     global _enrich_last_fetch
-    wait = _ENRICH_MIN_INTERVAL - (time.monotonic() - _enrich_last_fetch)
-    if wait > 0:
-        time.sleep(wait)
-    _enrich_last_fetch = time.monotonic()
+    # Hold the lock across the read, sleep, and write so concurrent callers
+    # serialize instead of all reading the same stale timestamp and firing
+    # together (which would burst past MusicBrainz's 1 req/s limit).
+    with _enrich_throttle_lock:
+        wait = _ENRICH_MIN_INTERVAL - (time.monotonic() - _enrich_last_fetch)
+        if wait > 0:
+            time.sleep(wait)
+        _enrich_last_fetch = time.monotonic()
 
 
 class EnrichTransportError(Exception):
@@ -5735,7 +5742,17 @@ def _background_enrich():
     except Exception:
         log.exception("enrichment: failed-row query failed")
     matched = 0
+    # A `failed` row with a changed identity hash can surface in BOTH lists;
+    # de-dup by filename so each row consumes the rate budget only once.
+    seen_filenames = set()
+    queue = []
     for row in pending + retriable:
+        fn = row.get("filename")
+        if fn in seen_filenames:
+            continue
+        seen_filenames.add(fn)
+        queue.append(row)
+    for row in queue:
         try:
             _enrich_one(row, auto_min=auto_min)
             matched += 1

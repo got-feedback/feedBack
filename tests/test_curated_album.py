@@ -169,3 +169,38 @@ def test_mix_still_hides_dead_songs(client, server):
     _add(client, pid, "a.archive")
     server.meta_db.delete_missing(set())
     assert client.get(f"/api/playlists/{pid}").json()["songs"] == []
+
+
+# ── list-card count parity: albums count ALL slots (list vs detail) ──────────
+
+def test_album_list_count_includes_orphaned_and_missing_slots(client, server):
+    # The detail view renders / plays EVERY album slot — a self-healing orphan
+    # and a fully-missing work both stay in the denominator (§7.2) — so the
+    # list-card count must agree. Guards against the mix "dead-filter" (count
+    # only songs still in `songs`) leaking into albums, which undercounted a
+    # slot the moment its pinned file was deleted.
+    _put(server, "a.archive", "Song", "Artist")      # work A keeper (survives)
+    _put(server, "b.archive", "Song", "Artist")      # work A, pinned then deleted
+    _put(server, "c.archive", "Closer", "Artist")    # work C, deleted whole
+    pid = _album(client)["id"]
+    _add(client, pid, "a.archive")                   # live slot
+    _add(client, pid, "b.archive")                   # → orphan (self-heals to a)
+    _add(client, pid, "c.archive")                   # → fully missing
+    server.meta_db.delete_missing({"a.archive"})     # rescan: only a survives
+    detail = client.get(f"/api/playlists/{pid}").json()["songs"]
+    assert len(detail) == 3                           # detail keeps all 3 slots
+    listed = {p["id"]: p for p in client.get("/api/playlists").json()}
+    assert listed[pid]["count"] == 3                  # list card agrees (was 1)
+
+
+def test_mix_list_count_still_dead_filters(client, server):
+    # The other side of the discriminator: a mix's list count keeps hiding dead
+    # songs, so the album fix doesn't regress non-album playlists.
+    _put(server, "a.archive", "Song", "Artist")
+    _put(server, "b.archive", "Closer", "Artist")
+    pid = client.post("/api/playlists", json={"name": "Mix"}).json()["id"]
+    _add(client, pid, "a.archive")
+    _add(client, pid, "b.archive")
+    server.meta_db.delete_missing({"a.archive"})     # b's file gone
+    listed = {p["id"]: p for p in client.get("/api/playlists").json()}
+    assert listed[pid]["count"] == 1                  # dead b not counted

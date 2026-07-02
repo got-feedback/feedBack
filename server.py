@@ -2001,10 +2001,26 @@ class MetadataDB:
     # ── Playlists ─────────────────────────────────────────────────────────--
     SAVED_KEY = "saved_for_later"
 
-    def _playlist_count(self, pid: int) -> int:
-        # Count only songs that still exist (mirrors the stats read-filter — dead
-        # songs are hidden, not deleted on scan), passing through when the songs
-        # table is empty. Single statement → no probe-then-read race.
+    def _playlist_count(self, pid: int, kind: str | None = None) -> int:
+        # An ALBUM keeps every slot in its denominator: get_playlist renders /
+        # plays ALL slots — self-healing orphans and even fully-missing works
+        # (§7.2) stay visible — so the list-card count must agree with the detail
+        # view and skip the dead-filter (is_album → no `AND s.filename IS NOT
+        # NULL`, mirroring get_playlist). Mixes/other kinds count only songs that
+        # still exist (mirrors the stats read-filter — dead songs are hidden, not
+        # deleted on scan), passing through when the songs table is empty. Single
+        # statement → no probe-then-read race. `kind` is passed by list_playlists
+        # (already in hand); fetched here when a caller omits it.
+        if kind is None:
+            row = self.conn.execute(
+                "SELECT kind FROM playlists WHERE id = ?", (pid,)
+            ).fetchone()
+            kind = row[0] if row else None
+        if kind == "album":
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM playlist_songs WHERE playlist_id = ?",
+                (pid,),
+            ).fetchone()[0]
         return self.conn.execute(
             "SELECT COUNT(*) FROM playlist_songs ps WHERE ps.playlist_id = ? "
             "AND EXISTS (SELECT 1 FROM songs s WHERE s.filename = ps.filename)",
@@ -2059,7 +2075,7 @@ class MetadataDB:
             out.append({
                 "id": pid, "name": r[1], "system_key": r[2],
                 "created_at": r[3], "updated_at": r[4], "kind": r[5],
-                "count": self._playlist_count(pid),
+                "count": self._playlist_count(pid, r[5]),
                 "art_urls": [f"/api/song/{quote(a[0])}/art" for a in arts],
             })
         return out

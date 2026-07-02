@@ -343,6 +343,7 @@
                 ? '<div><div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim mb-1">Chart for this slot</div>' + chartRows + '</div>'
                 : '') +
             '<div><div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim mb-1">Arrangement</div>' + arrRows + '</div>' +
+            '<div data-err class="hidden text-xs text-red-400"></div>' +
             '<div class="flex justify-end gap-2">' +
             '<button type="button" data-cancel class="text-sm text-fb-textDim hover:text-fb-text px-3 py-2">Cancel</button>' +
             '<button type="button" data-apply class="bg-fb-primary hover:bg-fb-primaryHi text-white text-sm font-medium px-5 py-2 rounded-md">Apply</button>' +
@@ -363,7 +364,15 @@
                 if (v !== (slot.arrangement || null)) body.arrangement = v;
             }
             if (Object.keys(body).length) {
-                await jsend('PATCH', '/api/playlists/' + pid + '/songs/' + encodeURIComponent(slot.filename), body);
+                // jsend → null on a non-2xx (e.g. swap-to-other-work rejected, or
+                // the resolved target duplicates another slot's pin). Surfacing it
+                // and keeping the picker open beats silently closing "as saved".
+                const res = await jsend('PATCH', '/api/playlists/' + pid + '/songs/' + encodeURIComponent(slot.filename), body);
+                if (!res) {
+                    const err = overlay.querySelector('[data-err]');
+                    if (err) { err.textContent = 'Could not update this slot.'; err.classList.remove('hidden'); }
+                    return;   // keep the picker open — not a success
+                }
             }
             close();
             onChange();

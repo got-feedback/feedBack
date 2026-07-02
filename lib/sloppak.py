@@ -919,6 +919,8 @@ def extract_meta(path: Path) -> dict:
         "artist": str(manifest.get("artist", "")),
         "album": str(manifest.get("album", "")),
         "year": str(manifest.get("year", "") or ""),
+        # Primary genre from the feedpak `genres` list (spec 1.12.0); [0] = primary.
+        "genre": (lambda g: str(g[0]) if isinstance(g, list) and g else "")(manifest.get("genres")),
         "duration": float(manifest.get("duration", 0) or 0),
         "tuning_offsets": tuning_offsets,  # caller maps to a name via tunings.tuning_name
         "arrangements": arrangements,

@@ -59,8 +59,8 @@
         artist: '', album: '',
         grouping: true,     // one card per song (multi-chart grouping); persisted
 
-        filters: { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [] },
-        page: 0, total: 0, loading: false, built: false, accuracy: {}, tuningNames: [],
+        filters: { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [] },
+        page: 0, total: 0, loading: false, built: false, accuracy: {}, tuningNames: [], genres: [],
         artistCatalog: [], renderedHash: '',
         scrollBound: false,
         songsById: {}, selectMode: false, selected: new Set(),
@@ -110,7 +110,7 @@
         const f = state.filters;
         return f.arr_has.length + f.arr_lacks.length + f.stem_has.length + f.stem_lacks.length +
             (f.lyrics ? 1 : 0) + f.tunings.length + (f.mastery ? f.mastery.length : 0) +
-            (f.match ? f.match.length : 0) +
+            (f.match ? f.match.length : 0) + (f.genre ? f.genre.length : 0) +
             (state.artist ? 1 : 0) + (state.album ? 1 : 0);
     }
 
@@ -135,6 +135,7 @@
                 tunings: [...(f.tunings || [])].sort(),
                 mastery: [...(f.mastery || [])].sort(),
                 match: [...(f.match || [])].sort(),
+                genre: [...(f.genre || [])].sort(),
             },
         });
     }
@@ -271,6 +272,7 @@
         if (f.tunings.length) p.set('tunings', f.tunings.join(','));
         if (f.mastery && f.mastery.length) p.set('mastery', f.mastery.join(','));
         if (f.match && f.match.length) p.set('match', f.match.join(','));
+        if (f.genre && f.genre.length) p.set('genre', f.genre.join(','));
         Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
         return p;
     }
@@ -2040,6 +2042,8 @@
             // Match (P8) — the song's metadata-match lifecycle state, a triage
             // facet for the enrichment layer. Session-only, like Progress.
             section('Match', [['review', 'To review'], ['matched', 'Matched'], ['unmatched', 'Unmatched'], ['pending', 'Not scanned']].map((it) => '<button data-match="' + it[0] + '" class="px-2 py-1 rounded-md text-xs border ' + (f.match.includes(it[0]) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + it[1] + '</button>').join('')) +
+            // Genre facet — dynamic list from /api/library/genres (primary genre).
+            (state.genres && state.genres.length ? section('Genre', state.genres.map((g) => '<button data-genre="' + esc(g) + '" class="px-2 py-1 rounded-md text-xs border ' + (f.genre.includes(g) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + esc(g) + '</button>').join('')) : '') +
             section('Tuning', (state.tuningNames || []).map((t) => {
                 // Filter on the server's grouping key (raw offsets for customs)
                 // so two "Custom Tuning" entries are distinct; show their target
@@ -2092,11 +2096,12 @@
             reload();     // re-fetches grid + rail with/without group=1, saves prefs
         });
         d.querySelectorAll('[data-match]').forEach((b) => b.addEventListener('click', () => { const v = b.getAttribute('data-match'); const i = f.match.indexOf(v); if (i >= 0) f.match.splice(i, 1); else f.match.push(v); renderDrawer(); }));
+        d.querySelectorAll('[data-genre]').forEach((b) => b.addEventListener('click', () => { const v = b.getAttribute('data-genre'); const i = f.genre.indexOf(v); if (i >= 0) f.genre.splice(i, 1); else f.genre.push(v); renderDrawer(); }));
         d.querySelector('[data-drawer-save]')?.addEventListener('click', saveCurrentAsCollection);
         d.querySelector('[data-drawer-tidy]')?.addEventListener('click', openArtistTidyUp);
         d.querySelector('[data-drawer-close]')?.addEventListener('click', closeDrawer);
         d.querySelector('[data-drawer-clear]')?.addEventListener('click', async () => {
-            state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [] };
+            state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [] };
             state.artist = '';
             state.album = '';
             renderDrawer();
@@ -2543,6 +2548,7 @@
             loadArtistCatalog(),
         ]);
         state.tuningNames = (tn && tn.tunings) || [];
+        try { const _g = await jget('/api/library/genres?provider=' + enc(state.provider)); state.genres = (_g && _g.genres) || []; } catch (e) { state.genres = []; }
 
         const opt = (arr, sel) => arr.map(([v, l]) => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(l) + '</option>').join('');
         const provOpts = providers.map((p) => '<option value="' + esc(p.id) + '"' + (p.id === state.provider ? ' selected' : '') + '>' + esc(p.label || p.id) + '</option>').join('');

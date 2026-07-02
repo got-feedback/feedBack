@@ -550,7 +550,8 @@ class MetadataDB:
                 stem_ids TEXT DEFAULT '[]',
                 tuning_name TEXT DEFAULT '',
                 tuning_sort_key INTEGER DEFAULT 0,
-                tuning_offsets TEXT DEFAULT ''
+                tuning_offsets TEXT DEFAULT '',
+                genre TEXT DEFAULT ''
             )
         """)
         # Idempotent migrations for installs that predate each column.
@@ -569,6 +570,9 @@ class MetadataDB:
             # distinct custom tunings distinct (tuning_name collapses them all
             # to "Custom Tuning"). Cache; repopulated on rescan.
             "ALTER TABLE songs ADD COLUMN tuning_offsets TEXT DEFAULT ''",
+            # Primary genre from the feedpak `genres` list (spec 1.12.0). Cache;
+            # repopulated on rescan.
+            "ALTER TABLE songs ADD COLUMN genre TEXT DEFAULT ''",
         ):
             try:
                 self.conn.execute(ddl)
@@ -584,6 +588,7 @@ class MetadataDB:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_title_fn ON songs(title COLLATE NOCASE, filename)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_mtime_fn ON songs(mtime, filename)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_tuning_name ON songs(tuning_name COLLATE NOCASE)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_genre ON songs(genre COLLATE NOCASE)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_tuning_sort_key ON songs(tuning_sort_key)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_year ON songs(year)")
         self.conn.execute("CREATE TABLE IF NOT EXISTS favorites (filename TEXT PRIMARY KEY)")
@@ -2548,8 +2553,8 @@ class MetadataDB:
             self.conn.execute(
                 "INSERT OR REPLACE INTO songs "
                 "(filename, mtime, size, title, artist, album, year, duration, tuning, arrangements, "
-                "has_lyrics, format, stem_count, stem_ids, tuning_name, tuning_sort_key, tuning_offsets) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "has_lyrics, format, stem_count, stem_ids, tuning_name, tuning_sort_key, tuning_offsets, genre) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (filename, mtime, size, meta.get("title", ""), meta.get("artist", ""),
                  meta.get("album", ""), meta.get("year", ""), meta.get("duration", 0),
                  meta.get("tuning", ""), json.dumps(meta.get("arrangements", [])),
@@ -2559,7 +2564,8 @@ class MetadataDB:
                  json.dumps(meta.get("stem_ids", []) or []),
                  meta.get("tuning_name", "") or "",
                  int(meta.get("tuning_sort_key", 0) or 0),
-                 meta.get("tuning_offsets", "") or ""),
+                 meta.get("tuning_offsets", "") or "",
+                 meta.get("genre", "") or ""),
             )
             self.conn.commit()
             # A song's identity may have changed → the grouping read-model is stale.
@@ -2929,6 +2935,7 @@ class MetadataDB:
                      tags_has: list[str] | None = None,
                      user_difficulty_in: list[str] | None = None,
                      match_states: list[str] | None = None,
+                     genre: list[str] | None = None,
                      naming_mode: str = "legacy",
                      include_intrinsic: bool = True) -> tuple[str, list]:
         """Shared WHERE-clause builder for query_page / query_artists /
@@ -2958,6 +2965,12 @@ class MetadataDB:
         if album_filter:
             where += " AND album = ? COLLATE NOCASE"
             params.append(album_filter)
+        # Genre facet (primary genre column, populated from the feedpak `genres`
+        # list on scan). OR within the selected set.
+        if genre:
+            _gph = ",".join(["?"] * len(genre))
+            where += f" AND genre COLLATE NOCASE IN ({_gph})"
+            params += list(genre)
         # Mastery bands = best accuracy across a song's arrangements (song_stats,
         # a separate table -> correlated subquery). mastered >= 0.9, in_progress =
         # attempted but < 0.9, not_started = no score. OR within the selected set.
@@ -3440,6 +3453,7 @@ class MetadataDB:
                    tags_has: list[str] | None = None,
                    user_difficulty_in: list[str] | None = None,
                    match_states: list[str] | None = None,
+                   genre: list[str] | None = None,
                    after: str | None = None,
                    group: bool = False,
                    naming_mode: str = "legacy") -> tuple[list[dict], int]:
@@ -3470,7 +3484,7 @@ class MetadataDB:
             stems_has=stems_has, stems_lacks=stems_lacks,
             has_lyrics=has_lyrics, tunings=tunings, mastery=mastery,
             tags_has=tags_has, user_difficulty_in=user_difficulty_in,
-            match_states=match_states,
+            match_states=match_states, genre=genre,
             naming_mode=naming_mode, include_intrinsic=not group,
         )
         ifrag, iparams = "", []
@@ -7034,7 +7048,7 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
                        stems_has: str = "", stems_lacks: str = "",
                        has_lyrics: str = "", tunings: str = "", provider: str = "local",
                        mastery: str = "", tags: str = "", user_difficulty: str = "",
-                       match: str = "", after: str = "", group: int = 0,
+                       match: str = "", genre: str = "", after: str = "", group: int = 0,
                        naming_mode: str = "legacy"):
     """Paginated library search through the selected library provider.
 
@@ -7064,6 +7078,7 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
         tags_has=_split_csv(tags),
         user_difficulty_in=_split_csv(user_difficulty),
         match_states=_split_csv(match),
+        genre=_split_csv(genre),
         **_library_filter_args(
             q=q, favorites=favorites, format=format,
             artist=artist, album=album,
@@ -7231,6 +7246,31 @@ async def library_stats(favorites: int = 0, q: str = "", format: str = "",
             has_lyrics=has_lyrics, tunings=tunings,
         ),
     )
+
+
+@app.get("/api/library/genres")
+def library_genres(provider: str = "local"):
+    """Distinct non-empty genres for the filter facet.
+
+    Genres are a local-library facet: they're populated from the feedpak
+    `genres` field at scan time and live in the local meta DB. Local-backed
+    providers (the local library and its smart collections, kind="local")
+    share that DB, so they surface the same set. Remote providers don't
+    expose genres here, so return an empty facet for them — the client then
+    hides the filter rather than offering local genres that don't apply to
+    the remote grid. Mirrors the local/remote gating used elsewhere for
+    provider calls (see `_call_library_provider`)."""
+    library_provider = _get_library_provider(provider)
+    kind = str(library_providers.provider_field(library_provider, "kind", "") or "")
+    is_remote = kind not in ("", "local") if kind else provider != "local"
+    if is_remote:
+        return {"genres": []}
+    with meta_db._lock:
+        rows = meta_db.conn.execute(
+            "SELECT DISTINCT genre FROM songs WHERE genre IS NOT NULL AND genre != '' "
+            "ORDER BY genre COLLATE NOCASE"
+        ).fetchall()
+    return {"genres": [r[0] for r in rows]}
 
 
 @app.get("/api/library/tuning-names")

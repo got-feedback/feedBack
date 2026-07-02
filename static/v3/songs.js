@@ -2548,7 +2548,7 @@
             loadArtistCatalog(),
         ]);
         state.tuningNames = (tn && tn.tunings) || [];
-        try { const _g = await jget('/api/library/genres'); state.genres = (_g && _g.genres) || []; } catch (e) { state.genres = []; }
+        try { const _g = await jget('/api/library/genres?provider=' + enc(state.provider)); state.genres = (_g && _g.genres) || []; } catch (e) { state.genres = []; }
 
         const opt = (arr, sel) => arr.map(([v, l]) => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(l) + '</option>').join('');
         const provOpts = providers.map((p) => '<option value="' + esc(p.id) + '"' + (p.id === state.provider ? ' selected' : '') + '>' + esc(p.label || p.id) + '</option>').join('');

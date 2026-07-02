@@ -7178,8 +7178,22 @@ async def library_stats(favorites: int = 0, q: str = "", format: str = "",
 
 
 @app.get("/api/library/genres")
-def library_genres():
-    """Distinct non-empty genres for the filter facet (local library)."""
+def library_genres(provider: str = "local"):
+    """Distinct non-empty genres for the filter facet.
+
+    Genres are a local-library facet: they're populated from the feedpak
+    `genres` field at scan time and live in the local meta DB. Local-backed
+    providers (the local library and its smart collections, kind="local")
+    share that DB, so they surface the same set. Remote providers don't
+    expose genres here, so return an empty facet for them — the client then
+    hides the filter rather than offering local genres that don't apply to
+    the remote grid. Mirrors the local/remote gating used elsewhere for
+    provider calls (see `_call_library_provider`)."""
+    library_provider = _get_library_provider(provider)
+    kind = str(library_providers.provider_field(library_provider, "kind", "") or "")
+    is_remote = kind not in ("", "local") if kind else provider != "local"
+    if is_remote:
+        return {"genres": []}
     with meta_db._lock:
         rows = meta_db.conn.execute(
             "SELECT DISTINCT genre FROM songs WHERE genre IS NOT NULL AND genre != '' "

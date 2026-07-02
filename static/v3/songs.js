@@ -1713,6 +1713,11 @@
             (state.provider === 'local' && Object.keys(currentFilterRules()).length
                 ? '<div class="pt-3 border-t border-fb-border/50"><button data-drawer-save class="w-full text-sm text-fb-primary hover:text-fb-primaryHi border border-fb-primary/40 rounded-md py-2">＋ Save as collection</button></div>'
                 : '') +
+            // Artist canonicalization (P4) — local library only (aliases apply to
+            // the local catalog). Opens the Tidy-up modal to merge "ACDC"/"AC/DC".
+            (state.provider === 'local'
+                ? '<div class="pt-3 border-t border-fb-border/50"><button data-drawer-tidy class="w-full text-sm text-fb-textDim hover:text-fb-text border border-fb-border/50 rounded-md py-2">Tidy up artists…</button></div>'
+                : '') +
             '<div class="flex justify-between pt-3 border-t border-fb-border/50"><button data-drawer-clear class="text-sm text-fb-textDim hover:text-fb-text">Clear all</button>' +
             '<button data-drawer-apply class="bg-fb-primary hover:bg-fb-primaryHi text-white px-4 py-2 rounded-md text-sm">Done</button></div></div>';
 
@@ -1726,6 +1731,7 @@
         d.querySelectorAll('[data-lyrics]').forEach((b) => b.addEventListener('click', () => { f.lyrics = b.getAttribute('data-lyrics'); renderDrawer(); }));
         d.querySelectorAll('[data-mastery]').forEach((b) => b.addEventListener('click', () => { const v = b.getAttribute('data-mastery'); const i = f.mastery.indexOf(v); if (i >= 0) f.mastery.splice(i, 1); else f.mastery.push(v); renderDrawer(); }));
         d.querySelector('[data-drawer-save]')?.addEventListener('click', saveCurrentAsCollection);
+        d.querySelector('[data-drawer-tidy]')?.addEventListener('click', openArtistTidyUp);
         d.querySelector('[data-drawer-close]')?.addEventListener('click', closeDrawer);
         d.querySelector('[data-drawer-clear]')?.addEventListener('click', async () => {
             state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [] };
@@ -1977,6 +1983,116 @@
     // Expose the opener so the core `edit-metadata` card action opens this drawer
     // (it falls back to the legacy modal where this isn't defined).
     window.__fbOpenSongDetails = openDetails;
+
+    // ── Artist Tidy-up (P4) ────────────────────────────────────────────────--
+    // Merge messy artist variants ("ACDC" + "AC/DC") into one canonical name.
+    // Aliases apply AT DISPLAY only (no file rewrite); the dropdown/tree/grid pick
+    // up the change on the next load. Self-contained centered modal.
+    function openArtistTidyUp() {
+        const st = { raw: [], aliases: [], sel: new Set(), query: '', mergeInto: '', mergeTouched: false, busy: false };
+
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
+        const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(); } };
+        function done() { overlay.remove(); document.removeEventListener('keydown', onKey); }
+        document.addEventListener('keydown', onKey);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) done(); });
+        document.body.appendChild(overlay);
+
+        async function refresh() {
+            const [raw, aliases] = await Promise.all([jget('/api/artists/raw'), jget('/api/artist-aliases')]);
+            st.raw = (raw && raw.artists) || [];
+            st.aliases = (aliases && aliases.aliases) || [];
+            render();
+        }
+
+        // Default canonical = the highest-count selected variant (the one most of
+        // your library already uses), unless the user typed their own.
+        function defaultCanonical() {
+            let best = '', bestC = -1;
+            st.raw.forEach((a) => { if (st.sel.has(a.name) && a.count > bestC) { bestC = a.count; best = a.name; } });
+            return best;
+        }
+
+        function render() {
+            if (!st.mergeTouched) st.mergeInto = defaultCanonical();
+            const q = st.query.trim().toLowerCase();
+            const list = st.raw.filter((a) => !q || (a.name || '').toLowerCase().includes(q));
+            const rows = list.map((a) => {
+                const checked = st.sel.has(a.name) ? ' checked' : '';
+                const mapped = (a.canonical && a.canonical.toLowerCase() !== (a.name || '').toLowerCase())
+                    ? '<span class="text-[11px] text-fb-primary ml-1">→ ' + esc(a.canonical) + '</span>' : '';
+                return '<label class="flex items-center gap-2 px-2 py-1 rounded hover:bg-fb-card/50 cursor-pointer">' +
+                    '<input type="checkbox" data-tidy-sel="' + esc(a.name) + '"' + checked + ' class="w-4 h-4 accent-fb-primary shrink-0">' +
+                    '<span class="text-sm text-fb-text truncate flex-1">' + esc(a.name) + mapped + '</span>' +
+                    '<span class="text-xs text-fb-textDim shrink-0">' + a.count + '</span></label>';
+            }).join('') || '<div class="text-xs text-fb-textDim px-2 py-3">No artists</div>';
+
+            const canReady = st.mergeInto.trim() && st.sel.size && !st.busy;
+            const mergeBar = st.sel.size
+                ? '<div class="pt-2 mt-2 border-t border-fb-border/50 space-y-2">' +
+                  '<div class="text-xs text-fb-textDim">' + st.sel.size + ' selected — merge into:</div>' +
+                  '<div class="flex gap-1"><input type="text" data-tidy-canon value="' + esc(st.mergeInto) + '" placeholder="Canonical name" class="flex-1 bg-fb-card border border-fb-border/60 rounded-lg px-3 py-1.5 text-sm text-fb-text outline-none focus:border-fb-primary/60">' +
+                  '<button data-tidy-merge ' + (canReady ? '' : 'disabled') + ' class="text-sm px-3 rounded-lg ' + (canReady ? 'bg-fb-primary hover:bg-fb-primaryHi text-white' : 'bg-fb-card/50 text-fb-textDim cursor-not-allowed') + '">Merge</button></div></div>'
+                : '';
+
+            const aliasRows = st.aliases.length
+                ? st.aliases.map((al) => '<div class="flex items-center gap-2 px-2 py-1 text-sm"><span class="text-fb-textDim truncate flex-1">' + esc(al.raw_name) + ' <span class="text-fb-textDim/60">→</span> ' + esc(al.canonical_name) + '</span>' +
+                    '<button data-tidy-unmerge="' + esc(al.raw_name) + '" class="text-xs text-fb-textDim hover:text-fb-accent shrink-0">un-merge</button></div>').join('')
+                : '<div class="text-xs text-fb-textDim px-2 py-2">No merges yet</div>';
+
+            overlay.innerHTML =
+                '<div class="bg-fb-sidebar border border-fb-border/60 rounded-2xl w-full max-w-md shadow-2xl max-h-[85vh] flex flex-col">' +
+                '<div class="p-5 pb-3 flex items-center justify-between"><h3 class="text-base font-semibold text-fb-text">Tidy up artists</h3>' +
+                '<button data-tidy-x aria-label="Close" class="text-fb-textDim hover:text-fb-text text-xl leading-none">✕</button></div>' +
+                '<div class="px-5"><input type="text" data-tidy-search value="' + esc(st.query) + '" placeholder="Search artists…" class="w-full bg-fb-card border border-fb-border/60 rounded-lg px-3 py-1.5 text-sm text-fb-text outline-none focus:border-fb-primary/60 mb-1"></div>' +
+                '<div class="px-3 overflow-y-auto v3-scroll flex-1 min-h-[6rem]">' + rows + '</div>' +
+                '<div class="px-5">' + mergeBar + '</div>' +
+                '<div class="px-5 pt-2"><div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim mb-1">Current merges</div><div class="max-h-32 overflow-y-auto v3-scroll">' + aliasRows + '</div></div>' +
+                '<div class="p-5 pt-3 flex justify-end"><button data-tidy-x class="text-sm px-4 py-2 bg-fb-card/60 hover:bg-fb-card border border-fb-border/50 rounded-xl text-fb-text">Done</button></div>' +
+                '</div>';
+
+            overlay.querySelectorAll('[data-tidy-x]').forEach((b) => b.addEventListener('click', done));
+            const search = overlay.querySelector('[data-tidy-search]');
+            if (search) search.addEventListener('input', () => { st.query = search.value; render(); const s = overlay.querySelector('[data-tidy-search]'); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) { /* */ } } });
+            overlay.querySelectorAll('[data-tidy-sel]').forEach((cb) => cb.addEventListener('change', () => {
+                const n = cb.getAttribute('data-tidy-sel');
+                if (cb.checked) st.sel.add(n); else st.sel.delete(n);
+                render();
+            }));
+            const canon = overlay.querySelector('[data-tidy-canon]');
+            if (canon) canon.addEventListener('input', () => {
+                st.mergeInto = canon.value; st.mergeTouched = true;
+                const btn = overlay.querySelector('[data-tidy-merge]');
+                if (btn) btn.disabled = !(st.mergeInto.trim() && st.sel.size && !st.busy);
+            });
+            overlay.querySelector('[data-tidy-merge]')?.addEventListener('click', doMerge);
+            overlay.querySelectorAll('[data-tidy-unmerge]').forEach((b) => b.addEventListener('click', () => doUnmerge(b.getAttribute('data-tidy-unmerge'))));
+        }
+
+        async function doMerge() {
+            const canonical = st.mergeInto.trim();
+            if (!canonical || !st.sel.size || st.busy) return;
+            st.busy = true;
+            await jsend('POST', '/api/artist-aliases/merge', { raw_names: [...st.sel], canonical_name: canonical });
+            st.sel.clear(); st.mergeTouched = false; st.busy = false;
+            await afterChange();
+        }
+
+        async function doUnmerge(raw) {
+            if (!raw) return;
+            try { await fetch('/api/artist-aliases/' + enc(raw), { method: 'DELETE' }); } catch (_) { /* */ }
+            await afterChange();
+        }
+
+        async function afterChange() {
+            await refresh();
+            // Reflect canonical names in the toolbar dropdown + grid immediately.
+            try { await loadArtistCatalog(); refreshArtistAlbumSelects(); reload(); } catch (_) { /* not on the songs grid */ }
+        }
+
+        refresh();
+    }
 
     // The host loads the Folder Library plugin's screen.js at startup (defining
     // window.folderLibrary). If it isn't present yet, inject it once; the

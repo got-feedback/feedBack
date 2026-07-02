@@ -2592,12 +2592,15 @@ class MetadataDB:
         `manual` rows are the user's pinned pick and are NEVER re-queued;
         `failed` rows wait for the matcher's backoff policy (next slice) rather
         than being re-queued here every pass."""
-        rows = self.conn.execute(
-            "SELECT s.filename, s.artist, s.title, s.album, s.duration, "
-            "e.content_hash, e.match_state "
-            "FROM songs s LEFT JOIN song_enrichment e ON e.filename = s.filename "
-            "WHERE s.title != '' AND (e.filename IS NULL OR e.match_state IN ('unscanned', 'matched')) "
-            "ORDER BY s.filename LIMIT ?", (max(1, int(limit)),)).fetchall()
+        # Read under _lock: the worker commits on this shared connection under
+        # _lock, so an unlocked SELECT could interleave with its execute+commit.
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT s.filename, s.artist, s.title, s.album, s.duration, "
+                "e.content_hash, e.match_state "
+                "FROM songs s LEFT JOIN song_enrichment e ON e.filename = s.filename "
+                "WHERE s.title != '' AND (e.filename IS NULL OR e.match_state IN ('unscanned', 'matched')) "
+                "ORDER BY s.filename LIMIT ?", (max(1, int(limit)),)).fetchall()
         out = []
         for fn, artist, title, album, duration, ehash, state in rows:
             h = self.enrichment_content_hash(artist, title, album, duration)
@@ -2616,6 +2619,19 @@ class MetadataDB:
         — EXCEPT a `manual` row, which is the user's explicit pick and survives
         metadata edits untouched."""
         with self._lock:
+            # Idempotence: skip the UPDATE/commit when the upsert would be a
+            # no-op. The no-op matcher (P7) re-stamps every pending row each
+            # pass; without this guard an already-settled row would be
+            # rewritten every ~5 min, N commits/pass contending with request
+            # writes. A `manual` pick never changes here, and a non-manual row
+            # whose hash already matches keeps its state+hash — both no-ops.
+            cur = self.conn.execute(
+                "SELECT content_hash, match_state FROM song_enrichment WHERE filename = ?",
+                (filename,)).fetchone()
+            if cur is not None:
+                old_hash, state = cur
+                if state == "manual" or old_hash == content_hash:
+                    return
             self.conn.execute(
                 "INSERT INTO song_enrichment (filename, content_hash, match_state) "
                 "VALUES (?, ?, 'unscanned') "
@@ -2632,12 +2648,14 @@ class MetadataDB:
             self.conn.commit()
 
     def get_enrichment(self, filename: str) -> dict | None:
-        row = self.conn.execute(
-            "SELECT filename, content_hash, match_state, match_source, match_score, attempts, "
-            "mb_recording_id, mb_release_id, mb_artist_id, isrc, "
-            "canon_artist, canon_album, canon_title, canon_year, canon_artist_sort, "
-            "genres, art_cache_path, art_state, fetched_at "
-            "FROM song_enrichment WHERE filename = ?", (filename,)).fetchone()
+        # Read under _lock (shared write connection — see enrichment_pending).
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT filename, content_hash, match_state, match_source, match_score, attempts, "
+                "mb_recording_id, mb_release_id, mb_artist_id, isrc, "
+                "canon_artist, canon_album, canon_title, canon_year, canon_artist_sort, "
+                "genres, art_cache_path, art_state, fetched_at "
+                "FROM song_enrichment WHERE filename = ?", (filename,)).fetchone()
         if not row:
             return None
         keys = ("filename", "content_hash", "match_state", "match_source", "match_score",
@@ -2654,9 +2672,11 @@ class MetadataDB:
     def enrichment_state_counts(self) -> dict:
         """{match_state: count} over rows whose song still exists (dead rows are
         filtered at read time, matching the never-purged-on-rescan contract)."""
-        rows = self.conn.execute(
-            "SELECT e.match_state, COUNT(*) FROM song_enrichment e "
-            "JOIN songs s ON s.filename = e.filename GROUP BY e.match_state").fetchall()
+        # Read under _lock (shared write connection — see enrichment_pending).
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT e.match_state, COUNT(*) FROM song_enrichment e "
+                "JOIN songs s ON s.filename = e.filename GROUP BY e.match_state").fetchall()
         return {r[0]: r[1] for r in rows}
 
     def _estd_set(self) -> set[str]:

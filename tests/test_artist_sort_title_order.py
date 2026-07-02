@@ -52,6 +52,22 @@ def test_artist_sort_orders_titles_within_artist(server, client):
     assert [s["title"] for s in body["songs"]] == ["Only Song", "Aardvark", "Mango", "Zebra"]
 
 
+def test_legacy_dir_desc_flips_artist_like_artist_desc(server, client):
+    # The legacy `sort=artist&dir=desc` shape must match the explicit
+    # `artist-desc` key: the artist clause now bakes in ASC (for the title
+    # secondary), so `dir=desc` is folded into the effective sort BEFORE the
+    # ORDER BY lookup — otherwise the append is suppressed and dir=desc would
+    # silently return A→Z.
+    _put(server, "z1.sloppak", "Alpha Band", "Aardvark")
+    _put(server, "a9.sloppak", "Alpha Band", "Zebra")
+    _put(server, "m5.sloppak", "Alpha Band", "Mango")
+    _put(server, "q1.sloppak", "Beta Band", "Only Song")
+    legacy = client.get("/api/library", params={"sort": "artist", "dir": "desc", "size": 50}).json()
+    explicit = client.get("/api/library", params={"sort": "artist-desc", "size": 50}).json()
+    assert [s["title"] for s in legacy["songs"]] == ["Only Song", "Aardvark", "Mango", "Zebra"]
+    assert [s["title"] for s in legacy["songs"]] == [s["title"] for s in explicit["songs"]]
+
+
 def test_artist_sort_offset_pagination_no_skip_or_dupe(server, client):
     for i in range(7):
         _put(server, f"f{6 - i}.sloppak", "One Artist", f"Title {chr(65 + i)}")

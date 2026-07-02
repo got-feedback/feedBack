@@ -31,6 +31,12 @@ tunes one of these, mirror the change here (and in `drum_highway_3d`):
   mapping switch in `draw()`; addons dynamic-imported from
   `/static/vendor/three/addons/` (no CDN fallback — direct render is the
   graceful degrade)
+- `_sparkBurst()` / `_sparkUpdate()` — pooled additive Points hit sparks
+  (pool 96 here — the flame sprites carry most of the hit feedback)
+- `_timingHex()` / `_classifyTiming()` — early/late/on-time feedback
+  colors (green/cyan/amber) + the 40%-window classifier
+- `_ssActive()` — host splitscreen probe (minus the guitar's focus-API
+  checks, which it needs for input routing and we don't)
 
 ## License
 

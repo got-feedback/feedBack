@@ -88,7 +88,10 @@
     // on their edges — the RS+ reference look.
     const NOTE_H = 4 * K;
     const NOTE_BEVEL = 0.55 * K;
-    const NOTE_EMISSIVE_BASE = 0.08;   // resting note glow
+    // Resting note glow. Raised from the original 0.08 in the hit-FX parity
+    // pass — combined with the vibrancy-driven opacity it fixes the
+    // washed-out, semi-transparent look the note gems had.
+    const NOTE_EMISSIVE_BASE = 0.22;
     const CONSUME_GLOW = 5.0;          // peak glow as a note is eaten at the hit-line
     const LABEL_FADE_DIST = 80 * K;    // note-name fades out over this distance past the hit-line (~0.6s)
     // Gem vertical gradient (bottom shade → top highlight), baked per-vertex into
@@ -869,6 +872,17 @@
         _writeStore(STORE_KEYS.transpose, String(_cfg.transpose));
     };
 
+    // Classify a hit's timing against its matched chart note. delta =
+    // note.t - now: positive → struck before the note crossed the line
+    // (EARLY), negative → after (LATE); the inner 40% of the hit window
+    // reads as on-time. PORTED FROM drum_highway_3d (same proportions as
+    // highway_3d's timing verdicts) — keep in sync.
+    function _classifyTiming(delta, tol) {
+        if (!Number.isFinite(delta) || !Number.isFinite(tol)) return 'OK';
+        if (Math.abs(delta) <= tol * 0.4) return 'OK';
+        return delta > 0 ? 'EARLY' : 'LATE';
+    }
+
     // Host splitscreen state (PORTED FROM highway_3d _ssActive, minus the
     // focus-API checks the guitar needs for input routing — here it only
     // gates GPU cost, so "is a split active at all" is the right question;
@@ -889,6 +903,11 @@
     // Everything defaults ON — the settings screen is the opt-out.
     const FX_DEFAULTS = {
         bloom: true,
+        sparks: true,     // pooled hit-spark bursts at the struck key
+        timingFx: true,   // early/late/on-time coloring of the sparks
+        streakFx: true,   // consecutive-hit escalation (bigger bursts)
+        hitFx: 0.7,       // 0–1 master intensity for the hit-line kick
+        vibrancy: 0.85,   // note-gem opacity + lane-guide strength
     };
     const FX_LS_PREFIX = 'keys3d_bg_';
 
@@ -906,7 +925,10 @@
                     else if (raw === '0' || raw === 'false') fx[k] = false;
                 } else {
                     const n = parseFloat(raw);
-                    if (Number.isFinite(n)) fx[k] = n;
+                    // All numeric FX keys are 0-1 sliders — clamp so a
+                    // corrupt/foreign write can't overdrive opacities
+                    // or the camera pulse.
+                    if (Number.isFinite(n)) fx[k] = Math.min(1, Math.max(0, n));
                 }
             }
         } catch (_) { /* localStorage unavailable — use defaults */ }
@@ -926,6 +948,7 @@
         } else {
             v = Number(value);
             if (!Number.isFinite(v)) return;
+            v = Math.min(1, Math.max(0, v));   // all numeric FX keys are 0-1
         }
         try {
             localStorage.setItem(FX_LS_PREFIX + key, typeof v === 'boolean' ? (v ? '1' : '0') : String(v));
@@ -1145,6 +1168,15 @@
         let _hudEl = null;
         let _hudParentOrigPosition = null;
 
+        // Hit-FX state. Sparks are PORTED FROM highway_3d (keep in sync);
+        // pool 96 — keys hits also fire a flame sprite, so sparks are the
+        // accent, not the whole show.
+        const _SPARK_N = 96;
+        let _sparkPts = null, _sparkPos = null, _sparkCol = null, _sparkVel = null, _sparkLife = null;
+        let _fxLastWall = 0;       // wall clock for FX integration
+        let _hitGlowKick = 0;      // hit-line brightness kick, decays exp(-t*6)
+        const _laneGuideMats = []; // lane guide materials (vibrancy slider)
+
         // ── MIDI scoring + live feedback state ──────────────────────────
         let _layoutInfo = null;            // {layout, whiteCount} of current chart
         let _hits = 0, _misses = 0, _streak = 0, _bestStreak = 0;
@@ -1269,6 +1301,20 @@
             _flamesGroup = new T.Group();
             scene.add(keyboardGroup, notesGroup, markersGroup, _flamesGroup);
             _buildFlamePool();
+
+            // Hit sparks (PORTED FROM highway_3d): pooled additive Points
+            // cloud, burst at the struck key, integrated in draw(). Same
+            // coordinate space as the flames (keyX / hit-line z).
+            _sparkPos = new Float32Array(_SPARK_N * 3); _sparkCol = new Float32Array(_SPARK_N * 3);
+            _sparkVel = new Float32Array(_SPARK_N * 3); _sparkLife = new Float32Array(_SPARK_N);
+            {
+                const sg = new T.BufferGeometry();
+                sg.setAttribute('position', new T.BufferAttribute(_sparkPos, 3).setUsage(T.DynamicDrawUsage));
+                sg.setAttribute('color', new T.BufferAttribute(_sparkCol, 3).setUsage(T.DynamicDrawUsage));
+                const sm = new T.PointsMaterial({ size: 1.0 * K, vertexColors: true, transparent: true, opacity: 0.8, depthWrite: false, blending: T.AdditiveBlending, sizeAttenuation: true });
+                _sparkPts = new T.Points(sg, sm); _sparkPts.frustumCulled = false; _sparkPts.renderOrder = 8;
+                scene.add(_sparkPts);
+            }
         }
 
         // Drop every child of a group (recursively — key glyphs are children
@@ -1396,10 +1442,33 @@
                 roughness: 0.78,            // matte — kills the glossy "plastic" highlight
                 metalness: 0.0,
                 transparent: true,
-                opacity: 0.8,               // see the keys through the notes
+                // Vibrancy-driven: 0.72 (airy, keys clearly visible through
+                // the gems) → 0.94 (solid, saturated). The old fixed 0.8
+                // read washed-out against the dim floor.
+                opacity: _noteOpacity(),
             });
             _noteMatCache.set(key, mat);
             return mat;
+        }
+
+        function _noteOpacity() {
+            return 0.72 + 0.22 * Math.min(1, Math.max(0, fx.vibrancy));
+        }
+        function _laneGuideOpacity() {
+            return 0.10 + 0.12 * Math.min(1, Math.max(0, fx.vibrancy));
+        }
+
+        // Live vibrancy slider: retint everything already built — the
+        // per-note clones, the material cache (future clones), and the lane
+        // guides — without a chart rebuild.
+        function _applyVibrancy() {
+            const op = _noteOpacity();
+            for (const m of _noteMatCache.values()) m.opacity = op;
+            for (const nm of noteMeshes) {
+                if (nm.mesh && nm.mesh.material) nm.mesh.material.opacity = op;
+            }
+            const lop = _laneGuideOpacity();
+            for (const m of _laneGuideMats) m.opacity = lop;
         }
 
         function _barNumberTexture(idx) {
@@ -1492,6 +1561,59 @@
             }
         }
 
+        // Hit sparks (PORTED FROM highway_3d _sparkBurst/_sparkUpdate — keep
+        // in sync): pooled additive Points; a timing-colored burst fires at
+        // the struck key alongside the flame sprite.
+        function _sparkBurst(x, y, z, hex, count) {
+            if (!_sparkPts || count <= 0) return;
+            const r = ((hex >> 16) & 255) / 255, g = ((hex >> 8) & 255) / 255, b = (hex & 255) / 255;
+            let made = 0;
+            for (let i = 0; i < _SPARK_N && made < count; i++) {
+                if (_sparkLife[i] > 0) continue;
+                const j = i * 3, ang = Math.random() * Math.PI * 2, sp = (5 + Math.random() * 12) * K;
+                _sparkPos[j] = x; _sparkPos[j + 1] = y; _sparkPos[j + 2] = z;
+                _sparkVel[j] = Math.cos(ang) * sp; _sparkVel[j + 1] = (12 + Math.random() * 24) * K; _sparkVel[j + 2] = Math.sin(ang) * sp * 0.55;
+                _sparkCol[j] = r; _sparkCol[j + 1] = g; _sparkCol[j + 2] = b;
+                _sparkLife[i] = 0.30 + Math.random() * 0.16; made++;
+            }
+        }
+        function _sparkUpdate(dt) {
+            if (!_sparkPts) return;
+            const grav = 55 * K; let any = false;
+            for (let i = 0; i < _SPARK_N; i++) {
+                if (_sparkLife[i] <= 0) continue;
+                const j = i * 3;
+                _sparkLife[i] -= dt;
+                if (_sparkLife[i] <= 0) { _sparkCol[j] = _sparkCol[j + 1] = _sparkCol[j + 2] = 0; continue; }
+                any = true;
+                _sparkVel[j + 1] -= grav * dt;
+                _sparkPos[j] += _sparkVel[j] * dt; _sparkPos[j + 1] += _sparkVel[j + 1] * dt; _sparkPos[j + 2] += _sparkVel[j + 2] * dt;
+                const fade = 1 - Math.min(1, dt * 3.2);
+                _sparkCol[j] *= fade; _sparkCol[j + 1] *= fade; _sparkCol[j + 2] *= fade;
+            }
+            _sparkPts.geometry.attributes.position.needsUpdate = true;
+            _sparkPts.geometry.attributes.color.needsUpdate = true;
+            _sparkPts.visible = any;
+        }
+
+        // Timing → color (PORTED FROM highway_3d _timingHex — keep in sync).
+        function _timingHex(ts) {
+            if (!fx.timingFx || !ts || ts === 'OK') return 0x22ff88;
+            if (ts === 'EARLY') return 0x35d6ff;
+            if (ts === 'LATE')  return 0xffb84d;
+            return 0x22ff88;
+        }
+
+        function _spawnSparks(midi, ts) {
+            if (!fx.sparks || !_sparkPts || !_layoutInfo) return;
+            const entry = _layoutInfo.layout.get(midi);
+            if (!entry) return;
+            let count = 8;
+            if (fx.streakFx) count += Math.round(8 * Math.min(1, _streak / 16));
+            const y = (entry.black ? BLACK_H + WHITE_H * 0.6 : WHITE_H) + 1 * K;
+            _sparkBurst(keyX(entry, _layoutInfo.whiteCount), y, -WHITE_L / 2, _timingHex(ts), count);
+        }
+
         function _spawnFlame(midi, wallNow) {
             if (!_layoutInfo || !_flamePool.length) return;
             const entry = _layoutInfo.layout.get(midi);
@@ -1509,6 +1631,7 @@
         function buildKeyboardAndHighway() {
             _clearGroup(keyboardGroup);
             _hitGlowMats.length = 0;
+            _laneGuideMats.length = 0;
             keyMeshes = new Map();
             _keyAnim.clear();
             _keyFlash.clear();
@@ -1574,8 +1697,9 @@
                 if (entry.black) continue; // one strip per semitone-slot lands on whites
                 const gmat = new T.MeshBasicMaterial({
                     color: noteColor(midi, 'rh'), transparent: true,
-                    opacity: 0.16, depthWrite: false,
+                    opacity: _laneGuideOpacity(), depthWrite: false,
                 });
+                _laneGuideMats.push(gmat);
                 const strip = new T.Mesh(new T.PlaneGeometry(WHITE_W * 0.84, guideLen), gmat);
                 strip.rotation.x = -Math.PI / 2;
                 strip.position.set(keyX(entry, whiteCount), laneY, hitZ - guideLen / 2);
@@ -1806,6 +1930,13 @@
                 if (_streak > _bestStreak) _bestStreak = _streak;
                 _keyFlash.delete(playedMidi); // a hit cancels a lingering red
                 _spawnFlame(playedMidi, wall);
+                // Timing verdict: noteKey() serializes the matched note's t
+                // as its prefix ("<t.toFixed(3)>|<midi>"), so parseFloat
+                // recovers it without changing judgeHit's tested contract.
+                const ts = _classifyTiming(parseFloat(key) - t, HIT_TOLERANCE_S);
+                _spawnSparks(playedMidi, ts);
+                // Brief hit-line brightness kick (decays exp(-t*6) in draw).
+                _hitGlowKick = 1;
                 _ndReport(true, playedMidi, _ndBindingId);
             } else {
                 _misses++;
@@ -2044,7 +2175,10 @@
             // splitscreen checks) — damping on the direct-render path would
             // leave the hit line visibly dimmer.
             const glowScale = (_bloomGateOk() && _composer) ? 0.45 : 1;
-            const pulse = (0.72 + 0.18 * Math.sin(now * 5.0)) * glowScale;
+            // Base pulse + the per-hit brightness kick (decayed in draw()'s
+            // wall-clock FX step, scaled by the Hit feedback slider).
+            const pulse = Math.min(1,
+                (0.72 + 0.18 * Math.sin(now * 5.0) + 0.5 * _hitGlowKick * fx.hitFx) * glowScale);
             for (let i = 0; i < _hitGlowMats.length; i++) _hitGlowMats[i].opacity = pulse;
 
             // Missed-note sweep — only while a MIDI device is connected
@@ -2340,6 +2474,13 @@
             _clearGroup(keyboardGroup);
             _clearGroup(_flamesGroup);
             _flamePool.length = 0;
+            if (_sparkPts) {
+                try { _sparkPts.geometry.dispose(); _sparkPts.material.dispose(); } catch (_) {}
+                _sparkPts = null;
+                _sparkPos = _sparkCol = _sparkVel = _sparkLife = null;
+            }
+            _laneGuideMats.length = 0;   // owned + disposed with keyboardGroup
+            _hitGlowKick = 0;
             _clearNoteCaches();
             _clearBarTextures();
             _clearFlameTextures();
@@ -2386,6 +2527,9 @@
                         for (const k of Object.keys(d.fx)) {
                             if (k in FX_DEFAULTS) fx[k] = d.fx[k];
                         }
+                        // Vibrancy is baked into built materials — retint
+                        // the live scene without a chart rebuild.
+                        if ('vibrancy' in d.fx) _applyVibrancy();
                     };
                     window.addEventListener('keys3d:settings', _fxHandler);
                     _injectHud();
@@ -2438,6 +2582,16 @@
                 const now = (bundle && typeof bundle.currentTime === 'number') ? bundle.currentTime : 0;
                 if (_notation) updateScene(now);
                 _animateFeedback(performance.now());
+                // Wall-clock FX step (sparks, hit-line kick decay) —
+                // decoupled from song time so effects settle while paused.
+                {
+                    const nowMs = performance.now();
+                    const fdt = _fxLastWall === 0 ? 1 / 60 : Math.min(0.05, (nowMs - _fxLastWall) / 1000);
+                    _fxLastWall = nowMs;
+                    _sparkUpdate(fdt);
+                    if (_hitGlowKick > 0.001) _hitGlowKick *= Math.exp(-fdt * 6);
+                    else if (_hitGlowKick !== 0) _hitGlowKick = 0;
+                }
                 _refreshHud();
                 // Bloom path (PORTED FROM highway_3d): composer + ACES tone
                 // mapping when enabled and single-instance; direct render
@@ -2534,6 +2688,7 @@
         sweepMissed,
         readFxSettings,
         FX_DEFAULTS,
+        _classifyTiming,
     };
 
     // Headless verification hook: lets Playwright drive synthetic note-ons

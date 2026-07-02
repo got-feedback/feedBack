@@ -80,3 +80,32 @@ test('keys3dSetFx: persists, coerces, and ignores unknown keys', () => {
     assert.equal(events.length, 4);
     assert.ok(!('keys3d_bg_nonsense' in store));
 });
+
+test('_classifyTiming: OK band is 40% of the window, sign maps early/late', () => {
+    const { _classifyTiming } = load().slopsmithViz_keys_highway_3d.__test;
+    const tol = 0.10;                    // keys HIT_TOLERANCE_S
+    assert.equal(_classifyTiming(0, tol), 'OK');
+    assert.equal(_classifyTiming(tol * 0.4, tol), 'OK');
+    assert.equal(_classifyTiming(-tol * 0.4, tol), 'OK');
+    // delta = note.t - now: positive → struck before the note → EARLY.
+    assert.equal(_classifyTiming(tol * 0.41, tol), 'EARLY');
+    assert.equal(_classifyTiming(-tol * 0.41, tol), 'LATE');
+    assert.equal(_classifyTiming(NaN, tol), 'OK');
+});
+
+test('noteKey prefix round-trips the matched note time (timing-delta source)', () => {
+    const { noteKey } = load().slopsmithViz_keys_highway_3d.__test;
+    // _checkHit derives the timing delta as parseFloat(judgeHit's key) - t;
+    // this pins the serialization that makes that recovery valid.
+    assert.equal(parseFloat(noteKey(12.3456, 60)), 12.346);
+    assert.equal(parseFloat(noteKey(0, 21)), 0);
+});
+
+test('FX defaults: hit-FX + vibrancy controls ship enabled', () => {
+    const { FX_DEFAULTS } = load().slopsmithViz_keys_highway_3d.__test;
+    assert.equal(FX_DEFAULTS.sparks, true);
+    assert.equal(FX_DEFAULTS.timingFx, true);
+    assert.equal(FX_DEFAULTS.streakFx, true);
+    assert.equal(FX_DEFAULTS.hitFx, 0.7);
+    assert.equal(FX_DEFAULTS.vibrancy, 0.85);
+});

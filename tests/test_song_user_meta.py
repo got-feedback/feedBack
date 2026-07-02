@@ -102,6 +102,16 @@ def test_tags_replace_and_normalize(client, server):
     assert client.get("/api/song/a.archive/user-meta").json()["tags"] == []
 
 
+def test_tags_capped_at_50(client, server):
+    _seed(server, "a.archive")
+    # Submit 80 distinct tags; only the first 50 normalized-unique are stored.
+    many = [f"tag{i}" for i in range(80)]
+    r = client.put("/api/song/a.archive/user-meta", json={"tags": many})
+    assert r.status_code == 200
+    assert len(r.json()["tags"]) == 50
+    assert len(client.get("/api/song/a.archive/user-meta").json()["tags"]) == 50
+
+
 def test_tags_must_be_array(client, server):
     _seed(server, "a.archive")
     assert client.put("/api/song/a.archive/user-meta",

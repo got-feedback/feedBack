@@ -944,6 +944,9 @@ class MetadataDB:
             if nt and nt not in seen:
                 seen.add(nt)
                 norm.append(nt)
+        # Bound the number of tags so one PUT can't write unbounded rows.
+        # Per-tag length is already capped in _normalize_tag; cap the count too.
+        norm = norm[:50]
         with self._lock:
             self.conn.execute("DELETE FROM song_tags WHERE filename = ?", (filename,))
             if norm:

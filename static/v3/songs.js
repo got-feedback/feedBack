@@ -1355,7 +1355,7 @@
                 }
                 if (window.v3Playlists) { try { window.v3Playlists.refresh(); } catch (e) { /* */ } }
                 if (acts.length && window.fbNotify) {
-                    try { window.fbNotify.show({ title: 'Playlists updated', message: 'Updated ' + acts.length + ' playlist' + (acts.length === 1 ? '' : 's'), icon: '\U0001f3b5' }); } catch (e) { /* */ }
+                    try { window.fbNotify.show({ title: 'Playlists updated', message: 'Updated ' + acts.length + ' playlist' + (acts.length === 1 ? '' : 's'), icon: '🎵' }); } catch (e) { /* */ }
                 }
                 done(acts.length ? true : null);
             }
@@ -2549,6 +2549,9 @@
     async function render() {
         const root = document.getElementById('v3-songs');
         if (!root) return;
+        // A full re-render (filter/scan refresh) replaces the DOM the card menu
+        // anchored to; dismiss any open menu first so it can't float orphaned.
+        if (_closeCardMenu) _closeCardMenu();
         // Restore last-used sort/format/view/filters once, before building the
         // toolbar so its selects reflect the saved choice (default: Artist A–Z).
         if (!_prefsRestored) { applySavedPrefs(); _prefsRestored = true; }

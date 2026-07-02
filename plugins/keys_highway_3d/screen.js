@@ -1338,6 +1338,15 @@
         // Host adaptive-quality scale (bundle.renderScale, 0.25–1) —
         // multiplied into the device pixel ratio like highway_3d does.
         let _renderScale = 1;
+        // Auto-resize fallback state (PORTED FROM highway_3d — keep in sync).
+        // The splitscreen host resizes the panel canvas but overrides
+        // hw.resize and never calls our resize(w,h), so draw() self-detects
+        // size drift. _lastHwW/H track the backing store last seen; _appliedW/H
+        // track the logical size last handed to applySize(); the countdown
+        // throttles the per-frame clientWidth/Height read.
+        let _lastHwW = 0, _lastHwH = 0;
+        let _appliedW = 0, _appliedH = 0;
+        let _boxCheckCountdown = 0;
         // Bloom composer state (PORTED FROM highway_3d/screen.js — keep in sync).
         let _composer = null;
         let _bloomPass = null;
@@ -3131,6 +3140,10 @@
             }
             cam.aspect = w / h;
             cam.updateProjectionMatrix();
+            // Record the logical size actually framed for, so the draw()
+            // drift check can tell when the live canvas box has moved away
+            // from it (PORTED FROM highway_3d).
+            _appliedW = w; _appliedH = h;
             _sizeFxCanvas();
         }
 
@@ -3302,6 +3315,33 @@
                     _renderScale = newScale;
                     applySize(highwayCanvas.clientWidth, highwayCanvas.clientHeight);
                 }
+                // Keep the render matched to the highway canvas's real box
+                // (PORTED FROM highway_3d — keep in sync). Two drifts to catch:
+                //  1. Backing store (canvas.width/height) changed out from under
+                //     us — the splitscreen hw.resize override resizes the element
+                //     but never calls renderer.resize().
+                //  2. The CSS box (clientWidth/Height) drifted while the backing
+                //     store held — e.g. the flex #highway box settling after a
+                //     fullscreen transition, with no backing-store change and no
+                //     resize() call, so branch 1 never fires. Without this the
+                //     drum/keys panels stay framed for the pre-fullscreen size.
+                if (highwayCanvas) {
+                    const _bsChanged = highwayCanvas.width !== _lastHwW
+                        || highwayCanvas.height !== _lastHwH;
+                    _boxCheckCountdown = (_boxCheckCountdown + 1) % 10;
+                    if (_bsChanged || _boxCheckCountdown === 0) {
+                        const _bw = highwayCanvas.clientWidth | 0;
+                        const _bh = highwayCanvas.clientHeight | 0;
+                        if (_bsChanged) {
+                            _lastHwW = highwayCanvas.width;
+                            _lastHwH = highwayCanvas.height;
+                            if (_bw > 0 && _bh > 0) applySize(_bw, _bh);
+                        } else if (_bw > 0 && _bh > 0 &&
+                                (Math.abs(_bw - _appliedW) > 1 || Math.abs(_bh - _appliedH) > 1)) {
+                            applySize(_bw, _bh);
+                        }
+                    }
+                }
                 const now = (bundle && typeof bundle.currentTime === 'number') ? bundle.currentTime : 0;
                 if (_notation) updateScene(now);
                 _animateFeedback(performance.now());
@@ -3363,6 +3403,11 @@
                 }
                 if (_instances.size === 0) _midiReleaseSession();
                 teardown();   // includes _removeHud()
+                // Instances are reused across songs (destroy() → init()); stale
+                // applied/backing dims would suppress the first reframe of the
+                // next song (PORTED FROM highway_3d).
+                _lastHwW = 0; _lastHwH = 0;
+                _appliedW = 0; _appliedH = 0;
                 highwayCanvas = null;
             },
 

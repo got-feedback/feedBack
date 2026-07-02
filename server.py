@@ -244,6 +244,8 @@ _DEMO_BLOCKED: list[tuple[str, re.Pattern]] = [
     # rate limit; Get-info exposes filesystem paths.
     ("POST",   re.compile(r"^/api/enrichment/refresh/.+$")),
     ("GET",    re.compile(r"^/api/chart/.+/fileinfo$")),
+    # Gap-fill (R4a) rewrites pack files on disk — never for demo visitors.
+    ("POST",   re.compile(r"^/api/song/.+/gap-fill$")),
 ]
 
 
@@ -5692,6 +5694,11 @@ def _manifest_exact_ids(filename: str) -> dict:
     if _MBID_RE.match(mbid):
         out["mbid"] = mbid
     isrc = str(manifest.get("isrc", "") or "").strip().upper()
+    # Spec 1.14.0: the stored form is the bare 12-char code, but ISRCs
+    # circulate hyphenated in the wild (US-ABC-24-00001) — the separators
+    # are presentation, not part of the code, so a hand-authored display
+    # form still matches (consumers SHOULD strip before comparing).
+    isrc = isrc.replace("-", "").replace(" ", "")
     if _ISRC_RE.match(isrc):
         out["isrc"] = isrc
     return out
@@ -10210,6 +10217,157 @@ def update_song_meta(filename: str, data: dict):
         # race where the scan finishes between our DB commit and a guarded check.
         _kick_scan()
     return {"ok": True, "persisted": persisted}
+
+
+# ── Gap-fill: write CONFIRMED missing metadata into the pack (R4a) ────────────
+# The agreed write-back contract (spec-alignment §7): opt-in + user-initiated
+# (nothing here runs in the background), adds ABSENT keys only (never replaces
+# an author-set value — the writer refuses, and existing manifest bytes are
+# preserved verbatim by appending), spec'd-keys allowlist, values only from a
+# CONFIRMED identity (an auto/exact match or a user pin — review-tier rows are
+# not eligible until a human confirms), atomic write + .bak. Single-song only;
+# batch write-back stays an open question with the spec chair.
+_GAP_FILL_KEYS = ("album", "year", "genres", "mbid", "isrc")
+
+
+def _gap_fill_manifest_absent(manifest: dict, key: str) -> bool:
+    """A key is a GAP when it's missing or carries no information (empty
+    string / empty list / year 0 — the writer's own "cleared" forms). A
+    non-empty author value is never a gap, whatever we think of it."""
+    if key not in manifest:
+        return True
+    val = manifest.get(key)
+    if val is None or val == "" or val == []:
+        return True
+    return key == "year" and str(val).strip() in ("0", "")
+
+
+def _gap_fill_proposals(cache_key: str, resolved) -> tuple[dict, str]:
+    """What gap-fill could add for this song: (proposals, reason). Empty
+    proposals explain themselves via reason — 'not-sloppak', 'no-match'
+    (nothing confirmed yet), 'review' (a human hasn't confirmed the match),
+    or 'nothing-missing'."""
+    if resolved is None or not resolved.exists() or not sloppak_mod.is_sloppak(resolved):
+        return {}, "not-sloppak"
+    row = meta_db.get_enrichment(cache_key)
+    if not row or row.get("match_state") not in ("matched", "manual"):
+        state = (row or {}).get("match_state")
+        return {}, ("review" if state == "review" else "no-match")
+    try:
+        manifest = sloppak_mod.load_manifest(resolved) or {}
+    except Exception:
+        return {}, "not-sloppak"
+    out = {}
+    album = (row.get("canon_album") or "").strip()
+    if album and _gap_fill_manifest_absent(manifest, "album"):
+        out["album"] = album
+    year = (row.get("canon_year") or "").strip()
+    if year.isdigit() and int(year) and _gap_fill_manifest_absent(manifest, "year"):
+        out["year"] = int(year)
+    genres = [str(g) for g in (row.get("genres") or []) if isinstance(g, str) and g.strip()]
+    if genres and _gap_fill_manifest_absent(manifest, "genres"):
+        out["genres"] = genres
+    # Identity keys (feedpak spec 1.14.0) — written in canonical form only.
+    mbid = (row.get("mb_recording_id") or "").strip().lower()
+    if _MBID_RE.match(mbid) and _gap_fill_manifest_absent(manifest, "mbid"):
+        out["mbid"] = mbid
+    isrc = (row.get("isrc") or "").strip().upper().replace("-", "").replace(" ", "")
+    if _ISRC_RE.match(isrc) and _gap_fill_manifest_absent(manifest, "isrc"):
+        out["isrc"] = isrc
+    return out, ("" if out else "nothing-missing")
+
+
+@app.get("/api/song/{filename:path}/gap-fill")
+def get_song_gap_fill(filename: str):
+    """Preview what "Write missing info to file" would add — the Details
+    drawer renders its confirm list straight from this. Read-only."""
+    dlc = _get_dlc_dir()
+    cache_key, resolved = filename, None
+    if dlc:
+        resolved = _resolve_dlc_path(dlc, filename)
+        if resolved is None:
+            return JSONResponse({"error": "forbidden"}, 403)
+        try:
+            cache_key = resolved.relative_to(dlc.resolve()).as_posix()
+        except ValueError:
+            pass
+    proposals, reason = _gap_fill_proposals(cache_key, resolved)
+    row = meta_db.get_enrichment(cache_key) or {}
+    return {
+        "eligible": bool(proposals),
+        "reason": reason,
+        "match_state": row.get("match_state"),
+        "missing": [{"key": k, "value": v} for k, v in proposals.items()],
+    }
+
+
+@app.post("/api/song/{filename:path}/gap-fill")
+def post_song_gap_fill(filename: str, data: dict):
+    """Write the user-confirmed subset of the preview into the pack file.
+    Proposals are recomputed under the io lock, so a key that gained an
+    author value between preview and confirm is skipped, never replaced."""
+    keys = (data or {}).get("keys")
+    if not isinstance(keys, list) or not keys:
+        return JSONResponse({"error": "keys must be a non-empty list"}, 400)
+    bad = [k for k in keys if k not in _GAP_FILL_KEYS]
+    if bad:
+        return JSONResponse(
+            {"error": "unknown key(s): " + ", ".join(sorted(set(map(str, bad))))}, 400)
+
+    dlc = _get_dlc_dir()
+    cache_key, resolved = filename, None
+    if dlc:
+        resolved = _resolve_dlc_path(dlc, filename)
+        if resolved is None:
+            return JSONResponse({"error": "forbidden"}, 403)
+        try:
+            cache_key = resolved.relative_to(dlc.resolve()).as_posix()
+        except ValueError:
+            pass
+
+    with _song_io_lock:
+        proposals, reason = _gap_fill_proposals(cache_key, resolved)
+        additions = {k: proposals[k] for k in _GAP_FILL_KEYS if k in keys and k in proposals}
+        skipped = sorted(set(keys) - set(additions))
+        if not additions:
+            return JSONResponse({"error": "nothing to write", "reason": reason,
+                                 "skipped": skipped}, 409)
+        try:
+            import songmeta
+            songmeta.gap_fill_sloppak(resolved, additions)
+        except Exception:
+            log.warning("gap-fill write failed for %s", cache_key, exc_info=True)
+            return JSONResponse({"error": "write failed"}, 500)
+
+        # Keep the cache row consistent with what the scanner would now derive
+        # (same contract as the metadata editor above): sync the columns the
+        # scan reads from the keys we appended, then re-stat so the row stays
+        # cache-fresh.
+        fields = {}
+        if "album" in additions:
+            fields["album"] = additions["album"]
+        if "year" in additions:
+            fields["year"] = str(additions["year"])
+        if "genres" in additions:
+            fields["genre"] = additions["genres"][0]
+        with meta_db._lock:
+            updates = [f"{field} = ?" for field in fields]
+            params = list(fields.values())
+            try:
+                mtime, size = _stat_for_cache(resolved)
+                updates += ["mtime = ?", "size = ?"]
+                params += [mtime, size]
+            except OSError:
+                pass
+            if updates:
+                params.append(cache_key)
+                meta_db.conn.execute(
+                    f"UPDATE songs SET {', '.join(updates)} WHERE filename = ?", params)
+                meta_db.conn.commit()
+
+    _invalidate_song_caches(cache_key)
+    _kick_scan()
+    return {"ok": True, "written": additions, "skipped": skipped}
 
 
 @app.post("/api/song/{filename:path}/art/upload")

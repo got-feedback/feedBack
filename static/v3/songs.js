@@ -2456,6 +2456,7 @@
             diff: (meta.user_difficulty != null ? meta.user_difficulty : null),
             notes: meta.notes || '', tags: (meta.tags || []).slice(),
             fav: !!song.favorite, artDataUrl: null,
+            gap: null, gapSel: null,   // gap-fill (R4a): preview state + selected keys
         };
 
         const overlay = document.createElement('div');
@@ -2480,6 +2481,41 @@
         if (window._trapFocusInModal) { try { window._trapFocusInModal(drawer); } catch (_) { /* */ } }
         const first = drawer.querySelector('#det-title');
         if (first) { try { first.focus({ preventScroll: true }); const n = first.value.length; first.setSelectionRange(n, n); } catch (_) { /* */ } }
+    }
+
+    // Gap-fill (R4a) block inside the drawer's Identity section: preview →
+    // per-key confirm → written. Adds ABSENT keys only; the server re-checks
+    // under its io lock, so this UI can never replace an author-set value.
+    const GAP_KEY_LABELS = { album: 'Album', year: 'Year', genres: 'Genres', mbid: 'MusicBrainz ID', isrc: 'ISRC' };
+    function gapFillHtml(st) {
+        const g = st.gap;
+        if (!g) return '<button data-gapfill-check class="text-xs text-fb-textDim hover:text-fb-text">Write missing info to file…</button>';
+        if (g.loading) return '<div class="text-xs text-fb-textDim">Checking the file…</div>';
+        if (g.written) {
+            const names = Object.keys(g.written).map((k) => GAP_KEY_LABELS[k] || k).join(', ');
+            return '<div class="text-xs text-fb-text">✓ Added to file: ' + esc(names) + '</div>';
+        }
+        if (!g.eligible) {
+            const why = {
+                'not-sloppak': 'Only feedpak songs can be written to.',
+                'no-match': 'No confirmed match yet — nothing verified to write.',
+                'review': 'This song’s match is waiting for review — confirm it first.',
+                'nothing-missing': 'Nothing missing — the file already has all of this.',
+            }[g.reason] || 'Could not check the file. Try again.';
+            return '<div class="text-xs text-fb-textDim">' + esc(why) + '</div>';
+        }
+        const rows = (g.missing || []).map((m) => {
+            const val = Array.isArray(m.value) ? m.value.join(', ') : String(m.value);
+            return '<label class="flex items-center gap-2 text-sm text-fb-text">' +
+                '<input type="checkbox" data-gapfill-key="' + esc(m.key) + '"' + (st.gapSel && st.gapSel.has(m.key) ? ' checked' : '') + '>' +
+                '<span class="text-fb-textDim shrink-0">' + esc(GAP_KEY_LABELS[m.key] || m.key) + '</span>' +
+                '<span class="truncate" title="' + esc(val) + '">' + esc(val) + '</span></label>';
+        }).join('');
+        return '<div class="space-y-2">' +
+            '<div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Write to file</div>' + rows +
+            '<div class="text-[0.6875rem] text-fb-textDim">Only adds what’s missing — nothing already in the file is changed. A backup (.bak) is kept beside the file.</div>' +
+            '<div class="flex gap-2"><button data-gapfill-write class="bg-fb-primary hover:bg-fb-primaryHi text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Write to file</button>' +
+            '<button data-gapfill-cancel class="px-3 py-1.5 bg-fb-card/60 hover:bg-fb-card border border-fb-border/50 rounded-lg text-xs text-fb-text">Cancel</button></div></div>';
     }
 
     function detailsHtml(song, st, vocab) {
@@ -2514,7 +2550,8 @@
             '<div class="space-y-3"><div class="flex items-center gap-2"><div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Identity</div>' +
             '<span class="text-[0.625rem] px-1.5 py-0.5 rounded-full bg-gray-800/70 text-fb-textDim border border-gray-700" title="These came from the song&#39;s feedpak. Editing them writes back to the file.">From pack</span></div>' +
             field('det-title', 'Title', st.t) + field('det-artist', 'Artist', st.a) + field('det-album', 'Album', st.al) +
-            '<div><label for="det-year" class="text-xs text-fb-textDim mb-1 block">Year</label><input type="text" inputmode="numeric" id="det-year" value="' + esc(st.y) + '" placeholder="e.g. 2024" class="w-full bg-fb-card border border-fb-border/60 rounded-lg px-3 py-2 text-sm text-fb-text outline-none focus:border-fb-primary/60"></div></div>' +
+            '<div><label for="det-year" class="text-xs text-fb-textDim mb-1 block">Year</label><input type="text" inputmode="numeric" id="det-year" value="' + esc(st.y) + '" placeholder="e.g. 2024" class="w-full bg-fb-card border border-fb-border/60 rounded-lg px-3 py-2 text-sm text-fb-text outline-none focus:border-fb-primary/60"></div>' +
+            '<div data-det-gapfill>' + gapFillHtml(st) + '</div></div>' +
 
             // Personal practice layer — local, never shared
             '<div class="space-y-3 pt-1"><div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Your practice <span class="normal-case font-normal text-fb-textDim/70">· stays on this device</span></div>' +
@@ -2581,6 +2618,44 @@
 
         $('[data-det-save]')?.addEventListener('click', () => saveDetails(song, st));
         $('[data-det-remove]')?.addEventListener('click', () => removeFromLibrary(song));
+
+        // Gap-fill (R4a): user-initiated write of CONFIRMED missing info into
+        // the pack file. The server recomputes proposals under its io lock, so
+        // a key that gained an author value since the preview is skipped.
+        $('[data-gapfill-check]')?.addEventListener('click', async () => {
+            st.gap = { loading: true }; render();
+            let d = null;
+            try { const r = await fetch('/api/song/' + enc(song.filename) + '/gap-fill'); if (r.ok) d = await r.json(); } catch (_) { /* offline */ }
+            st.gap = d || { eligible: false, reason: 'error' };
+            st.gapSel = new Set(((d && d.missing) || []).map((m) => m.key));
+            render();
+        });
+        drawer.querySelectorAll('[data-gapfill-key]').forEach((cb) => cb.addEventListener('change', () => {
+            const k = cb.getAttribute('data-gapfill-key');
+            if (!st.gapSel) st.gapSel = new Set();
+            if (cb.checked) st.gapSel.add(k); else st.gapSel.delete(k);
+        }));
+        $('[data-gapfill-cancel]')?.addEventListener('click', () => { st.gap = null; render(); });
+        $('[data-gapfill-write]')?.addEventListener('click', async () => {
+            const keys = st.gapSel ? Array.from(st.gapSel) : [];
+            if (!keys.length) return;
+            let d = null, ok = false;
+            try {
+                const r = await fetch('/api/song/' + enc(song.filename) + '/gap-fill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys }) });
+                ok = r.ok; d = await r.json();
+            } catch (_) { /* offline */ }
+            if (!ok || !d || !d.written) {
+                if (window.fbNotify) { try { window.fbNotify.show({ title: 'Write failed', message: 'Could not write to the file. Please try again.', icon: '⚠️', accent: '#EF4444' }); } catch (e) { /* */ } }
+                st.gap = null; render(); return;
+            }
+            // Reflect what landed in the open drawer (and keep saveDetails'
+            // changed-detection honest by updating both sides), then refresh
+            // the grid quietly.
+            if (d.written.album != null) { st.al = String(d.written.album); song.album = st.al; }
+            if (d.written.year != null) { st.y = String(d.written.year); song.year = d.written.year; }
+            st.gap = { written: d.written }; render();
+            try { reload(); } catch (_) { /* not on the songs grid */ }
+        });
     }
 
     // Normalize + append a tag to the drawer's working set (mirrors the server's

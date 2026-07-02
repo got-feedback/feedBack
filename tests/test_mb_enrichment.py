@@ -262,6 +262,20 @@ def test_manifest_isrc_tier1(server, mb):
     assert mb.search_calls == []
 
 
+def test_manifest_isrc_display_hyphens_stripped(server, mb):
+    """Spec 1.14.0: the hyphenated display form (AU-AP0-90-00045) is
+    presentation only — the reader strips separators, so a hand-authored
+    manifest still hits the exact tier with the bare 12-char code."""
+    _write_sloppak_manifest(server, "a.sloppak", "isrc: AU-AP0-90-00045\n")
+    _put(server, "a.sloppak")
+    mb.isrc_lookups["AUAP09000045"] = {"recordings": [mb_doc()]}
+    server._background_enrich()
+    row = server.meta_db.get_enrichment("a.sloppak")
+    assert row["match_state"] == "matched"
+    assert row["match_source"] == "isrc"
+    assert mb.search_calls == []
+
+
 def test_bad_manifest_mbid_falls_through_to_text(server, mb):
     mbid = "12345678-abcd-4ef0-9876-0123456789ab"
     _write_sloppak_manifest(server, "a.sloppak", f"mbid: {mbid}\n")

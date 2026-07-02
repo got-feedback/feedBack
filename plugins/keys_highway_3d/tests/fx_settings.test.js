@@ -133,3 +133,18 @@ test('FX defaults: theme-PR controls ship enabled at stock-neutral values', () =
     assert.equal(FX_DEFAULTS.cinematic, true);
     assert.equal(FX_DEFAULTS.glow, 0.5);   // 0.5 = 1.0x multiplier (stock)
 });
+
+
+test('bg styles: validated id set, particles default', () => {
+    const { BG_STYLE_IDS, readBgStyleSetting } = load().slopsmithViz_keys_highway_3d.__test;
+    // Host-realm copy — the vm array's foreign prototype trips deepEqual.
+    assert.deepEqual([...BG_STYLE_IDS], ['off', 'particles', 'lights', 'geometric']);
+    assert.equal(readBgStyleSetting(), 'particles');
+});
+
+test('FX defaults: ambience + score FX ship enabled', () => {
+    const { FX_DEFAULTS } = load().slopsmithViz_keys_highway_3d.__test;
+    assert.equal(FX_DEFAULTS.scoreFx, true);
+    assert.equal(FX_DEFAULTS.bgIntensity, 0.5);
+    assert.equal(FX_DEFAULTS.bgReactive, true);
+});

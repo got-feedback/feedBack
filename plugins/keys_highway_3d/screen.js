@@ -910,11 +910,146 @@
         vibrancy: 0.85,   // note-gem opacity + lane-guide strength
         cinematic: true,  // rebalanced lighting (dimmer ambient, stronger key)
         glow: 0.5,        // 0–1 emissive multiplier (0.5 = the stock look)
+        scoreFx: true,    // 2D overlay: +N pops, combo rings, streak-break wash
+        bgIntensity: 0.5, // background-ambience density/strength
+        bgReactive: true, // background reacts to the audio analyser
     };
     const FX_LS_PREFIX = 'keys3d_bg_';
     // Theme id lives OUTSIDE FX_DEFAULTS (string, not bool/number) — its own
     // localStorage key + validation against BG_THEMES.
     const FX_LS_THEME = 'keys3d_bg_theme';
+    // Background-ambience style — string-valued like the theme, so it gets
+    // its own validated key + setter rather than an FX_DEFAULTS slot.
+    // butterchurn/image/video from the guitar are deliberately out of scope.
+    const BG_STYLE_IDS = ['off', 'particles', 'lights', 'geometric'];
+    const FX_LS_STYLE = 'keys3d_bg_style';
+    function readBgStyleSetting() {
+        try {
+            const id = localStorage.getItem(FX_LS_STYLE);
+            if (id && BG_STYLE_IDS.indexOf(id) !== -1) return id;
+        } catch (_) {}
+        return 'particles';
+    }
+    window.keys3dSetBgStyle = function (id) {
+        if (BG_STYLE_IDS.indexOf(id) === -1) return;
+        try { localStorage.setItem(FX_LS_STYLE, id); } catch (_) {}
+        try {
+            window.dispatchEvent(new CustomEvent('keys3d:settings', { detail: { bgStyle: id } }));
+        } catch (_) { /* dispatch unavailable — persisted value applies next init */ }
+    };
+
+    /* ======================================================================
+     *  Audio analyser bridge — module singletons, shared across instances.
+     *  PORTED FROM highway_3d _bgGetAnalyser/_bgReadBands via
+     *  drum_highway_3d (keep in sync; the guitar's diagnostics plumbing is
+     *  dropped).
+     * ====================================================================== */
+    const BG_FREQ_BINS = 128;
+    const BG_ZERO_BANDS = { bass: 0, mid: 0, treble: 0 };
+    let _bgAudio = null;       // {ctx, analyser, freq, source} | {failed, permanent}
+    let _bgAudioCore = null;   // remembered core tap (one-shot per element)
+    let _bgAudioFailedAt = 0;
+    const _BG_AUDIO_RETRY_MS = 1000;
+    function _bgGetAnalyser() {
+        // Prefer the stems plugin's side-chain analyser: on sloppaks the
+        // #audio element is a silent virtual transport. Per-song node —
+        // cache keyed on identity so a song switch re-adopts automatically.
+        const stemsApi = window.feedBack && window.feedBack.stems;
+        const stemsAnalyser = (stemsApi && typeof stemsApi.getAnalyser === 'function')
+            ? stemsApi.getAnalyser() : null;
+        if (stemsAnalyser) {
+            if (!_bgAudio || _bgAudio.source !== 'stems' || _bgAudio.analyser !== stemsAnalyser) {
+                _bgAudio = {
+                    ctx: stemsAnalyser.context,
+                    analyser: stemsAnalyser,
+                    freq: new Uint8Array(Math.max(BG_FREQ_BINS, stemsAnalyser.frequencyBinCount)),
+                    source: 'stems',
+                };
+            }
+            return _bgAudio;
+        }
+        if (_bgAudio && _bgAudio.source === 'stems') _bgAudio = _bgAudioCore;
+        if (_bgAudio && !_bgAudio.failed) return _bgAudio;
+        if (_bgAudio && _bgAudio.failed) {
+            if (_bgAudio.permanent) return null;
+            if (performance.now() - _bgAudioFailedAt < _BG_AUDIO_RETRY_MS) return null;
+        }
+        const audio = document.getElementById('audio');
+        if (!audio) return null;
+        // Never tap #audio before the page has user activation: a fresh
+        // AudioContext would start suspended and route LIVE playback into
+        // silence until the next play gesture (createMediaElementSource is
+        // one-shot — not undoable). Called per frame, so this just retries
+        // once activation exists. (Improvement over the guitar's copy, which
+        // only resumes after the fact — candidate to port back.)
+        const ua = navigator.userActivation;
+        if (ua && ua.hasBeenActive === false) return null;
+        // Shared tap: createMediaElementSource is one-shot per element, so
+        // the FIRST visualizer to tap #audio publishes it at
+        // window.__feedBackAudioTap and every later one (this plugin, the
+        // drum highway — the guitar is a port-back candidate) adopts it
+        // instead of throwing InvalidStateError in a mixed splitscreen.
+        const shared = window.__feedBackAudioTap;
+        if (shared && shared.analyser && shared.mediaEl === audio) {
+            _bgAudio = {
+                ctx: shared.ctx,
+                analyser: shared.analyser,
+                freq: new Uint8Array(Math.max(BG_FREQ_BINS, shared.analyser.frequencyBinCount)),
+                source: 'core',
+            };
+            _bgAudioCore = _bgAudio;
+            return _bgAudio;
+        }
+        let ctx = null;
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) throw new Error('Web Audio API not available');
+            ctx = new Ctx();
+            const source = ctx.createMediaElementSource(audio);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            analyser.connect(ctx.destination);
+            _bgAudio = { ctx, analyser, freq: new Uint8Array(Math.max(BG_FREQ_BINS, analyser.frequencyBinCount)), source: 'core' };
+            _bgAudioCore = _bgAudio;
+            try { window.__feedBackAudioTap = { ctx, analyser, mediaEl: audio }; } catch (_) {}
+            const resume = () => {
+                if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+                    ctx.resume().catch(() => { /* no gesture yet, retry on next play */ });
+                }
+            };
+            resume();
+            audio.addEventListener('play', resume);
+            return _bgAudio;
+        } catch (e) {
+            if (ctx && typeof ctx.close === 'function') {
+                try { ctx.close(); } catch (_) {}
+            }
+            console.warn('[Keys-Hwy3D] failed to set up audio analyser:', e);
+            _bgAudio = { failed: true, permanent: !!(e && e.name === 'InvalidStateError') };
+            _bgAudioFailedAt = performance.now();
+            return null;
+        }
+    }
+    const _BG_BANDS_CACHE_MS = 5;
+    let _bgBandsLastT = -Infinity;
+    const _bgBandsCache = { bass: 0, mid: 0, treble: 0 };
+    function _bgReadBands() {
+        const a = _bgGetAnalyser();
+        if (!a) return BG_ZERO_BANDS;
+        const t = performance.now();
+        if (t - _bgBandsLastT < _BG_BANDS_CACHE_MS) return _bgBandsCache;
+        _bgBandsLastT = t;
+        a.analyser.getByteFrequencyData(a.freq);
+        let bass = 0, mid = 0, treble = 0;
+        for (let i = 0; i < 8; i++) bass += a.freq[i];
+        for (let i = 8; i < 40; i++) mid += a.freq[i];
+        for (let i = 40; i < 128; i++) treble += a.freq[i];
+        _bgBandsCache.bass = bass / (8 * 255);
+        _bgBandsCache.mid = mid / (32 * 255);
+        _bgBandsCache.treble = treble / (88 * 255);
+        return _bgBandsCache;
+    }
 
     // Scene color themes — PORTED FROM highway_3d BG_THEMES (keep the ids,
     // names and values in sync so a user's look carries across instruments).
@@ -1231,6 +1366,27 @@
         let _envRT = null;         // PMREM render target backing scene.environment
         let _bgTex = null;         // vertical-gradient background texture
 
+        // Background ambience (PORTED FROM highway_3d BG_STYLES subset via
+        // drum_highway_3d — keep in sync).
+        let _bgStyle = readBgStyleSetting();
+        let bgGroup = null;
+        let _bgState = null;
+
+        // Score-FX overlay (2D canvas sibling; drum_highway_3d pattern).
+        let _fxCanvas = null, _fxCtx = null;
+        let _fxDpr = 1;                    // backing-store scale (CSS→device px)
+        let _fxParentOrigPosition = null;  // parent position to restore on teardown
+        let _scorePops = Array.from({ length: 12 }, () => ({ active: false, x: 0, z: 0, bornMs: 0, text: '' }));
+        const _SCORE_BURST_N = 36;
+        let _scoreBursts = Array.from({ length: 2 }, () => ({
+            active: false, bornMs: 0,
+            px: new Float32Array(_SCORE_BURST_N), py: new Float32Array(_SCORE_BURST_N),
+            vx: new Float32Array(_SCORE_BURST_N), vy: new Float32Array(_SCORE_BURST_N),
+        }));
+        let _scoreRingMs = -1e9;
+        let _scoreBreakMs = -1e9;
+        let _probe = null;
+
         // ── MIDI scoring + live feedback state ──────────────────────────
         let _layoutInfo = null;            // {layout, whiteCount} of current chart
         let _hits = 0, _misses = 0, _streak = 0, _bestStreak = 0;
@@ -1326,6 +1482,341 @@
 
         function keyX(layoutEntry, whiteCount) {
             return (layoutEntry.slot - (whiteCount - 1) / 2) * WHITE_W;
+        }
+
+        /* -- background ambience (PORTED FROM highway_3d BG_STYLES subset
+         *    via drum_highway_3d — keep formulas in sync) -- */
+        const BG_STYLES = {
+            off: {
+                build() { return null; },
+                update() {},
+                teardown() {},
+            },
+            particles: {
+                build(group, settings) {
+                    const N = Math.max(20, Math.floor(80 + 200 * settings.intensity));
+                    const positions = new Float32Array(N * 3);
+                    for (let i = 0; i < N; i++) {
+                        positions[i * 3] = (Math.random() - 0.5) * 800 * K;
+                        positions[i * 3 + 1] = (Math.random() - 0.4) * 80 * K;
+                        positions[i * 3 + 2] = -FOG_START - Math.random() * (FOG_END - FOG_START) * 0.85;
+                    }
+                    const geo = new T.BufferGeometry();
+                    geo.setAttribute('position', new T.BufferAttribute(positions, 3));
+                    const mat = new T.PointsMaterial({
+                        color: 0xa0c0ff, size: 5 * K, transparent: true,
+                        blending: T.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+                    });
+                    const points = new T.Points(geo, mat);
+                    points.renderOrder = -1;
+                    points.frustumCulled = false;
+                    group.add(points);
+                    return { points, geo, mat, N };
+                },
+                update(s, bands, dt) {
+                    const positions = s.geo.attributes.position.array;
+                    const dx = dt * (3 + bands.mid * 12) * K;
+                    for (let i = 0; i < s.N; i++) {
+                        positions[i * 3] += dx;
+                        if (positions[i * 3] > 400 * K) positions[i * 3] -= 800 * K;
+                    }
+                    s.geo.attributes.position.needsUpdate = true;
+                    s.mat.opacity = 0.55 + bands.treble * 0.45;
+                },
+                teardown(s) {
+                    if (!s) return;
+                    if (s.points.parent) s.points.parent.remove(s.points);
+                    s.geo.dispose();
+                    s.mat.dispose();
+                },
+            },
+            lights: {
+                build(group, settings) {
+                    const N = Math.floor(6 + 8 * settings.intensity);
+                    const lights = [];
+                    const palette = settings.palette || [0xa0c0ff];
+                    for (let i = 0; i < N; i++) {
+                        const color = palette[i % palette.length];
+                        const geo = new T.PlaneGeometry(30 * K, 30 * K);
+                        const mat = new T.MeshBasicMaterial({
+                            color, transparent: true,
+                            blending: T.AdditiveBlending, depthWrite: false,
+                        });
+                        const mesh = new T.Mesh(geo, mat);
+                        mesh.renderOrder = -1;
+                        mesh.position.set(
+                            (Math.random() - 0.5) * 600 * K,
+                            (Math.random() - 0.3) * 80 * K,
+                            -FOG_START - Math.random() * (FOG_END - FOG_START) * 0.85
+                        );
+                        group.add(mesh);
+                        lights.push({ mesh, geo, mat, baseScale: 1 + Math.random() * 0.5, phase: Math.random() * Math.PI * 2 });
+                    }
+                    return { lights };
+                },
+                update(s, bands, dt, t) {
+                    for (const L of s.lights) {
+                        const pulse = 1 + bands.bass * 1.5 + Math.sin(t * 1.5 + L.phase) * 0.2;
+                        L.mesh.scale.set(L.baseScale * pulse, L.baseScale * pulse, 1);
+                        L.mat.opacity = 0.55 + bands.treble * 0.4;
+                    }
+                },
+                teardown(s) {
+                    if (!s) return;
+                    for (const L of s.lights) {
+                        if (L.mesh.parent) L.mesh.parent.remove(L.mesh);
+                        L.geo.dispose();
+                        L.mat.dispose();
+                    }
+                },
+            },
+            geometric: {
+                build(group, settings) {
+                    const meshes = [];
+                    const op = 0.45 + 0.25 * settings.intensity;
+                    const ico = new T.Mesh(
+                        new T.IcosahedronGeometry(30 * K, 1),
+                        new T.MeshBasicMaterial({ color: 0x6080c0, wireframe: true, transparent: true, opacity: op, depthWrite: false }),
+                    );
+                    ico.position.set(-100 * K, 30 * K, -FOG_END * 0.65);
+                    ico.renderOrder = -1;
+                    group.add(ico);
+                    meshes.push(ico);
+                    const torus = new T.Mesh(
+                        new T.TorusGeometry(22 * K, 4 * K, 6, 12),
+                        new T.MeshBasicMaterial({ color: 0xc06080, wireframe: true, transparent: true, opacity: op * 0.9, depthWrite: false }),
+                    );
+                    torus.position.set(120 * K, 20 * K, -FOG_END * 0.75);
+                    torus.renderOrder = -1;
+                    group.add(torus);
+                    meshes.push(torus);
+                    return { meshes };
+                },
+                update(s, bands, dt) {
+                    const speed = 0.2 + bands.mid * 0.4;
+                    const pulse = 1 + bands.bass * 0.25;
+                    for (const m of s.meshes) {
+                        m.rotation.x += dt * speed * 0.3;
+                        m.rotation.y += dt * speed * 0.4;
+                        m.scale.setScalar(pulse);
+                    }
+                },
+                teardown(s) {
+                    if (!s) return;
+                    for (const m of s.meshes) {
+                        if (m.parent) m.parent.remove(m);
+                        m.geometry.dispose();
+                        m.material.dispose();
+                    }
+                },
+            },
+        };
+
+        function _bgMountStyle() {
+            if (!scene || !T) return;
+            if (!bgGroup) {
+                bgGroup = new T.Group();
+                scene.add(bgGroup);
+            }
+            if (_bgState && _bgState._style && BG_STYLES[_bgState._style]) {
+                try { BG_STYLES[_bgState._style].teardown(_bgState.s); } catch (_) {}
+            }
+            const style = BG_STYLES[_bgStyle] || BG_STYLES.off;
+            let s = null;
+            try {
+                s = style.build(bgGroup, { intensity: Math.min(1, Math.max(0, fx.bgIntensity)), palette: PITCH_CLASS_COLORS });
+            } catch (e) {
+                console.warn('[Keys-Hwy3D] bg style build failed', e);
+                s = null;
+            }
+            _bgState = { _style: _bgStyle, s };
+        }
+        function _bgTeardownStyle() {
+            if (_bgState && _bgState._style && BG_STYLES[_bgState._style]) {
+                try { BG_STYLES[_bgState._style].teardown(_bgState.s); } catch (_) {}
+            }
+            _bgState = null;
+            bgGroup = null;
+        }
+
+        /* -- score-FX overlay (drum_highway_3d pattern — keep in sync) -- */
+        function _ensureFxCanvas() {
+            if (_fxCanvas || !highwayCanvas) return;
+            const parent = highwayCanvas.parentElement;
+            if (!parent) return;
+            const cur = parent.style.position || getComputedStyle(parent).position;
+            if (cur === 'static' || !cur) {
+                // Record the original inline value (usually '') so teardown
+                // can undo this layout mutation — same contract as the HUD.
+                _fxParentOrigPosition = parent.style.position;
+                parent.style.position = 'relative';
+            }
+            _fxCanvas = document.createElement('canvas');
+            _fxCanvas.className = 'keys-h3d-fx';
+            _fxCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5';
+            parent.appendChild(_fxCanvas);
+            _fxCtx = _fxCanvas.getContext('2d');
+            _sizeFxCanvas();
+        }
+        function _sizeFxCanvas() {
+            if (!_fxCanvas || !highwayCanvas) return;
+            const w = highwayCanvas.clientWidth | 0, h = highwayCanvas.clientHeight | 0;
+            if (!w || !h) return;
+            const r = Math.min(window.devicePixelRatio || 1, 2);
+            if (_fxCanvas.width !== (w * r | 0) || _fxCanvas.height !== (h * r | 0)) {
+                _fxCanvas.width = w * r | 0;
+                _fxCanvas.height = h * r | 0;
+            }
+            // The draw path works in CSS pixels and scales the context by
+            // this — fixed font/line sizes stay physically consistent on
+            // HiDPI instead of shrinking with the backing store.
+            _fxDpr = r;
+        }
+        function _removeFxCanvas() {
+            if (_fxCanvas && _fxCanvas.parentNode) {
+                const parent = _fxCanvas.parentNode;
+                parent.removeChild(_fxCanvas);
+                // Restore position only if _ensureFxCanvas changed it (and
+                // nothing else — e.g. the HUD — still needs it; the HUD sets
+                // and restores its own copy of the same guard first).
+                if (_fxParentOrigPosition !== null) {
+                    parent.style.position = _fxParentOrigPosition;
+                    _fxParentOrigPosition = null;
+                }
+            }
+            _fxCanvas = null;
+            _fxCtx = null;
+        }
+        function _scoreSpawnPop(midi) {
+            if (!_layoutInfo) return;
+            const entry = _layoutInfo.layout.get(midi);
+            if (!entry) return;
+            const nowMs = performance.now();
+            for (const pop of _scorePops) {
+                if (pop.active) continue;
+                pop.active = true;
+                pop.x = keyX(entry, _layoutInfo.whiteCount);
+                pop.z = -WHITE_L / 2;
+                pop.bornMs = nowMs;
+                pop.text = '+1';
+                return;
+            }
+        }
+        function _scoreSpawnBurst(nowMs) {
+            for (const b of _scoreBursts) {
+                if (b.active) continue;
+                b.active = true;
+                b.bornMs = nowMs;
+                for (let j = 0; j < _SCORE_BURST_N; j++) {
+                    const a = (j / _SCORE_BURST_N) * Math.PI * 2;
+                    const sp = 2 + (j % 5) * 0.8;
+                    b.px[j] = 0; b.py[j] = 0;
+                    b.vx[j] = Math.cos(a) * sp;
+                    b.vy[j] = Math.sin(a) * sp - 1.2;
+                }
+                return;
+            }
+        }
+        function _scoreOnHit(midi) {
+            if (!fx.scoreFx) return;
+            const nowMs = performance.now();
+            _scoreSpawnPop(midi);
+            if (_streak > 0 && _streak % 10 === 0) _scoreRingMs = nowMs;
+            if (_streak === 25 || _streak === 50 || _streak === 100) _scoreSpawnBurst(nowMs);
+        }
+        function _scoreOnBreak(prevStreak) {
+            if (!fx.scoreFx) return;
+            if (prevStreak >= 3) _scoreBreakMs = performance.now();
+        }
+        function _drawScoreFx() {
+            if (!_fxCtx || !_fxCanvas || !cam) return;
+            // CSS-pixel coordinate space; the context transform applies the
+            // DPR so strokes/fonts render at their intended physical size.
+            const r = _fxDpr || 1;
+            const W = _fxCanvas.width / r, H = _fxCanvas.height / r;
+            _fxCtx.setTransform(r, 0, 0, r, 0, 0);
+            const nowMs = performance.now();
+            let anyPop = false;
+            for (const pop of _scorePops) if (pop.active) { anyPop = true; break; }
+            let anyBurst = false;
+            for (const b of _scoreBursts) if (b.active) { anyBurst = true; break; }
+            const ringAge = nowMs - _scoreRingMs;
+            const breakAge = nowMs - _scoreBreakMs;
+            if (!anyPop && !anyBurst && ringAge >= 600 && breakAge >= 350) {
+                if (_fxCanvas._dirty) { _fxCtx.clearRect(0, 0, W, H); _fxCanvas._dirty = false; }
+                return;
+            }
+            _fxCanvas._dirty = true;
+            if (!_probe) _probe = new T.Vector3();
+            const ctx = _fxCtx;
+            ctx.clearRect(0, 0, W, H);
+            ctx.save();
+            if (breakAge < 350) {
+                ctx.fillStyle = '#ef4444';
+                ctx.globalAlpha = 0.10 * (1 - breakAge / 350);
+                ctx.fillRect(0, 0, W, H);
+                ctx.globalAlpha = 1;
+            }
+            let cx = W / 2, cy = H * 0.72, centerOk = false;
+            _probe.set(0, WHITE_H + 0.5 * K, -WHITE_L / 2);
+            _probe.project(cam);
+            if (_probe.z >= -1 && _probe.z <= 1) {
+                cx = (_probe.x * 0.5 + 0.5) * W;
+                cy = (-_probe.y * 0.5 + 0.5) * H;
+                centerOk = true;
+            }
+            if (centerOk && ringAge < 600) {
+                const t = ringAge / 600;
+                const ease = 1 - Math.pow(1 - t, 2);
+                ctx.beginPath();
+                ctx.arc(cx, cy, 20 + ease * Math.min(W, H) * 0.28, 0, Math.PI * 2);
+                ctx.strokeStyle = _streak >= 30 ? '#fde047' : '#86efac';
+                ctx.globalAlpha = 0.6 * (1 - t);
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
+            if (anyBurst && centerOk) {
+                for (const b of _scoreBursts) {
+                    if (!b.active) continue;
+                    const age = nowMs - b.bornMs;
+                    if (age >= 900) { b.active = false; continue; }
+                    const t = age / 900;
+                    ctx.globalAlpha = 1 - t;
+                    for (let j = 0; j < _SCORE_BURST_N; j++) {
+                        b.px[j] += b.vx[j];
+                        b.py[j] += b.vy[j];
+                        b.vy[j] += 0.08;
+                        ctx.fillStyle = (j & 1) ? '#fde047' : '#86efac';
+                        ctx.fillRect(cx + b.px[j] - 2, cy + b.py[j] - 2, 4, 4);
+                    }
+                    ctx.globalAlpha = 1;
+                }
+            }
+            if (anyPop) {
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                for (const pop of _scorePops) {
+                    if (!pop.active) continue;
+                    const age = nowMs - pop.bornMs;
+                    if (age >= 800) { pop.active = false; continue; }
+                    _probe.set(pop.x, WHITE_H + 2 * K, pop.z);
+                    _probe.project(cam);
+                    if (_probe.z < -1 || _probe.z > 1) continue;
+                    const t = age / 800;
+                    const sx = (_probe.x * 0.5 + 0.5) * W;
+                    const sy = (-_probe.y * 0.5 + 0.5) * H - t * 30;
+                    ctx.globalAlpha = t < 0.4 ? 1 : 1 - (t - 0.4) / 0.6;
+                    ctx.font = 'bold 15px system-ui, sans-serif';
+                    ctx.lineWidth = 4;
+                    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+                    ctx.strokeText(pop.text, sx, sy);
+                    ctx.fillStyle = '#86efac';
+                    ctx.fillText(pop.text, sx, sy);
+                }
+                ctx.globalAlpha = 1;
+            }
+            ctx.restore();
         }
 
         // Emissive multiplier from the Glow slider — 0.5 is neutral (the
@@ -1476,6 +1967,9 @@
                 _sparkPts = new T.Points(sg, sm); _sparkPts.frustumCulled = false; _sparkPts.renderOrder = 8;
                 scene.add(_sparkPts);
             }
+
+            // Background ambience behind everything (renderOrder -1).
+            _bgMountStyle();
         }
 
         // Drop every child of a group (recursively — key glyphs are children
@@ -2123,10 +2617,13 @@
                 _spawnSparks(playedMidi, ts);
                 // Brief hit-line brightness kick (decays exp(-t*6) in draw).
                 _hitGlowKick = 1;
+                _scoreOnHit(playedMidi);
                 _ndReport(true, playedMidi, _ndBindingId);
             } else {
+                const prevStreak = _streak;
                 _misses++;
                 _streak = 0;
+                _scoreOnBreak(prevStreak);
                 if (keyMeshes.has(playedMidi)) _keyFlash.set(playedMidi, wall);
                 _ndReport(false, playedMidi, _ndBindingId);
             }
@@ -2148,6 +2645,7 @@
         // Swept-miss callback — kept as a named function so the per-frame
         // sweep passes a stable reference (no closure allocation in draw()).
         function _onSweptMiss(note) {
+            _scoreOnBreak(_streak);   // called before the caller zeroes it
             _ndReport(false, note.midi, _ndBindingId);
         }
 
@@ -2633,6 +3131,7 @@
             }
             cam.aspect = w / h;
             cam.updateProjectionMatrix();
+            _sizeFxCanvas();
         }
 
         function teardown() {
@@ -2651,6 +3150,8 @@
                 _fxThemeHandler = null;
             }
             _disposeEnv();
+            _bgTeardownStyle();
+            _removeFxCanvas();
             _railMats.length = 0;
             ambLight = dirLight = _floorMat = null;
             const sm = window.slopsmith;
@@ -2707,6 +3208,7 @@
                 // while no instance was listening must not come up stale on a
                 // later init().
                 _theme = readThemeSetting();
+                _bgStyle = readBgStyleSetting();
                 loadThree().then(() => {
                     if (!highwayCanvas) return; // destroyed before load resolved
                     try {
@@ -2731,6 +3233,7 @@
                         // the live scene without a chart rebuild.
                         if ('vibrancy' in d.fx) _applyVibrancy();
                         if ('cinematic' in d.fx) _applyCinematic();
+                        if ('bgIntensity' in d.fx) _bgMountStyle();
                         if ('glow' in d.fx) {
                             // Material emissive bases are also per-frame
                             // (updateScene) — only the cached/cloned rest
@@ -2744,6 +3247,10 @@
                         if (d && d.theme && BG_THEMES[d.theme]) {
                             _theme = d.theme;
                             _applyTheme();
+                        }
+                        if (d && d.bgStyle && BG_STYLE_IDS.indexOf(d.bgStyle) !== -1) {
+                            _bgStyle = d.bgStyle;
+                            _bgMountStyle();
                         }
                     };
                     window.addEventListener('keys3d:settings', _fxThemeHandler);
@@ -2807,8 +3314,21 @@
                     _sparkUpdate(fdt);
                     if (_hitGlowKick > 0.001) _hitGlowKick *= Math.exp(-fdt * 6);
                     else if (_hitGlowKick !== 0) _hitGlowKick = 0;
+                    // Background ambience: advance the active style with the
+                    // audio bands (zeros when reactivity is off).
+                    if (_bgState && _bgState.s && BG_STYLES[_bgState._style]) {
+                        const bands = fx.bgReactive ? _bgReadBands() : BG_ZERO_BANDS;
+                        try {
+                            BG_STYLES[_bgState._style].update(_bgState.s, bands, fdt, nowMs / 1000);
+                        } catch (_) { /* visual-only */ }
+                    }
                 }
                 _refreshHud();
+                if (fx.scoreFx) { _ensureFxCanvas(); _drawScoreFx(); }
+                else if (_fxCtx && _fxCanvas && _fxCanvas._dirty) {
+                    _fxCtx.clearRect(0, 0, _fxCanvas.width, _fxCanvas.height);
+                    _fxCanvas._dirty = false;
+                }
                 // Bloom path (PORTED FROM highway_3d): composer + ACES tone
                 // mapping when enabled and single-instance; direct render
                 // otherwise (including the frames while addons stream in).
@@ -2904,8 +3424,10 @@
         sweepMissed,
         readFxSettings,
         readThemeSetting,
+        readBgStyleSetting,
         _bgThemeColors,
         BG_THEMES,
+        BG_STYLE_IDS,
         FX_DEFAULTS,
         _classifyTiming,
     };

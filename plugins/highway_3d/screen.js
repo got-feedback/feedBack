@@ -2196,6 +2196,24 @@
         }
         const audio = document.getElementById('audio');
         if (!audio) return null;
+        // Shared tap: createMediaElementSource is one-shot per element, so
+        // the FIRST visualizer to tap #audio publishes it at
+        // window.__feedBackAudioTap and every later one (this plugin, the
+        // drum/keys 3D highways) adopts it instead of throwing
+        // InvalidStateError when visualizers are switched or mixed in
+        // splitscreen.
+        const sharedTap = window.__feedBackAudioTap;
+        if (sharedTap && sharedTap.analyser && sharedTap.mediaEl === audio) {
+            _bgAudio = {
+                ctx: sharedTap.ctx,
+                analyser: sharedTap.analyser,
+                freq: new Uint8Array(Math.max(BG_FREQ_BINS, sharedTap.analyser.frequencyBinCount)),
+                source: 'core',
+            };
+            _bgAudioCore = _bgAudio;
+            _bgRecordAudioBridge('audio-mix.analyser', 'shared #audio analyser tap', 'handled', '', 'core');
+            return _bgAudio;
+        }
         // Hoist ctx out of the try so we can close() it if a later step
         // throws (e.g. createMediaElementSource on an element that
         // already has a source node). Otherwise the AudioContext leaks.
@@ -2210,6 +2228,7 @@
             source.connect(analyser);
             analyser.connect(ctx.destination);
             _bgAudio = { ctx, analyser, freq: new Uint8Array(Math.max(BG_FREQ_BINS, analyser.frequencyBinCount)), source: 'core' };
+            try { window.__feedBackAudioTap = { ctx, analyser, mediaEl: audio }; } catch (_) {}
             _bgRecordAudioBridge('audio-mix.analyser', 'HTMLAudioElement analyser tap', 'handled', '', 'core');
             // Remember the core analyser so a later stems-then-back-to-core
             // transition can re-use it instead of re-tapping #audio (which

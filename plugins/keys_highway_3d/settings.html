@@ -55,6 +55,43 @@
             self-illuminate (0.5 = stock). Pairs with bloom.
         </p>
 
+        <label for="keysh3d-fx-bgstyle" class="text-xs font-medium text-gray-400 mb-1 mt-3 block">Background ambience</label>
+        <select id="keysh3d-fx-bgstyle"
+            onchange="window.keys3dSetBgStyle && window.keys3dSetBgStyle(this.value)"
+            class="w-full bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 outline-none">
+            <option value="off">Off</option>
+            <option value="particles" selected>Particles</option>
+            <option value="lights">Stage lights</option>
+            <option value="geometric">Geometric</option>
+        </select>
+        <label for="keysh3d-fx-bgintensity" class="text-xs font-medium text-gray-400 mb-1 mt-2 block">
+            Ambience intensity <span id="keysh3d-fx-bgintensity-val" class="text-gray-500 font-mono">0.50</span>
+        </label>
+        <input type="range" id="keysh3d-fx-bgintensity"
+            min="0" max="1" step="0.05" value="0.5"
+            oninput="window.keys3dSetFx && window.keys3dSetFx('bgIntensity', this.value); document.getElementById('keysh3d-fx-bgintensity-val').textContent = parseFloat(this.value).toFixed(2)"
+            class="w-full">
+        <label for="keysh3d-fx-bgreactive" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer mt-2">
+            <input type="checkbox" id="keysh3d-fx-bgreactive" checked
+                onchange="window.keys3dSetFx && window.keys3dSetFx('bgReactive', this.checked)">
+            Audio-reactive ambience
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            The backdrop pulses with the mix (stems analyser when a sloppak
+            is loaded). Off = it animates on time only.
+        </p>
+
+        <label for="keysh3d-fx-scorefx" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer mt-3">
+            <input type="checkbox" id="keysh3d-fx-scorefx" checked
+                onchange="window.keys3dSetFx && window.keys3dSetFx('scoreFx', this.checked)">
+            Score effects
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            +1 pops on scored presses, a ring pulse every 10-combo,
+            milestone bursts at 25/50/100, and a brief red flicker when a
+            streak breaks.
+        </p>
+
         <label for="keysh3d-fx-bloom" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer mt-3">
             <input type="checkbox" id="keysh3d-fx-bloom" checked
                 onchange="window.keys3dSetFx && window.keys3dSetFx('bloom', this.checked)">
@@ -140,6 +177,8 @@
             hydrateFxBool('timingFx', 'keysh3d-fx-timing');
             hydrateFxBool('streakFx', 'keysh3d-fx-streak');
             hydrateFxBool('cinematic', 'keysh3d-fx-cinematic');
+            hydrateFxBool('bgReactive', 'keysh3d-fx-bgreactive');
+            hydrateFxBool('scoreFx', 'keysh3d-fx-scorefx');
             const hydrateFxRange = (key, elId, valId) => {
                 const n = parseFloat(localStorage.getItem('keys3d_bg_' + key));
                 if (!Number.isFinite(n)) return;
@@ -150,6 +189,12 @@
             hydrateFxRange('hitFx', 'keysh3d-fx-hitfx', 'keysh3d-fx-hitfx-val');
             hydrateFxRange('vibrancy', 'keysh3d-fx-vibrancy', 'keysh3d-fx-vibrancy-val');
             hydrateFxRange('glow', 'keysh3d-fx-glow', 'keysh3d-fx-glow-val');
+            hydrateFxRange('bgIntensity', 'keysh3d-fx-bgintensity', 'keysh3d-fx-bgintensity-val');
+            const storedStyle = localStorage.getItem('keys3d_bg_style');
+            const styleSel = document.getElementById('keysh3d-fx-bgstyle');
+            if (storedStyle && Array.from(styleSel.options).some(o => o.value === storedStyle)) {
+                styleSel.value = storedStyle;
+            }
             const storedTheme = localStorage.getItem('keys3d_bg_theme');
             const themeSel = document.getElementById('keysh3d-fx-theme');
             if (storedTheme && Array.from(themeSel.options).some(o => o.value === storedTheme)) {

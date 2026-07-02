@@ -43,6 +43,11 @@ tunes one of these, mirror the change here (and in `drum_highway_3d`):
 - `_makeStudioEnv()` — procedural PMREM studio environment (shared with
   drum_highway_3d; RoomEnvironment isn't vendored)
 - `_applyCinematic()` — ambient/key rebalance (values tuned per plugin)
+- `BG_STYLES` (off/particles/lights/geometric) + `_bgGetAnalyser()` /
+  `_bgReadBands()` — background ambience + the stems-first audio-analyser
+  bridge (shared with drum_highway_3d)
+- `_drawScoreFx()` — score overlay (pops / tier rings / milestone bursts /
+  streak-break wash), drum_highway_3d pattern
 
 ## License
 

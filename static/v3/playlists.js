@@ -211,7 +211,12 @@
             '<div class="flex items-center justify-between mb-6 gap-3">' +
             '<h2 class="text-3xl font-bold text-fb-text truncate">' + (isAlbum ? '💿 ' : '') + esc(pl.name) + '</h2>' +
             '<div class="flex gap-2 shrink-0 items-center">' +
-            (pl.songs.length ? '<button id="v3-pl-playall" class="bg-fb-primary hover:bg-fb-primaryHi text-white text-sm font-medium px-4 py-2 rounded-md">▶ Play ' + (isAlbum ? 'album' : 'all') + '</button>' : '') +
+            (pl.songs.length
+                ? '<button id="v3-pl-shuffle" class="px-2 py-2 rounded-md" aria-pressed="false">' +
+                  '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>' +
+                  '</button>' +
+                  '<button id="v3-pl-playall" class="bg-fb-primary hover:bg-fb-primaryHi text-white text-sm font-medium px-4 py-2 rounded-md">▶ Play ' + (isAlbum ? 'album' : 'all') + '</button>'
+                : '') +
             (isSystem ? '' :
                 '<button id="v3-pl-cover" class="text-sm text-fb-textDim hover:text-fb-text px-2">Cover</button>' +
                 (pl.cover_url ? '<button id="v3-pl-cover-rm" class="text-sm text-fb-textDim hover:text-fb-accent px-2">Remove cover</button>' : '') +
@@ -226,6 +231,26 @@
                 : '<p class="text-fb-textDim">Empty — add songs from the library' + (isAlbum ? ' (the ⋮ menu or the batch bar\'s "Add to playlist")' : '') + '.</p>') +
             '</div>';
         root.querySelector('#v3-pl-back')?.addEventListener('click', renderPlaylists);
+        // Shuffle toggle (crossing arrows, next to Play). Persisted globally —
+        // one preference, not per playlist. The queue is shuffled once when
+        // Play starts (playQueue.start's shuffle opt); the stored playlist
+        // order is never touched.
+        const shuffleBtn = root.querySelector('#v3-pl-shuffle');
+        const shuffleOn = () => { try { return localStorage.getItem('v3PlaylistShuffle') === '1'; } catch (_) { return false; } };
+        const paintShuffle = () => {
+            if (!shuffleBtn) return;
+            const on = shuffleOn();
+            shuffleBtn.className = on
+                ? 'px-2 py-2 rounded-md bg-fb-primary hover:bg-fb-primaryHi text-white'
+                : 'px-2 py-2 rounded-md border border-fb-border text-fb-textDim hover:text-fb-text';
+            shuffleBtn.title = on ? 'Shuffle: on' : 'Shuffle: off';
+            shuffleBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        };
+        paintShuffle();
+        shuffleBtn?.addEventListener('click', () => {
+            try { localStorage.setItem('v3PlaylistShuffle', shuffleOn() ? '0' : '1'); } catch (_) { /* private mode */ }
+            paintShuffle();
+        });
         // Play all: start the play-queue with this playlist's songs (auto-advances
         // track to track). Falls back to playing the first song on an older core
         // without the queue, so the button always does something. An ALBUM plays
@@ -244,8 +269,8 @@
             if (!files.length) return;
             if (window.feedBack && window.feedBack.playQueue) {
                 window.feedBack.playQueue.start(files, isAlbum
-                    ? { source: pl.name, arrangements: arrs }
-                    : { source: pl.name });
+                    ? { source: pl.name, arrangements: arrs, shuffle: shuffleOn() }
+                    : { source: pl.name, shuffle: shuffleOn() });
             } else if (typeof window.playSong === 'function') window.playSong(encodeURIComponent(files[0]));
         });
         const listEl = root.querySelector('#v3-pl-songs');

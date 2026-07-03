@@ -6761,7 +6761,16 @@ window.feedBack.playQueue = (function () {
         if (!files.length) return false;
         list = files.slice(); idx = 0;
         source = (opts && opts.source) || '';
-        arrangements = (opts && opts.arrangements) || null;
+        arrangements = (opts && opts.arrangements) ? opts.arrangements.slice() : null;
+        if (opts && opts.shuffle && list.length > 1) {
+            // Fisher-Yates, once at start. Swap arrangements in lockstep so an
+            // album slot's pinned arrangement stays glued to its file (#685).
+            for (let i = list.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [list[i], list[j]] = [list[j], list[i]];
+                if (arrangements) [arrangements[i], arrangements[j]] = [arrangements[j], arrangements[i]];
+            }
+        }
         if (window.fbNotify) {
             try { window.fbNotify.show({ title: 'Playing ' + (source || 'queue'), message: files.length + ' songs', icon: '▶' }); } catch (e) { /* */ }
         }

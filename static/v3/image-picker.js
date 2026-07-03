@@ -71,7 +71,12 @@
         // Light focus trap: cycle within the panel (mirrors match-review).
         const panel = document.getElementById('v3-imgpick-panel');
         if (!panel) return;
-        const foci = panel.querySelectorAll('button, input:not(.hidden), [tabindex="0"]');
+        // Only trap VISIBLE focusables: hidden tiles (?source=pack 404 →
+        // onerror .hidden, unloadable candidates, .hidden buttons) must never
+        // catch a Tab. offsetParent is null for display:none / .hidden.
+        const foci = Array.from(
+            panel.querySelectorAll('button:not(.hidden), input:not(.hidden), [tabindex="0"]'),
+        ).filter((el) => el.offsetParent !== null);
         if (!foci.length) return;
         const first = foci[0], last = foci[foci.length - 1];
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -157,14 +162,25 @@
         });
 
         panel.querySelectorAll('[data-ip-act]').forEach((btn) => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 if (_busy) return;
                 const act = btn.getAttribute('data-ip-act');
                 if (act === 'keep') { close(); return; }
                 if (act === 'pack') { apply('pack'); return; }
                 if (act === 'upload') { file?.click(); return; }
                 if (act === 'url') {
-                    const u = String(window.prompt('Paste an image link (http or https)') || '').trim();
+                    // window.prompt is a silent no-op in Electron — use the
+                    // project's injection-safe async modal; fall back to prompt
+                    // only if it isn't loaded (mirrors other v3 callers' guard).
+                    const ask = (typeof window.uiPrompt === 'function')
+                        ? window.uiPrompt({
+                            title: 'Paste URL',
+                            label: 'Paste an image link (http or https)',
+                            okLabel: 'Set cover',
+                            placeholder: 'https://…',
+                        })
+                        : Promise.resolve(window.prompt('Paste an image link (http or https)'));
+                    const u = String((await ask) || '').trim();
                     if (u) apply('url', u);
                 }
             });
@@ -177,6 +193,9 @@
     // the instant tiles remain — never an error wall.
     function loadCandidates(panel) {
         const fn = _cur.filename;
+        // Reopening without an intervening close() can leave a prior fetch in
+        // flight — cancel it so only the newest request settles the tiles.
+        if (_abort) { try { _abort.abort(); } catch (_) { /* already done */ } }
         _abort = new AbortController();
         fetch('/api/song/' + enc(fn) + '/art/candidates', { signal: _abort.signal })
             .then((r) => (r.ok ? r.json() : null))

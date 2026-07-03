@@ -5916,6 +5916,22 @@ def _caa_release_index(release_id: str) -> dict | None:
         raise EnrichTransportError(f"cover art archive returned non-JSON: {e}") from e
 
 
+# Per-release lock so two concurrent /art/candidates opens for the SAME
+# release serialise their read→fetch→write (the "index cached, no second
+# fetch" invariant). Different releases still fetch in parallel; the guard
+# lock only protects the tiny registry lookup.
+_caa_index_locks: dict[str, threading.Lock] = {}
+_caa_index_locks_guard = threading.Lock()
+
+
+def _caa_index_lock(release_id: str) -> threading.Lock:
+    with _caa_index_locks_guard:
+        lock = _caa_index_locks.get(release_id)
+        if lock is None:
+            lock = _caa_index_locks[release_id] = threading.Lock()
+        return lock
+
+
 def _caa_index_cached(release_id: str) -> list[dict]:
     """A release's CAA index images through a TTL-less on-disk cache
     (`caa_index_{id}.json` beside the cover files — indexes are stable, and
@@ -5927,22 +5943,27 @@ def _caa_index_cached(release_id: str) -> list[dict]:
     if not _CAA_ID_RE.match(str(release_id or "")):
         return []
     cache_file = _enrichment_art_dir() / f"caa_index_{release_id}.json"
-    if cache_file.is_file():
+    # Hold the per-id lock across the check→fetch→write so a concurrent open
+    # for the same release finds the freshly-written cache instead of racing a
+    # second fetch. (The network fetch sleeps in _enrich_throttle under a
+    # different lock — no deadlock; a different release is never blocked.)
+    with _caa_index_lock(str(release_id)):
+        if cache_file.is_file():
+            try:
+                body = json.loads(cache_file.read_text(encoding="utf-8"))
+                imgs = body.get("images") if isinstance(body, dict) else None
+                if isinstance(imgs, list):
+                    return imgs
+            except (OSError, ValueError):
+                pass  # unreadable/corrupt cache → refetch below
+        body = _caa_release_index(release_id)
+        if body is None or not isinstance(body.get("images"), list):
+            body = {"images": []}
         try:
-            body = json.loads(cache_file.read_text(encoding="utf-8"))
-            imgs = body.get("images") if isinstance(body, dict) else None
-            if isinstance(imgs, list):
-                return imgs
-        except (OSError, ValueError):
-            pass  # unreadable/corrupt cache → refetch below
-    body = _caa_release_index(release_id)
-    if body is None or not isinstance(body.get("images"), list):
-        body = {"images": []}
-    try:
-        cache_file.write_text(json.dumps(body), encoding="utf-8")
-    except OSError:
-        pass  # cache is best-effort; the response still serves
-    return body["images"]
+            cache_file.write_text(json.dumps(body), encoding="utf-8")
+        except OSError:
+            pass  # cache is best-effort; the response still serves
+        return body["images"]
 
 
 def _art_safe_name(filename: str) -> str:
@@ -10661,13 +10682,20 @@ def get_song_art_candidates(filename: str):
     # first (it seeds the best candidates), then any distinct release among
     # the stored review candidates (a review row has no mb_release_id of its
     # own — its releases live in the candidates JSON).
+    # Only spend the shared CAA rate budget on rows whose match warrants it:
+    # a matched/manual release seeds the best candidates, and a review row's
+    # stored candidates are still live proposals. A failed/rejected (or
+    # unscanned) row has no accepted match — asking would burn the budget and
+    # surface releases already rejected as non-matches. The Current + Pack
+    # tiles above serve regardless, so those songs still get a picker.
     rids: list[str] = []
-    if row.get("match_state") in ("matched", "manual") and row.get("mb_release_id"):
-        rids.append(str(row["mb_release_id"]))
-    for cand in (row.get("candidates") or []):
-        rid = str(cand.get("release_id") or "") if isinstance(cand, dict) else ""
-        if rid and rid not in rids:
-            rids.append(rid)
+    if row.get("match_state") in ("matched", "manual", "review"):
+        if row.get("match_state") in ("matched", "manual") and row.get("mb_release_id"):
+            rids.append(str(row["mb_release_id"]))
+        for cand in (row.get("candidates") or []):
+            rid = str(cand.get("release_id") or "") if isinstance(cand, dict) else ""
+            if rid and rid not in rids:
+                rids.append(rid)
 
     caa_entries: list[dict] = []
     for rid in rids:

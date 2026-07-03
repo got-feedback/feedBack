@@ -172,6 +172,20 @@ def test_review_row_includes_candidate_releases(server, client, caa_index):
     assert len(_caa(body)) == 3
 
 
+def test_rejected_row_skips_caa_fetch(server, client, caa_index):
+    """A row the user rejected (failed/rejected) has no accepted match, so the
+    picker must not spend the shared CAA budget on its stale candidates. The
+    Current tile still serves; the index seam is never asked."""
+    make_sloppak(server, "a.sloppak")
+    _review_row(server, "a.sloppak", [
+        {"recording_id": "rec-1", "title": "Song", "release_id": "rel-1"}])
+    assert server.meta_db.set_enrichment_rejected("a.sloppak")
+    body = _get(client)
+    assert _caa(body) == []
+    assert caa_index.calls == []
+    assert _current(body)["kind"] == "current"
+
+
 def test_unmatched_instant_tiles_only(server, client, caa_index):
     """No enrichment row at all → current (+ pack when it exists), empty
     caa list, and the index seam is never asked."""
@@ -251,6 +265,31 @@ def test_demo_mode_blocks_candidates(server, client, monkeypatch):
 
 def test_unknown_song_404(server, client):
     assert client.get("/api/song/ghost.sloppak/art/candidates").status_code == 404
+
+
+# ── traversal / injection hardening ───────────────────────────────────────────
+
+def test_malicious_release_id_rejected_no_fetch_no_write(server, caa_index):
+    """A crafted release id (path traversal) never matches _CAA_ID_RE, so it
+    yields no images, opens no socket, and writes no cache file — inside the
+    art dir or anywhere else."""
+    art_dir = server._enrichment_art_dir()
+    before = set(art_dir.glob("*"))
+    assert not server._CAA_ID_RE.match("../../etc/x")
+    assert server._caa_index_cached("../../etc/x") == []
+    assert caa_index.calls == []                       # the seam was never asked
+    assert set(art_dir.glob("*")) == before            # nothing written
+    # And nothing landed at the traversal target beside the cache dir either.
+    assert not (art_dir.parent / "etc").exists()
+
+
+def test_candidates_route_rejects_traversal_filename(server, client, caa_index):
+    """A traversal filename resolves outside DLC_DIR → _resolve_dlc_path
+    refuses it, the route 404s, and the CAA seam is never touched."""
+    for path in ("..%2F..%2Fsecret", "%2e%2e%2f%2e%2e%2fsecret", "../../secret"):
+        r = client.get(f"/api/song/{path}/art/candidates")
+        assert r.status_code == 404, path
+    assert caa_index.calls == []
 
 
 # ── the ?source=pack serve variant ────────────────────────────────────────────

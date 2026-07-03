@@ -338,7 +338,8 @@
 
     // ── Boot ────────────────────────────────────────────────────────────────
     async function boot() {
-        if (window.fbBrand) window.fbBrand.renderWordmark(document.getElementById('v3-brand'), { size: 'text-xl' });
+        var _v3brand = document.getElementById('v3-brand');
+        if (_v3brand) _v3brand.innerHTML = '<img src="/static/v3/brand/feedback-logo-light.png" alt="fee[dB]ack" style="width:100%;height:auto;display:block">';
         renderSidebar();
         renderTopbar();
         ensureBackdrop();

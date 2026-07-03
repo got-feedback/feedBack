@@ -181,3 +181,54 @@ def test_seed_does_not_mark_when_source_missing(tmp_path, server_mod, monkeypatc
 
     assert not (dlc / server_mod._BUILTIN_STARTER_SUBDIR / "missing.feedpak").exists()
     assert not (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).exists()
+
+
+def test_every_starter_source_file_is_present(server_mod):
+    """Every entry in _BUILTIN_STARTER_SOURCES must have its bundled file on
+    disk — otherwise the all-present gate never fires and NOTHING seeds (a
+    listed-but-missing pack silently disables starter seeding entirely). In CI
+    the checkout is clean, so "on disk" == committed."""
+    root = server_mod._feedBack_server_root()
+    missing = [
+        rel for _, rel in server_mod._BUILTIN_STARTER_SOURCES
+        if not (root / rel).is_file()
+    ]
+    assert not missing, f"listed starter sources missing on disk: {missing}"
+
+
+def test_seed_lands_every_listed_starter_pack(tmp_path, server_mod):
+    """A real seed run copies every listed pack into starter/ and marks done."""
+    root = server_mod._feedBack_server_root()
+    for _, rel in server_mod._BUILTIN_STARTER_SOURCES:
+        if not (root / rel).is_file():
+            pytest.skip(f"starter source not present in checkout: {rel}")
+
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    server_mod._seed_builtin_starter_content(dlc)
+
+    for dest_name, _ in server_mod._BUILTIN_STARTER_SOURCES:
+        dest = dlc / server_mod._BUILTIN_STARTER_SUBDIR / dest_name
+        assert dest.is_file(), f"pack not seeded: {dest_name}"
+    assert (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).is_file()
+
+
+def test_no_unlisted_starter_pack_on_disk(server_mod):
+    """The inverse guard: every content/starter/*.feedpak on disk must be wired
+    into _BUILTIN_STARTER_SOURCES. An unlisted pack bundles into builds as dead
+    weight and never seeds — exactly how the raw Ode-to-Joy pack slipped onto
+    main before being wired up. In CI the checkout is clean, so this flags any
+    stray/committed pack that isn't listed."""
+    root = server_mod._feedBack_server_root()
+    listed = {rel for _, rel in server_mod._BUILTIN_STARTER_SOURCES}
+    if not listed:
+        pytest.skip("no starter sources declared")
+    content_dir = (root / next(iter(listed))).parent  # all sources share this dir
+    if not content_dir.is_dir():
+        pytest.skip(f"starter content dir absent: {content_dir}")
+    on_disk = {p.relative_to(root).as_posix() for p in content_dir.glob("*.feedpak")}
+    unlisted = on_disk - listed
+    assert not unlisted, (
+        "committed but not in _BUILTIN_STARTER_SOURCES (would bundle as dead "
+        f"weight and never seed): {sorted(unlisted)}"
+    )

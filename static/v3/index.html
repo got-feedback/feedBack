@@ -785,6 +785,16 @@
                             <span id="enrich-status" class="text-xs text-gray-500"></span>
                         </div>
                     </div>
+                    <!-- Writing to your files (R4a gap-fill + R4b overwrite — wired by static/v3/match-review.js) -->
+                    <div class="fb-srow fb-srow-stack">
+                        <div class="fb-srow-main">
+                            <div class="fb-srow-title">Writing to your files</div>
+                            <div class="fb-srow-desc">"Write missing info to file" in a song's details only ever adds fields the pack is missing. Overwriting additionally lets a match you confirmed replace existing fields — always per-field, never automatic.</div>
+                        </div>
+                        <div class="fb-srow-wide">
+                            <label class="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" id="allow-pack-overwrite" class="rounded border-gray-600 bg-dark-700 text-accent"> Allow overwriting existing pack fields — per-field confirmation, a backup of the original is always kept</label>
+                        </div>
+                    </div>
                     <!-- Backup -->
                     <div class="fb-srow fb-srow-stack">
                         <div class="fb-srow-main">

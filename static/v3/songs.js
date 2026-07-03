@@ -2462,6 +2462,7 @@
             notes: meta.notes || '', tags: (meta.tags || []).slice(),
             fav: !!song.favorite, artDataUrl: null,
             gap: null, gapSel: null,   // gap-fill (R4a): preview state + selected keys
+            owSel: null,               // overwrite (R4b): selected differs keys — default NONE ticked
         };
 
         const overlay = document.createElement('div');
@@ -2488,39 +2489,76 @@
         if (first) { try { first.focus({ preventScroll: true }); const n = first.value.length; first.setSelectionRange(n, n); } catch (_) { /* */ } }
     }
 
-    // Gap-fill (R4a) block inside the drawer's Identity section: preview →
-    // per-key confirm → written. Adds ABSENT keys only; the server re-checks
-    // under its io lock, so this UI can never replace an author-set value.
-    const GAP_KEY_LABELS = { album: 'Album', year: 'Year', genres: 'Genres', mbid: 'MusicBrainz ID', isrc: 'ISRC' };
+    // Gap-fill (R4a) + overwrite (R4b) block inside the drawer's Identity
+    // section: preview → per-key confirm → written. Gap-fill adds ABSENT keys
+    // only (defaults all ticked); overwrite (`differs`) REPLACES author-set
+    // values — gated by the Settings allow_pack_overwrite toggle + a manual
+    // (user-pinned) match, and its rows default UNTICKED (the per-field
+    // checkbox IS the are-you-sure). The server re-checks everything under
+    // its io lock, so this UI can never write a value the server wouldn't.
+    const GAP_KEY_LABELS = { title: 'Title', artist: 'Artist', album: 'Album', year: 'Year', genres: 'Genres', mbid: 'MusicBrainz ID', isrc: 'ISRC' };
     function gapFillHtml(st) {
         const g = st.gap;
         if (!g) return '<button data-gapfill-check class="text-xs text-fb-textDim hover:text-fb-text">Write missing info to file…</button>';
         if (g.loading) return '<div class="text-xs text-fb-textDim">Checking the file…</div>';
-        if (g.written) {
-            const names = Object.keys(g.written).map((k) => GAP_KEY_LABELS[k] || k).join(', ');
-            return '<div class="text-xs text-fb-text">✓ Added to file: ' + esc(names) + '</div>';
+        // Small revert affordance whenever a pristine-original backup exists.
+        const revertLink = g.has_backup
+            ? '<div><button data-gapfill-revert class="text-[0.6875rem] text-fb-textDim hover:text-fb-text underline decoration-dotted">Revert file to original…</button></div>'
+            : '';
+        if (g.written || g.overwritten) {
+            const names = (obj) => Object.keys(obj || {}).map((k) => GAP_KEY_LABELS[k] || k).join(', ');
+            const added = names(g.written), replaced = names(g.overwritten);
+            return '<div class="space-y-1">' +
+                (added ? '<div class="text-xs text-fb-text">✓ Added to file: ' + esc(added) + '</div>' : '') +
+                (replaced ? '<div class="text-xs text-fb-text">✓ Replaced in file: ' + esc(replaced) + '</div>' : '') +
+                revertLink + '</div>';
         }
-        if (!g.eligible) {
+        const missing = g.missing || [], differs = g.differs || [];
+        const lockedLine = (differs.length && !g.overwrite_allowed)
+            ? '<div class="text-[0.6875rem] text-fb-textDim">' + differs.length +
+              (differs.length === 1 ? ' field differs' : ' fields differ') +
+              ' from the matched data — enable overwriting in Settings to change them.</div>'
+            : '';
+        const canOverwrite = differs.length && g.overwrite_allowed;
+        if (!missing.length && !canOverwrite) {
             const why = {
                 'not-sloppak': 'Only feedpak songs can be written to.',
                 'no-match': 'No confirmed match yet — nothing verified to write.',
                 'review': 'This song’s match is waiting for review — confirm it first.',
                 'nothing-missing': 'Nothing missing — the file already has all of this.',
             }[g.reason] || 'Could not check the file. Try again.';
-            return '<div class="text-xs text-fb-textDim">' + esc(why) + '</div>';
+            return '<div class="space-y-1"><div class="text-xs text-fb-textDim">' + esc(why) + '</div>' + lockedLine + revertLink + '</div>';
         }
-        const rows = (g.missing || []).map((m) => {
+        const rows = missing.map((m) => {
             const val = Array.isArray(m.value) ? m.value.join(', ') : String(m.value);
             return '<label class="flex items-center gap-2 text-sm text-fb-text">' +
                 '<input type="checkbox" data-gapfill-key="' + esc(m.key) + '"' + (st.gapSel && st.gapSel.has(m.key) ? ' checked' : '') + '>' +
                 '<span class="text-fb-textDim shrink-0">' + esc(GAP_KEY_LABELS[m.key] || m.key) + '</span>' +
                 '<span class="truncate" title="' + esc(val) + '">' + esc(val) + '</span></label>';
         }).join('');
+        const owVal = (v) => Array.isArray(v) ? v.join(', ') : String(v);
+        const owRows = canOverwrite ? differs.map((d) => {
+            const cur = owVal(d.current), nxt = owVal(d.proposed);
+            const pair = '“' + cur + '” → “' + nxt + '”';
+            return '<label class="flex items-center gap-2 text-sm text-fb-text">' +
+                '<input type="checkbox" data-ow-key="' + esc(d.key) + '"' + (st.owSel && st.owSel.has(d.key) ? ' checked' : '') + '>' +
+                '<span class="text-fb-textDim shrink-0">' + esc(GAP_KEY_LABELS[d.key] || d.key) + '</span>' +
+                '<span class="truncate" title="' + esc(pair) + '">' + esc(pair) + '</span></label>';
+        }).join('') : '';
         return '<div class="space-y-2">' +
-            '<div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Write to file</div>' + rows +
-            '<div class="text-[0.6875rem] text-fb-textDim">Only adds what’s missing — nothing already in the file is changed. A backup (.bak) is kept beside the file.</div>' +
+            (missing.length
+                ? '<div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Write to file</div>' + rows +
+                  '<div class="text-[0.6875rem] text-fb-textDim">Only adds what’s missing — nothing already in the file is changed. A backup (.bak) is kept beside the file.</div>'
+                : '') +
+            (owRows
+                ? '<div class="pt-2 border-t border-fb-border/40 space-y-2">' +
+                  '<div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Overwrite existing fields</div>' + owRows +
+                  '<div class="text-[0.6875rem] text-yellow-500/90">Replaces what the pack author wrote. The original file is kept as a backup.</div></div>'
+                : '') +
+            lockedLine +
             '<div class="flex gap-2"><button data-gapfill-write class="bg-fb-primary hover:bg-fb-primaryHi text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Write to file</button>' +
-            '<button data-gapfill-cancel class="px-3 py-1.5 bg-fb-card/60 hover:bg-fb-card border border-fb-border/50 rounded-lg text-xs text-fb-text">Cancel</button></div></div>';
+            '<button data-gapfill-cancel class="px-3 py-1.5 bg-fb-card/60 hover:bg-fb-card border border-fb-border/50 rounded-lg text-xs text-fb-text">Cancel</button></div>' +
+            revertLink + '</div>';
     }
 
     function detailsHtml(song, st, vocab) {
@@ -2624,15 +2662,17 @@
         $('[data-det-save]')?.addEventListener('click', () => saveDetails(song, st));
         $('[data-det-remove]')?.addEventListener('click', () => removeFromLibrary(song));
 
-        // Gap-fill (R4a): user-initiated write of CONFIRMED missing info into
-        // the pack file. The server recomputes proposals under its io lock, so
-        // a key that gained an author value since the preview is skipped.
+        // Gap-fill (R4a) + overwrite (R4b): user-initiated write of CONFIRMED
+        // info into the pack file. The server recomputes proposals under its
+        // io lock, so a key that gained an author value since the preview is
+        // skipped, and an overwrite that lost eligibility is never written.
         $('[data-gapfill-check]')?.addEventListener('click', async () => {
             st.gap = { loading: true }; render();
             let d = null;
             try { const r = await fetch('/api/song/' + enc(song.filename) + '/gap-fill'); if (r.ok) d = await r.json(); } catch (_) { /* offline */ }
             st.gap = d || { eligible: false, reason: 'error' };
             st.gapSel = new Set(((d && d.missing) || []).map((m) => m.key));
+            st.owSel = new Set();   // overwrite rows start UNTICKED — always
             render();
         });
         drawer.querySelectorAll('[data-gapfill-key]').forEach((cb) => cb.addEventListener('change', () => {
@@ -2640,13 +2680,21 @@
             if (!st.gapSel) st.gapSel = new Set();
             if (cb.checked) st.gapSel.add(k); else st.gapSel.delete(k);
         }));
+        drawer.querySelectorAll('[data-ow-key]').forEach((cb) => cb.addEventListener('change', () => {
+            const k = cb.getAttribute('data-ow-key');
+            if (!st.owSel) st.owSel = new Set();
+            if (cb.checked) st.owSel.add(k); else st.owSel.delete(k);
+        }));
         $('[data-gapfill-cancel]')?.addEventListener('click', () => { st.gap = null; render(); });
         $('[data-gapfill-write]')?.addEventListener('click', async () => {
             const keys = st.gapSel ? Array.from(st.gapSel) : [];
-            if (!keys.length) return;
+            const owKeys = st.owSel ? Array.from(st.owSel) : [];
+            if (!keys.length && !owKeys.length) return;
+            const body = { keys };
+            if (owKeys.length) body.overwrite_keys = owKeys;
             let d = null, ok = false;
             try {
-                const r = await fetch('/api/song/' + enc(song.filename) + '/gap-fill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys }) });
+                const r = await fetch('/api/song/' + enc(song.filename) + '/gap-fill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 ok = r.ok; d = await r.json();
             } catch (_) { /* offline */ }
             if (!ok || !d || !d.written) {
@@ -2658,7 +2706,48 @@
             // the grid quietly.
             if (d.written.album != null) { st.al = String(d.written.album); song.album = st.al; }
             if (d.written.year != null) { st.y = String(d.written.year); song.year = d.written.year; }
-            st.gap = { written: d.written }; render();
+            const ow = d.overwritten || {};
+            if (ow.title) { st.t = String(ow.title.new); song.title = st.t; }
+            if (ow.artist) { st.a = String(ow.artist.new); song.artist = st.a; }
+            if (ow.album) { st.al = String(ow.album.new); song.album = st.al; }
+            if (ow.year) { st.y = String(ow.year.new); song.year = ow.year.new; }
+            // A write always leaves a backup behind → keep the revert link.
+            st.gap = { written: d.written, overwritten: (Object.keys(ow).length ? ow : null), has_backup: true };
+            render();
+            try { reload(); } catch (_) { /* not on the songs grid */ }
+        });
+        // Revert (R4b): restore the pack file from its pristine-original
+        // backup. Confirmed like removeFromLibrary; the .bak is preserved.
+        $('[data-gapfill-revert]')?.addEventListener('click', async () => {
+            const title = song.title || song.filename;
+            let sure;
+            if (window._confirmDialog) {
+                sure = await window._confirmDialog({
+                    title: 'Revert file to original?',
+                    body: '<p class="text-sm text-gray-300">Restore <span class="font-semibold text-white">' + esc(title) + '</span>&#39;s file to what the pack author originally wrote? Everything written to the file since (added and overwritten fields) is undone.</p>' +
+                        '<p class="text-xs text-gray-500 mt-2">The backup is kept, so you can write the matched data again later.</p>',
+                    confirmText: 'Revert', cancelText: 'Cancel', danger: true,
+                });
+            } else { sure = window.confirm('Revert "' + title + '" to the pack author\'s original file?'); }
+            if (!sure) return;
+            let ok = false;
+            try { const r = await fetch('/api/song/' + enc(song.filename) + '/revert-original', { method: 'POST' }); ok = r.ok; } catch (_) { /* offline */ }
+            if (!ok) {
+                if (window.fbNotify) { try { window.fbNotify.show({ title: 'Revert failed', message: 'Could not restore the original file. Please try again.', icon: '⚠️', accent: '#EF4444' }); } catch (e) { /* */ } }
+                return;
+            }
+            // Refresh the drawer from the restored file, then the grid.
+            try {
+                const r = await fetch('/api/song/' + enc(song.filename));
+                if (r.ok) {
+                    const m = await r.json();
+                    song.title = m.title || ''; song.artist = m.artist || '';
+                    song.album = m.album || ''; song.year = m.year;
+                    st.t = song.title; st.a = song.artist; st.al = song.album;
+                    st.y = (m.year != null && m.year !== '') ? String(m.year) : '';
+                }
+            } catch (_) { /* keep the stale fields; reload() below still runs */ }
+            st.gap = null; st.gapSel = null; st.owSel = null; render();
             try { reload(); } catch (_) { /* not on the songs grid */ }
         });
     }

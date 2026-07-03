@@ -8,6 +8,7 @@ No network anywhere: matches are seeded straight into the enrichment cache
 
 import importlib
 import sys
+import time
 import zipfile
 
 import pytest
@@ -27,6 +28,16 @@ def server(tmp_path, monkeypatch, isolate_logging):
     try:
         yield srv
     finally:
+        # A write endpoint kicks a background scan (which then kicks the
+        # enrichment worker); both daemon threads share meta_db's sqlite
+        # connection. Drain them before closing it — closing mid-scan
+        # crashes the thread with an access violation on Windows. Network
+        # is off (FEEDBACK_SKIP_STARTUP_TASKS), so both drain in ms.
+        deadline = time.time() + 10
+        while time.time() < deadline and (
+                srv._scan_status.get("running")
+                or srv._enrich_status.get("running")):
+            time.sleep(0.05)
         conn = getattr(getattr(srv, "meta_db", None), "conn", None)
         if conn is not None:
             conn.close()

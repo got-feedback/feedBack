@@ -246,6 +246,8 @@ _DEMO_BLOCKED: list[tuple[str, re.Pattern]] = [
     ("GET",    re.compile(r"^/api/chart/.+/fileinfo$")),
     # Gap-fill (R4a) rewrites pack files on disk — never for demo visitors.
     ("POST",   re.compile(r"^/api/song/.+/gap-fill$")),
+    # Overwrite (R4b): revert-original rewrites the pack file from its backup.
+    ("POST",   re.compile(r"^/api/song/.+/revert-original$")),
     # Art layer (R3): all three mutate server state / touch the network on a
     # visitor's behalf — the base64 upload writes files, the URL fetch makes the
     # server request arbitrary images, and the override delete removes files.
@@ -910,6 +912,25 @@ class MetadataDB:
                 self.conn.execute(ddl)
             except sqlite3.OperationalError:
                 pass
+        # Write-back provenance (R4b): one row per key actually written into a
+        # pack file — gap-fill additions (old_value NULL) and overwrite
+        # replacements alike — with the match source/score that authorized the
+        # value. Local receipts until the spec's provenance FEP gives an
+        # in-file shape. Capped at _WRITE_LOG_MAX rows (oldest pruned on
+        # insert) so the ledger can't grow unbounded. Additive + idempotent.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS write_log (
+                id INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL,
+                key TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                source TEXT,
+                score REAL,
+                ts REAL
+            )
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_write_log_filename ON write_log(filename)")
         # Progression (spec 010): instrument paths, challenges, quests, the
         # Decibels wallet, and the cosmetics shop. Targets/titles live in the
         # bundled content (data/progression/); these tables hold only player
@@ -2764,6 +2785,53 @@ class MetadataDB:
             except (ValueError, TypeError):
                 out[k] = []
         return out
+
+    # ── Write-back provenance (R4b) ──────────────────────────────────────────
+
+    _WRITE_LOG_MAX = 5000
+
+    @staticmethod
+    def _write_log_text(value):
+        """Normalize a logged value to TEXT: None stays NULL (a gap-filled key
+        had no old value), lists keep JSON shape, everything else str()s."""
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)):
+            return json.dumps(list(value), ensure_ascii=False)
+        return str(value)
+
+    def add_write_log(self, filename: str, entries, source=None, score=None):
+        """Record file write-backs: one row per (key, old, new) entry, all
+        stamped with the source/score of the match that authorized the values.
+        Prunes the oldest rows beyond _WRITE_LOG_MAX after the insert so the
+        receipts table stays bounded."""
+        now = time.time()
+        rows = [(filename, k, self._write_log_text(old), self._write_log_text(new),
+                 source, score, now) for k, old, new in entries]
+        if not rows:
+            return
+        with self._lock:
+            self.conn.executemany(
+                "INSERT INTO write_log (filename, key, old_value, new_value, source, score, ts) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            # Keep the newest _WRITE_LOG_MAX rows. The subquery yields the id
+            # just below the cut (NULL while under the cap → no-op delete).
+            self.conn.execute(
+                "DELETE FROM write_log WHERE id <= ("
+                "SELECT id FROM write_log ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                (self._WRITE_LOG_MAX,))
+            self.conn.commit()
+
+    def write_log_rows(self, filename: str, limit: int = 200) -> list[dict]:
+        """One song's write-back receipts, newest first (id order — ts has
+        second granularity, so same-request rows would tie on it)."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id, key, old_value, new_value, source, score, ts "
+                "FROM write_log WHERE filename = ? ORDER BY id DESC LIMIT ?",
+                (filename, max(1, int(limit)))).fetchall()
+        return [dict(zip(("id", "key", "old_value", "new_value", "source", "score", "ts"), r))
+                for r in rows]
 
     def enrichment_state_counts(self) -> dict:
         """{match_state: count} over rows whose song still exists (dead rows are
@@ -9073,6 +9141,13 @@ def _default_settings():
         # surface first (they gain the most), artist = A–Z, recent = newest
         # files first.
         "enrich_review_order": "missing_first",
+        # Overwrite (R4b). Whether the gap-fill endpoint may also REPLACE
+        # author-set pack fields with a user-confirmed (pinned) match's values
+        # — per-field confirmation in the drawer, a .bak of the original is
+        # always kept, receipts land in write_log. Default OFF: without
+        # opting in, writes to your files stay adds-absent-keys-only (the
+        # §7 contract).
+        "allow_pack_overwrite": False,
     }
 
 
@@ -9243,9 +9318,12 @@ def save_settings(data: dict):
             if not math.isfinite(t) or not (0.5 <= t <= 1.01):
                 return {"error": "enrich_auto_threshold must be a number between 0.5 and 1.01"}
             updates["enrich_auto_threshold"] = t
+    # allow_pack_overwrite (R4b) shares the plain-boolean shape; unlike the
+    # enrich toggles its default is OFF (see _default_settings).
     for _bool_key in ("enrich_src_musicbrainz", "enrich_src_caa",
                       "enrich_apply_names", "enrich_apply_year",
-                      "enrich_apply_genres", "enrich_apply_art"):
+                      "enrich_apply_genres", "enrich_apply_art",
+                      "allow_pack_overwrite"):
         if _bool_key in data:
             raw = data[_bool_key]
             if raw is not None:
@@ -10675,6 +10753,79 @@ def _gap_fill_proposals(cache_key: str, resolved) -> tuple[dict, str]:
     return out, ("" if out else "nothing-missing")
 
 
+# ── Overwrite (R4b): replace author-set fields with the confirmed match ───────
+# The §7-AMENDMENT shape (draft, pending the spec chair's ack — ships as a
+# DRAFT PR): still user-initiated + single-song, per-field with default-off
+# confirmation, values only from a match the user EXPLICITLY confirmed
+# (`manual` — an automatic match may gap-fill absent keys but is never
+# authority to destroy author bytes), gated by the default-off
+# allow_pack_overwrite setting, receipts in write_log, .bak = the pristine
+# author original + a visible Revert. Identity keys (mbid/isrc) are
+# deliberately NOT overwritable: they change only via explicit manual
+# re-match. Chart/practice fields never appear here at all.
+_OVERWRITE_KEYS = ("title", "artist", "album", "year", "genres")
+
+
+def _overwrite_proposals(cache_key: str, resolved) -> list[dict]:
+    """What overwrite could REPLACE for this song: allowlisted keys where the
+    manifest carries an author-set value AND the user-confirmed match supplies
+    a DIFFERENT one — [{key, current, proposed}] in _OVERWRITE_KEYS order.
+
+    Empty unless match_state == 'manual' (the librarian rule above).
+    Present-but-empty values ('' / year 0 / []) are not author values — those
+    stay the metadata editor's job, exactly as append-only gap-fill skips
+    them."""
+    if resolved is None or not resolved.exists() or not sloppak_mod.is_sloppak(resolved):
+        return []
+    row = meta_db.get_enrichment(cache_key)
+    if not row or row.get("match_state") != "manual":
+        return []
+    try:
+        manifest = sloppak_mod.load_manifest(resolved) or {}
+    except Exception:
+        return []
+    out = []
+    for key, canon in (("title", "canon_title"), ("artist", "canon_artist"),
+                       ("album", "canon_album")):
+        proposed = (row.get(canon) or "").strip()
+        cur = manifest.get(key)
+        cur_s = str(cur).strip() if cur is not None else ""
+        if proposed and cur_s and cur_s != proposed:
+            out.append({"key": key, "current": cur_s, "proposed": proposed})
+    year = (row.get("canon_year") or "").strip()
+    cur = manifest.get("year")
+    cur_s = str(cur).strip() if cur is not None else ""
+    if (year.isdigit() and int(year) and cur_s and cur_s != "0"
+            and cur_s != str(int(year))):
+        out.append({"key": "year", "current": cur_s, "proposed": int(year)})
+    genres = [str(g) for g in (row.get("genres") or []) if isinstance(g, str) and g.strip()]
+    cur = manifest.get("genres")
+    if isinstance(cur, (list, tuple)):
+        cur_list = [str(g).strip() for g in cur if str(g).strip()]
+    else:
+        cur_list = [str(cur).strip()] if cur is not None and str(cur).strip() else []
+    if genres and cur_list and cur_list != genres:
+        out.append({"key": "genres", "current": cur_list, "proposed": genres})
+    return out
+
+
+def _song_backup_path(resolved) -> Path | None:
+    """The pack's pristine-original backup, if one exists: dir-form packs back
+    up the manifest (`manifest.yaml.bak`, written once by the first metadata
+    write), zip-form packs back up the whole file (`<name>.bak`). None when
+    the pack has never been written to (nothing to revert)."""
+    if resolved is None or not resolved.exists():
+        return None
+    if resolved.is_dir():
+        for name in ("manifest.yaml.bak", "manifest.yml.bak"):
+            b = resolved / name
+            if b.exists():
+                return b
+        return None
+    b = resolved.with_name(resolved.name + ".bak")
+    return b if b.exists() else None
+
+
 @app.get("/api/song/{filename:path}/gap-fill")
 def get_song_gap_fill(filename: str):
     """Preview what "Write missing info to file" would add — the Details
@@ -10691,11 +10842,18 @@ def get_song_gap_fill(filename: str):
             pass
     proposals, reason = _gap_fill_proposals(cache_key, resolved)
     row = meta_db.get_enrichment(cache_key) or {}
+    cfg = _load_config(CONFIG_DIR / "config.json") or _default_settings()
     return {
         "eligible": bool(proposals),
         "reason": reason,
         "match_state": row.get("match_state"),
         "missing": [{"key": k, "value": v} for k, v in proposals.items()],
+        # Overwrite (R4b): what a user-confirmed match could REPLACE, and
+        # whether the Settings gate currently allows it. has_backup drives
+        # the drawer's "Revert file to original…" affordance.
+        "differs": _overwrite_proposals(cache_key, resolved),
+        "overwrite_allowed": cfg.get("allow_pack_overwrite") is True,
+        "has_backup": _song_backup_path(resolved) is not None,
     }
 
 
@@ -10703,14 +10861,36 @@ def get_song_gap_fill(filename: str):
 def post_song_gap_fill(filename: str, data: dict):
     """Write the user-confirmed subset of the preview into the pack file.
     Proposals are recomputed under the io lock, so a key that gained an
-    author value between preview and confirm is skipped, never replaced."""
-    keys = (data or {}).get("keys")
-    if not isinstance(keys, list) or not keys:
-        return JSONResponse({"error": "keys must be a non-empty list"}, 400)
+    author value between preview and confirm is skipped, never replaced.
+
+    `keys` (gap-fill: add absent keys) and `overwrite_keys` (R4b: replace an
+    author-set value with the confirmed match's) may arrive together —
+    additions append first (author bytes preserved), replacements then
+    re-serialize. Overwrites are triple-gated: the default-off
+    allow_pack_overwrite setting, `manual` match state (recomputed under the
+    lock via _overwrite_proposals), and the _OVERWRITE_KEYS allowlist. Every
+    key actually written lands in the write_log receipts table."""
+    keys = (data or {}).get("keys") or []
+    ow_keys = (data or {}).get("overwrite_keys") or []
+    if not isinstance(keys, list) or not isinstance(ow_keys, list) or not (keys or ow_keys):
+        return JSONResponse(
+            {"error": "keys and/or overwrite_keys must be a non-empty list"}, 400)
     bad = [k for k in keys if k not in _GAP_FILL_KEYS]
     if bad:
         return JSONResponse(
             {"error": "unknown key(s): " + ", ".join(sorted(set(map(str, bad))))}, 400)
+    bad = [k for k in ow_keys if k not in _OVERWRITE_KEYS]
+    if bad:
+        return JSONResponse(
+            {"error": "unknown overwrite key(s): " + ", ".join(sorted(set(map(str, bad))))}, 400)
+    if ow_keys:
+        # The Settings gate refuses the WHOLE request (nothing partial): the
+        # user explicitly asked to overwrite, so failing loudly beats silently
+        # writing only the gap-fill half.
+        cfg = _load_config(CONFIG_DIR / "config.json") or _default_settings()
+        if cfg.get("allow_pack_overwrite") is not True:
+            return JSONResponse(
+                {"error": "overwriting pack fields is disabled — enable it in Settings"}, 409)
 
     dlc = _get_dlc_dir()
     cache_key, resolved = filename, None
@@ -10726,20 +10906,36 @@ def post_song_gap_fill(filename: str, data: dict):
     with _song_io_lock:
         proposals, reason = _gap_fill_proposals(cache_key, resolved)
         additions = {k: proposals[k] for k in _GAP_FILL_KEYS if k in keys and k in proposals}
-        skipped = sorted(set(keys) - set(additions))
-        if not additions:
+        # Overwrites recomputed under the lock too: a row that lost its manual
+        # pin, or a manifest edit that erased the difference, falls out here
+        # and is reported skipped — never written.
+        diff_map = ({d["key"]: d for d in _overwrite_proposals(cache_key, resolved)}
+                    if ow_keys else {})
+        replace = {k: diff_map[k] for k in _OVERWRITE_KEYS if k in ow_keys and k in diff_map}
+        skipped = sorted((set(keys) - set(additions)) | (set(ow_keys) - set(replace)))
+        if not additions and not replace:
             return JSONResponse({"error": "nothing to write", "reason": reason,
                                  "skipped": skipped}, 409)
         try:
             import songmeta
-            songmeta.gap_fill_sloppak(resolved, additions)
+            # Order matters: append the absent keys FIRST (gap-fill preserves
+            # the author's existing bytes), then re-serialize for the
+            # replacements — write_sloppak_metadata re-reads the manifest, so
+            # it keeps the just-appended keys. Both writers share the
+            # .bak-once contract, so whichever runs first snapshots the
+            # pristine original.
+            if additions:
+                songmeta.gap_fill_sloppak(resolved, additions)
+            if replace:
+                songmeta.write_sloppak_metadata(
+                    resolved, {k: d["proposed"] for k, d in replace.items()})
         except Exception:
             log.warning("gap-fill write failed for %s", cache_key, exc_info=True)
             return JSONResponse({"error": "write failed"}, 500)
 
         # Keep the cache row consistent with what the scanner would now derive
         # (same contract as the metadata editor above): sync the columns the
-        # scan reads from the keys we appended, then re-stat so the row stays
+        # scan reads from the keys we wrote, then re-stat so the row stays
         # cache-fresh.
         fields = {}
         if "album" in additions:
@@ -10748,6 +10944,13 @@ def post_song_gap_fill(filename: str, data: dict):
             fields["year"] = str(additions["year"])
         if "genres" in additions:
             fields["genre"] = additions["genres"][0]
+        for k, d in replace.items():
+            if k == "genres":
+                fields["genre"] = d["proposed"][0]
+            elif k == "year":
+                fields["year"] = str(d["proposed"])
+            else:                       # title / artist / album
+                fields[k] = d["proposed"]
         with meta_db._lock:
             updates = [f"{field} = ?" for field in fields]
             params = list(fields.values())
@@ -10763,9 +10966,103 @@ def post_song_gap_fill(filename: str, data: dict):
                     f"UPDATE songs SET {', '.join(updates)} WHERE filename = ?", params)
                 meta_db.conn.commit()
 
+        # Receipts (R4b): one row per key actually written — gap-fills carry
+        # no old value, overwrites carry old + new. Source/score identify the
+        # match that authorized the values.
+        row = meta_db.get_enrichment(cache_key) or {}
+        meta_db.add_write_log(
+            cache_key,
+            [(k, None, v) for k, v in additions.items()]
+            + [(k, d["current"], d["proposed"]) for k, d in replace.items()],
+            source=row.get("match_source"), score=row.get("match_score"))
+
     _invalidate_song_caches(cache_key)
     _kick_scan()
-    return {"ok": True, "written": additions, "skipped": skipped}
+    out = {"ok": True, "written": additions, "skipped": skipped}
+    if ow_keys:
+        # Only present when overwriting was requested, so pre-R4b consumers
+        # (and their exact-shape tests) see the unchanged response.
+        out["overwritten"] = {k: {"old": d["current"], "new": d["proposed"]}
+                              for k, d in replace.items()}
+    return out
+
+
+@app.get("/api/song/{filename:path}/write-log")
+def get_song_write_log(filename: str):
+    """This song's write-back receipts (R4b provenance), newest first —
+    read-only. The local ledger of every key gap-fill/overwrite wrote into
+    the pack file, until the spec's provenance FEP gives an in-file shape."""
+    dlc = _get_dlc_dir()
+    cache_key = filename
+    if dlc:
+        resolved = _resolve_dlc_path(dlc, filename)
+        if resolved is None:
+            return JSONResponse({"error": "forbidden"}, 403)
+        try:
+            cache_key = resolved.relative_to(dlc.resolve()).as_posix()
+        except ValueError:
+            pass
+    return {"rows": meta_db.write_log_rows(cache_key)}
+
+
+@app.post("/api/song/{filename:path}/revert-original")
+def post_song_revert_original(filename: str):
+    """Restore the pack file from its backup — the pristine author original
+    that the FIRST metadata write snapshotted (dir form: manifest.yaml.bak →
+    manifest.yaml; zip form: the whole-file .bak → the file). The backup
+    itself is PRESERVED after the revert (the user may re-apply later).
+    Refuses with 404 when no backup exists. Demo-blocked (middleware)."""
+    dlc = _get_dlc_dir()
+    cache_key, resolved = filename, None
+    if dlc:
+        resolved = _resolve_dlc_path(dlc, filename)
+        if resolved is None:
+            return JSONResponse({"error": "forbidden"}, 403)
+        try:
+            cache_key = resolved.relative_to(dlc.resolve()).as_posix()
+        except ValueError:
+            pass
+
+    # Confine revert to actual song packages, mirroring the write path's guard
+    # (_gap_fill_proposals / _overwrite_proposals both refuse non-sloppak
+    # targets). Without this, a non-package path under DLC_DIR that happens to
+    # have a sibling `.bak` (or a plain directory carrying a manifest.yaml.bak)
+    # would get its backup copied over it and the DB re-synced — mutating a file
+    # this feature was never meant to touch. Same 404 the art/source endpoints
+    # return for a non-sloppak target.
+    if resolved is None or not resolved.exists() or not sloppak_mod.is_sloppak(resolved):
+        return JSONResponse({"error": "not found"}, 404)
+
+    with _song_io_lock:
+        bak = _song_backup_path(resolved)
+        if bak is None:
+            return JSONResponse({"error": "no backup to revert to"}, 404)
+        try:
+            # Copy (never move) + temp + atomic replace: the .bak survives.
+            if resolved.is_dir():
+                target = resolved / bak.name[: -len(".bak")]
+            else:
+                target = resolved
+            tmp = target.with_name(target.name + ".tmp")
+            shutil.copy2(bak, tmp)
+            tmp.replace(target)
+        except Exception:
+            log.warning("revert-original failed for %s", cache_key, exc_info=True)
+            return JSONResponse({"error": "revert failed"}, 500)
+
+        # The file's identity may have changed wholesale — re-extract and
+        # re-stat so the DB row matches what the scanner would now derive
+        # (the full-row mirror of the metadata editor's column sync).
+        try:
+            meta = _extract_meta_for_file(resolved, _get_dlc_dir)
+            mtime, size = _stat_for_cache(resolved)
+            meta_db.put(cache_key, mtime, size, meta)
+        except Exception:
+            log.warning("revert-original DB resync failed for %s", cache_key, exc_info=True)
+
+    _invalidate_song_caches(cache_key)
+    _kick_scan()
+    return {"ok": True}
 
 
 def _save_art_override(filename: str, img_data: bytes) -> dict:

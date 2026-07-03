@@ -406,7 +406,7 @@
         const btn = document.getElementById('enrich-match-now');
         // Boolean toggles, element id → settings key. enrich-enabled is the
         // master background switch; the rest are the R1 scraper options
-        // (per-source + per-field auto-apply).
+        // (per-source + per-field auto-apply) plus the R4b overwrite gate.
         const toggles = [
             ['enrich-enabled', 'enrich_enabled'],
             ['enrich-src-musicbrainz', 'enrich_src_musicbrainz'],
@@ -415,6 +415,9 @@
             ['enrich-apply-year', 'enrich_apply_year'],
             ['enrich-apply-genres', 'enrich_apply_genres'],
             ['enrich-apply-art', 'enrich_apply_art'],
+            // R4b pack-overwrite gate — the one DEFAULT-OFF key in this list
+            // (see the load logic below).
+            ['allow-pack-overwrite', 'allow_pack_overwrite'],
         ].map(([id, key]) => [document.getElementById(id), key]).filter(([el]) => el);
         if (!toggles.length && !sel && !btn) return;
         (async () => {
@@ -422,7 +425,11 @@
                 const r = await fetch('/api/settings');
                 if (r.ok) {
                     const cfg = await r.json();
-                    for (const [el, key] of toggles) el.checked = cfg[key] !== false;
+                    // The enrich keys default ON (absent → checked); the
+                    // overwrite gate defaults OFF (only an explicit true ticks it).
+                    for (const [el, key] of toggles) {
+                        el.checked = key === 'allow_pack_overwrite' ? cfg[key] === true : cfg[key] !== false;
+                    }
                     if (sel) {
                         const t = Number(cfg.enrich_auto_threshold);
                         const want = Number.isFinite(t) ? t : 0.9;

@@ -49,6 +49,15 @@ def _apply_to_sloppak_manifest(manifest: dict, fields: dict) -> bool:
     if "year" in fields:
         manifest["year"] = _coerce_year(fields["year"])
         dirty = True
+    # `genres` is the feedpak list field (spec 1.12.0). Accepts a list/tuple
+    # (stringified item-wise) or a single name (wrapped); None leaves the
+    # existing value alone, mirroring the string fields above. Sent by the
+    # overwrite lane (R4b) — the manual Edit Metadata path never includes it.
+    if fields.get("genres") is not None:
+        raw = fields["genres"]
+        manifest["genres"] = ([str(g) for g in raw]
+                              if isinstance(raw, (list, tuple)) else [str(raw)])
+        dirty = True
     # Opportunistically declare the format version (spec §4) when we're already
     # rewriting because a metadata field was supplied. Gated on `dirty` (i.e. a
     # field was given) so this never forces a *standalone* rewrite with no fields
@@ -102,7 +111,16 @@ def write_sloppak_metadata(path: Path, fields: dict) -> bool:
         mf = path / "manifest.yaml"
         if not mf.exists() and (path / "manifest.yml").exists():
             mf = path / "manifest.yml"
-        mf.write_text(dumped, encoding="utf-8")
+        # One-time backup + temp + atomic replace, exactly like the zip
+        # rewriter and gap_fill_sloppak's dir branch: the FIRST backup is the
+        # pristine author original and is never clobbered by a later write —
+        # it's what "Revert file to original" (R4b) restores.
+        backup = mf.with_name(mf.name + ".bak")
+        if mf.exists() and not backup.exists():
+            shutil.copy2(mf, backup)
+        tmp = mf.with_name(mf.name + ".tmp")
+        tmp.write_text(dumped, encoding="utf-8")
+        tmp.replace(mf)
         return True
     return _rewrite_zip_manifest(path, dumped)
 

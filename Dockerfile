@@ -47,11 +47,11 @@ RUN cmake -S /tmp/vgmstream -B /tmp/vgmstream/build \
 # and update FFMPEG_RELEASE + both SHA256 ARGs below.
 FROM alpine:3.20 AS ffmpeg-fetcher
 ARG TARGETARCH
-ARG FFMPEG_RELEASE=autobuild-2026-06-19-23-17
-ARG FFMPEG_BUILD_AMD64=ffmpeg-n7.1.4-145-g4cbf7a4b3d-linux64-gpl-7.1.tar.xz
-ARG FFMPEG_BUILD_ARM64=ffmpeg-n7.1.4-145-g4cbf7a4b3d-linuxarm64-gpl-7.1.tar.xz
-ARG FFMPEG_SHA256_AMD64=03c0431e0d1aa75cc343d83bda9d2d4cd8eaa37f35b7b93465e9ff6864f5d7f8
-ARG FFMPEG_SHA256_ARM64=74629b88342fd94eea12b7481c8b8560ca6d497744123c0a27b98f39d767fd93
+ARG FFMPEG_RELEASE=autobuild-2026-07-03-13-21
+ARG FFMPEG_BUILD_AMD64=ffmpeg-n7.1.5-1-g7d0e842004-linux64-gpl-7.1.tar.xz
+ARG FFMPEG_BUILD_ARM64=ffmpeg-n7.1.5-1-g7d0e842004-linuxarm64-gpl-7.1.tar.xz
+ARG FFMPEG_SHA256_AMD64=1390e1c320a1e38dae106d6d0b05a6f08eb8b30f732bc1aa0d45a4aa17f13795
+ARG FFMPEG_SHA256_ARM64=53b2e30df04d56932b7782234c9bc97abfe0bb242192ca50346474a41b100ab0
 RUN apk add --no-cache curl xz \
     && arch="${TARGETARCH:-$(apk --print-arch)}" \
     && case "$arch" in \
@@ -94,9 +94,9 @@ FROM python:3.12-slim
 # Re-declare the ffmpeg ARGs so their values are available to LABEL below.
 # ARG values don't cross stage boundaries in multi-stage builds; defaults
 # must be repeated here to take effect when no --build-arg is supplied.
-ARG FFMPEG_RELEASE=autobuild-2026-06-19-23-17
-ARG FFMPEG_BUILD_AMD64=ffmpeg-n7.1.4-145-g4cbf7a4b3d-linux64-gpl-7.1.tar.xz
-ARG FFMPEG_BUILD_ARM64=ffmpeg-n7.1.4-145-g4cbf7a4b3d-linuxarm64-gpl-7.1.tar.xz
+ARG FFMPEG_RELEASE=autobuild-2026-07-03-13-21
+ARG FFMPEG_BUILD_AMD64=ffmpeg-n7.1.5-1-g7d0e842004-linux64-gpl-7.1.tar.xz
+ARG FFMPEG_BUILD_ARM64=ffmpeg-n7.1.5-1-g7d0e842004-linuxarm64-gpl-7.1.tar.xz
 
 # Apply latest security updates to base packages (clears glibc deb13u3 and
 # similar). Done first so any subsequent installs resolve against the

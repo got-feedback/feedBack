@@ -252,6 +252,10 @@ _DEMO_BLOCKED: list[tuple[str, re.Pattern]] = [
     ("POST",   re.compile(r"^/api/song/.+/art/upload$")),
     ("POST",   re.compile(r"^/api/song/.+/art/url$")),
     ("DELETE", re.compile(r"^/api/art/.+/override$")),
+    # Cover picker (PR-C): read-only, but a cache-miss open spends 1-3
+    # throttled Cover Art Archive calls — anonymous demo visitors don't get
+    # to spend the shared rate budget (same rule as enrichment search/kick).
+    ("GET",    re.compile(r"^/api/song/.+/art/candidates$")),
 ]
 
 
@@ -5881,6 +5885,66 @@ def _caa_http_get(release_id: str) -> bytes | None:
         raise EnrichTransportError(str(e)) from e
 
 
+def _caa_release_index(release_id: str) -> dict | None:
+    """Fetch a release's Cover Art Archive INDEX (json — image METADATA, not
+    image bytes): the cover picker's one network seam (tests fake exactly
+    this). Same etiquette as _caa_http_get: throttled, identified,
+    offline-guarded. Returns the parsed index dict, None when the archive
+    has no art for the release (404), and raises EnrichTransportError for
+    anything network-shaped."""
+    if not _enrich_network_enabled():
+        raise EnrichTransportError("enrichment network disabled")
+    import requests
+    _enrich_throttle()
+    try:
+        resp = requests.get(
+            f"https://coverartarchive.org/release/{release_id}",
+            headers={"User-Agent": _enrich_user_agent(),
+                     "Accept": "application/json"},
+            timeout=15, allow_redirects=True)
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            raise EnrichTransportError(f"cover art archive HTTP {resp.status_code}")
+        body = resp.json()
+        return body if isinstance(body, dict) else None
+    except requests.RequestException as e:
+        raise EnrichTransportError(str(e)) from e
+    except ValueError as e:
+        # Non-JSON body — treat as a transport blip (nothing gets cached, a
+        # later picker-open retries) rather than caching an empty index.
+        raise EnrichTransportError(f"cover art archive returned non-JSON: {e}") from e
+
+
+def _caa_index_cached(release_id: str) -> list[dict]:
+    """A release's CAA index images through a TTL-less on-disk cache
+    (`caa_index_{id}.json` beside the cover files — indexes are stable, and
+    a 404 is cached as an empty index so a coverless release is never
+    re-asked). Outside the network seam on purpose: tests fake
+    _caa_release_index and still exercise this cache. Raises
+    EnrichTransportError on a cache-miss network failure (the caller stops
+    asking for further releases); malformed ids/bodies yield []."""
+    if not _CAA_ID_RE.match(str(release_id or "")):
+        return []
+    cache_file = _enrichment_art_dir() / f"caa_index_{release_id}.json"
+    if cache_file.is_file():
+        try:
+            body = json.loads(cache_file.read_text(encoding="utf-8"))
+            imgs = body.get("images") if isinstance(body, dict) else None
+            if isinstance(imgs, list):
+                return imgs
+        except (OSError, ValueError):
+            pass  # unreadable/corrupt cache → refetch below
+    body = _caa_release_index(release_id)
+    if body is None or not isinstance(body.get("images"), list):
+        body = {"images": []}
+    try:
+        cache_file.write_text(json.dumps(body), encoding="utf-8")
+    except OSError:
+        pass  # cache is best-effort; the response still serves
+    return body["images"]
+
+
 def _art_safe_name(filename: str) -> str:
     """The flattened cache-file stem the art routes key user overrides on
     (matches the legacy /art/upload naming, so old uploads keep working)."""
@@ -10450,7 +10514,7 @@ def _file_art_response(path: Path, media_type: str, request: Request | None):
 
 
 @app.get("/api/song/{filename:path}/art")
-async def get_song_art(filename: str, request: Request = None):
+async def get_song_art(filename: str, request: Request = None, source: str = ""):
     """Serve album art for a song, walking the R3 override chain:
 
       1. USER OVERRIDE (upload / URL-fetch, {safe_name}.gif|.png in the art
@@ -10462,6 +10526,11 @@ async def get_song_art(filename: str, request: Request = None):
          the loose folder's discovered image.
       3. COVER ART ARCHIVE cache — fetched by the enrichment art worker for
          matched songs that lack pack art, keyed by release MBID.
+
+    `?source=pack` narrows the chain to step 2 only (no override, no CAA):
+    the cover picker's "Pack original" tile must show the pack's own art
+    even while a user override is what the plain route serves. 404 when the
+    song ships no art of its own.
     """
     dlc = _get_dlc_dir()
     if not dlc:
@@ -10473,10 +10542,13 @@ async def get_song_art(filename: str, request: Request = None):
     if not song_path.exists():
         return JSONResponse({"error": "not found"}, 404)
 
+    pack_only = source == "pack"
+
     # 1. User override — GIF first (it wins over a stale PNG override).
-    for cached in _art_override_paths(filename):
-        mt = "image/gif" if cached.suffix == ".gif" else "image/png"
-        return _file_art_response(cached, mt, request)
+    if not pack_only:
+        for cached in _art_override_paths(filename):
+            mt = "image/gif" if cached.suffix == ".gif" else "image/png"
+            return _file_art_response(cached, mt, request)
 
     # 2a. Sloppak: read the cover (manifest-declared or default) straight from
     # the package. For a zip-form sloppak this opens just the cover member —
@@ -10522,13 +10594,121 @@ async def get_song_art(filename: str, request: Request = None):
                 return _file_art_response(art_resolved, mt, request)
 
     # 3. Cover Art Archive cache (the enrichment art worker's fetch).
-    row = meta_db.get_enrichment(filename)
-    if row and row.get("art_state") == "caa" and row.get("art_cache_path"):
-        caa = Path(row["art_cache_path"])
-        if caa.is_file():
-            return _file_art_response(caa, "image/jpeg", request)
+    if not pack_only:
+        row = meta_db.get_enrichment(filename)
+        if row and row.get("art_state") == "caa" and row.get("art_cache_path"):
+            caa = Path(row["art_cache_path"])
+            if caa.is_file():
+                return _file_art_response(caa, "image/jpeg", request)
 
     return JSONResponse({"error": "no art"}, 404)
+
+
+# ── Cover picker (PR-C): candidate assembly ───────────────────────────────────
+# Enumerated ON OPEN, never at scan time (charrette §8), and NO image bytes
+# are fetched here — Cover Art Archive release INDEX jsons only (1-3 throttled
+# calls on a cache miss); the tiles' thumbnails load straight from the archive
+# in the client. Applying a pick never grows a new write path: the client
+# POSTs the chosen thumb URL to the EXISTING …/art/url route (the override
+# lane — never evicted, survives a re-match), "Pack original" DELETEs the
+# override, uploads keep the existing upload route.
+_ART_PICKER_MAX_CAA = 12
+
+
+@app.get("/api/song/{filename:path}/art/candidates")
+def get_song_art_candidates(filename: str):
+    """Everything the cover picker can offer for one song, without fetching a
+    single image: the current cover (with its provenance), the pack original
+    when the song ships art, and CAA candidates for the matched/manual
+    release plus any distinct releases among the stored review candidates.
+    Sync route on purpose (the CAA index fetch sleeps in the shared
+    throttle — FastAPI runs `def` routes in the threadpool). One response,
+    `pending` always False — the client shows a spinner for the request's own
+    latency; offline / CAA-down just means an empty caa tail (the instant
+    tiles keep working), never an error."""
+    from urllib.parse import quote
+    dlc = _get_dlc_dir()
+    song_path = _resolve_dlc_path(dlc, filename) if dlc else None
+    if song_path is None or not song_path.exists():
+        raise HTTPException(status_code=404, detail="unknown song")
+
+    row = meta_db.get_enrichment(filename) or {}
+    has_pack = _song_pack_art_exists(filename)
+    art_url = f"/api/song/{quote(filename)}/art"
+
+    # What the plain art route would serve right now — the serve chain's
+    # order (override > pack > CAA cache) restated as provenance.
+    if _art_override_paths(filename):
+        provenance = "yours"
+    elif has_pack:
+        provenance = "pack"
+    elif row.get("art_state") == "caa" and row.get("art_cache_path"):
+        provenance = "matched"
+    else:
+        provenance = "none"
+
+    candidates: list[dict] = [{
+        "id": "current", "kind": "current", "label": "Current",
+        "thumb_url": art_url, "provenance": provenance,
+    }]
+    if has_pack:
+        candidates.append({
+            "id": "pack", "kind": "pack", "label": "Pack original",
+            "thumb_url": art_url + "?source=pack", "provenance": "pack",
+        })
+
+    # Releases worth asking the archive about: the matched/manual release
+    # first (it seeds the best candidates), then any distinct release among
+    # the stored review candidates (a review row has no mb_release_id of its
+    # own — its releases live in the candidates JSON).
+    rids: list[str] = []
+    if row.get("match_state") in ("matched", "manual") and row.get("mb_release_id"):
+        rids.append(str(row["mb_release_id"]))
+    for cand in (row.get("candidates") or []):
+        rid = str(cand.get("release_id") or "") if isinstance(cand, dict) else ""
+        if rid and rid not in rids:
+            rids.append(rid)
+
+    caa_entries: list[dict] = []
+    for rid in rids:
+        if len(caa_entries) >= _ART_PICKER_MAX_CAA:
+            break
+        try:
+            imgs = _caa_index_cached(rid)
+        except EnrichTransportError:
+            # Offline / archive down — stop asking (each further miss would
+            # only burn a timeout). The instant tiles still serve; a later
+            # picker-open retries naturally (failures are never cached).
+            break
+        # Front covers first, approved before pending, otherwise index order
+        # (the picker grammar is a RANKED list — §7/§9).
+        def _rank(img):
+            types = img.get("types") or []
+            is_front = bool(img.get("front")) or "Front" in types
+            return (not is_front, not bool(img.get("approved")))
+        for img in sorted((i for i in imgs if isinstance(i, dict)), key=_rank):
+            if len(caa_entries) >= _ART_PICKER_MAX_CAA:
+                break
+            thumbs = img.get("thumbnails") or {}
+            if not isinstance(thumbs, dict):
+                continue
+            thumb = (thumbs.get("500") or thumbs.get("large")
+                     or thumbs.get("250") or thumbs.get("small"))
+            if not thumb:
+                continue
+            types = [str(t) for t in (img.get("types") or []) if isinstance(t, str)]
+            caa_entries.append({
+                "id": f"caa-{rid}-{img.get('id', '')}",
+                "kind": "caa",
+                "label": ", ".join(types) or "Cover",
+                "thumb_url": str(thumb),
+                "provenance": "matched",
+                "types": types,
+                "approved": bool(img.get("approved")),
+                "release_id": rid,
+            })
+
+    return {"candidates": candidates + caa_entries, "pending": False}
 
 
 @app.post("/api/song/{filename:path}/meta")
@@ -10860,40 +11040,65 @@ def _url_host_is_internal(url: str) -> bool:
     return False
 
 
+# Art-by-URL redirect budget. Cover hosts commonly answer with a redirect —
+# the Cover Art Archive (whose thumbs the cover picker applies through this
+# very route) 307s every image to archive.org — so redirects must work; 5
+# hops is generous for any real CDN chain while still bounding the walk.
+_ART_URL_MAX_REDIRECTS = 5
+
+
 def _fetch_art_url(url: str) -> bytes:
     """The one place art-by-URL touches the network (tests fake this seam).
     User-initiated, so not throttled like the background workers — but the
     same offline guard applies (pytest can never fetch), the host is checked
-    against internal/reserved ranges (SSRF), redirects are NOT followed (a
-    redirect can't smuggle the request to an internal target), and the size
-    cap is enforced while streaming so a huge response never fully downloads.
+    against internal/reserved ranges (SSRF), redirects are followed MANUALLY
+    with the scheme + internal-host guard re-applied to every hop (so a
+    redirect can't smuggle the request to an internal target — a blanket
+    no-redirect rule would break every Cover Art Archive pick, which always
+    redirects to archive.org), and the size cap is enforced while streaming
+    so a huge response never fully downloads.
 
-    Residual, accepted: the host is resolved here and again by requests, so a
-    rebinding DNS name is a theoretical TOCTOU. Not closed with an IP-pinned
-    connection because (a) this is a single-user, no-auth app (constitution
-    §I) and the route is demo-blocked, so there is no untrusted submission
-    path, and (b) no other in-tree client (MusicBrainz, CAA) pins either — a
-    bespoke pinned+SNI adapter here would be inconsistent and disproportionate.
-    The cheap guards above still stop the realistic vectors (direct internal
-    URL, redirect-to-internal)."""
+    Residual, accepted: each hop's host is resolved here and again by
+    requests, so a rebinding DNS name is a theoretical TOCTOU. Not closed
+    with an IP-pinned connection because (a) this is a single-user, no-auth
+    app (constitution §I) and the route is demo-blocked, so there is no
+    untrusted submission path, and (b) no other in-tree client (MusicBrainz,
+    CAA) pins either — a bespoke pinned+SNI adapter here would be
+    inconsistent and disproportionate. The cheap guards above still stop the
+    realistic vectors (direct internal URL, redirect-to-internal)."""
     if not _enrich_network_enabled():
         raise EnrichTransportError("art fetch disabled (offline)")
-    if _url_host_is_internal(url):
-        raise ValueError("url host is not allowed")
     import requests
-    try:
-        with requests.get(url, timeout=15, stream=True, allow_redirects=False,
-                          headers={"User-Agent": _enrich_user_agent()}) as resp:
-            if resp.status_code != 200:
-                raise EnrichTransportError(f"HTTP {resp.status_code}")
-            data = b""
-            for chunk in resp.iter_content(65536):
-                data += chunk
-                if len(data) > _ART_URL_MAX_BYTES:
-                    raise ValueError("image larger than 10 MB")
-            return data
-    except requests.RequestException as e:
-        raise EnrichTransportError(str(e)) from e
+    from urllib.parse import urljoin, urlparse
+    for _hop in range(_ART_URL_MAX_REDIRECTS + 1):
+        # Re-validate EVERY hop, not just the user's original URL: the whole
+        # point of handling redirects ourselves is that each target gets the
+        # same scheme + SSRF gate before any request is made.
+        if urlparse(url).scheme not in ("http", "https"):
+            raise ValueError("url must be http(s)")
+        if _url_host_is_internal(url):
+            raise ValueError("url host is not allowed")
+        try:
+            with requests.get(url, timeout=15, stream=True, allow_redirects=False,
+                              headers={"User-Agent": _enrich_user_agent()}) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("Location") or ""
+                    if not loc:
+                        raise EnrichTransportError(
+                            f"HTTP {resp.status_code} without a Location")
+                    url = urljoin(url, loc)
+                    continue
+                if resp.status_code != 200:
+                    raise EnrichTransportError(f"HTTP {resp.status_code}")
+                data = b""
+                for chunk in resp.iter_content(65536):
+                    data += chunk
+                    if len(data) > _ART_URL_MAX_BYTES:
+                        raise ValueError("image larger than 10 MB")
+                return data
+        except requests.RequestException as e:
+            raise EnrichTransportError(str(e)) from e
+    raise EnrichTransportError("too many redirects")
 
 
 @app.post("/api/song/{filename:path}/art/url")

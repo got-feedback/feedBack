@@ -871,6 +871,7 @@
             // right-click) share this list, so parity is structural.
             ...(state.provider === 'local' && song.filename ? [
                 { id: '__fixmatch', label: 'Fix match…' },
+                { id: '__cover', label: 'Change cover…' },
                 { id: '__refreshmeta', label: 'Refresh metadata' },
                 { id: '__getinfo', label: 'Get info…' },
                 { id: '__remove', label: 'Remove from library', destructive: true },
@@ -918,6 +919,10 @@
             // not the group representative. (__remove stays on `song`: it needs
             // the group's work_key/chart_count and pre-ticks the shown chart.)
             if (id === '__fixmatch') { if (window.__fbFixMatch) window.__fbFixMatch(playTarget); return; }
+            if (id === '__cover') {
+                if (window.__fbOpenImagePicker) window.__fbOpenImagePicker({ filename: playTarget.filename, title: playTarget.title || playTarget.filename });
+                return;
+            }
             if (id === '__refreshmeta') {
                 // Silent on success (hearing-safe, like the rest of the match
                 // layer) — the re-match trickles in through the normal pass.
@@ -2602,7 +2607,18 @@
 
         const artWrap = $('[data-det-art]'); const artFile = $('#det-art-file');
         if (artWrap && artFile) {
-            artWrap.addEventListener('click', () => artFile.click());
+            // Art click opens the cover PICKER (PR-C) — the old direct file
+            // dialog lives on inside it as the Upload tile. The picker applies
+            // immediately (its own routes + refresh), so it bypasses the
+            // drawer's Save; the file-input path below stays as the fallback
+            // when image-picker.js isn't loaded.
+            artWrap.addEventListener('click', () => {
+                if (window.__fbOpenImagePicker) {
+                    window.__fbOpenImagePicker({ filename: song.filename, title: song.title || song.filename });
+                } else {
+                    artFile.click();
+                }
+            });
             artFile.addEventListener('change', () => {
                 const f = artFile.files && artFile.files[0]; if (!f) return;
                 const rd = new FileReader();

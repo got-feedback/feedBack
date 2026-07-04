@@ -23,8 +23,11 @@ import os
 ACOUSTID_API_ROOT = "https://api.acoustid.org/v2"
 
 # The `meta` fields we ask AcoustID to return so a hit resolves to displayable
-# metadata without a second MusicBrainz round-trip.
-LOOKUP_META = "recordings+releasegroups+compress"
+# metadata without a second MusicBrainz round-trip. SPACE-separated, not
+# `+`-joined: a literal `+` in the value gets percent-encoded to %2B, which
+# AcoustID does NOT split into flags — it then attaches no recording metadata
+# and every hit comes back empty (verified: `+` → 0 recordings, space → 28).
+LOOKUP_META = "recordings releasegroups compress"
 
 # Mirror mb_match._SECONDARY_SKIP: release-group secondary types that mark a
 # non-canonical (live/comp/remix) release, so we can flag the studio take.

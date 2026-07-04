@@ -346,7 +346,8 @@
             '<div class="flex items-center justify-between gap-3 p-5 pt-3 border-t border-fb-border/40 shrink-0">' +
             '<div class="flex items-center gap-3">' +
             (_single ? '' : '<button data-mr-reject class="text-sm text-fb-textDim hover:text-fb-text">Not a match</button>') +
-            '<button data-mr-search-toggle class="text-sm text-fb-textDim hover:text-fb-text">Search instead…</button></div>' +
+            '<button data-mr-search-toggle class="text-sm text-fb-textDim hover:text-fb-text">Search instead…</button>' +
+            '<button data-mr-identify class="text-sm text-fb-primary hover:text-fb-primaryHi" title="Fingerprint this song\'s audio to find the exact recording">Identify by audio</button></div>' +
             '<div class="flex items-center gap-2">' +
             (_single ? '' : '<button data-mr-skip class="text-sm text-fb-textDim hover:text-fb-text px-3 py-2">Skip</button>') +
             ((song.candidates || []).length ? '<button data-mr-accept class="bg-fb-primary hover:bg-fb-primaryHi text-white px-4 py-2 rounded-md text-sm">Use selected</button>' : '') +
@@ -395,6 +396,7 @@
         const go = () => runSearch(panel, song);
         panel.querySelector('[data-mr-search-go]')?.addEventListener('click', go);
         input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+        panel.querySelector('[data-mr-identify]')?.addEventListener('click', () => runIdentify(panel, song));
     }
 
     // Silent-on-success: the chart just leaves the queue and the next one
@@ -436,6 +438,52 @@
             return;
         }
         out.innerHTML = cands.map((c, i) => candRowHtml(song, c, i, false)).join('');
+        out.querySelectorAll('[data-mr-cand]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const cand = cands[Number(btn.getAttribute('data-mr-cand'))];
+                if (!cand) return;
+                await post('/api/enrichment/review/' + enc(song.filename) + '/pick',
+                    { candidate: cand });
+                settle(song);
+            });
+        });
+    }
+
+    // "Identify by audio" — fingerprint the song's OWN master audio (AcoustID)
+    // and render the hits into the same search-results area. The reliable path
+    // when text search can't tell the studio take from live/comp versions.
+    async function runIdentify(panel, song) {
+        const out = panel.querySelector('[data-mr-search-results]');
+        const sp = panel.querySelector('[data-mr-search-panel]');
+        if (!out) return;
+        sp?.classList.remove('hidden');   // give the results somewhere to render
+        out.innerHTML = '<p class="text-xs text-fb-textDim">Fingerprinting audio…</p>';
+        let body = null, status = 0;
+        try {
+            const r = await fetch('/api/enrichment/identify/' + enc(song.filename), { method: 'POST' });
+            status = r.status;
+            body = await r.json().catch(() => null);
+        } catch (_) { /* falls through to the no-results line */ }
+        // Honest states — never a fake hit.
+        if (status === 412 || (body && body.needs_setup)) {
+            out.innerHTML = '<p class="text-xs text-fb-textDim">Audio identification is off — enable AcoustID and add a free API key to use it.</p>';
+            return;
+        }
+        if (status === 404) {
+            out.innerHTML = "<p class=\"text-xs text-fb-textDim\">No full-mix audio to fingerprint for this song.</p>";
+            return;
+        }
+        if (status === 503) {
+            out.innerHTML = '<p class="text-xs text-fb-textDim">Audio identification is unavailable right now — try again.</p>';
+            return;
+        }
+        const cands = (body && body.candidates) || [];
+        if (!cands.length) {
+            out.innerHTML = '<p class="text-xs text-fb-textDim">No fingerprint match — try text search.</p>';
+            return;
+        }
+        out.innerHTML = '<div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim mb-1">Fingerprint matches (AcoustID)</div>' +
+            cands.map((c, i) => candRowHtml(song, c, i, false)).join('');
         out.querySelectorAll('[data-mr-cand]').forEach((btn) => {
             btn.addEventListener('click', async () => {
                 const cand = cands[Number(btn.getAttribute('data-mr-cand'))];

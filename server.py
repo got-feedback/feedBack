@@ -242,6 +242,11 @@ _DEMO_BLOCKED: list[tuple[str, re.Pattern]] = [
     ("POST",   re.compile(r"^/api/enrichment/review/.+$")),
     ("POST",   re.compile(r"^/api/enrichment/kick$")),
     ("GET",    re.compile(r"^/api/enrichment/search$")),
+    # AcoustID audio fingerprinting: both identify endpoints run fpcalc (CPU)
+    # and spend the shared AcoustID rate budget on the caller's behalf — same
+    # rule as the search/kick relays above; not for anonymous demo visitors.
+    ("POST",   re.compile(r"^/api/enrichment/identify$")),
+    ("POST",   re.compile(r"^/api/enrichment/identify/.+$")),
     # Context menus (R2): the per-song re-match mutates the cache + spends
     # rate limit; Get-info exposes filesystem paths.
     ("POST",   re.compile(r"^/api/enrichment/refresh/.+$")),
@@ -6356,6 +6361,65 @@ def _identify_by_fingerprint(path: str) -> list[dict]:
     return _acoustid_lookup(fp[0], fp[1])
 
 
+def _acoustid_gate() -> "JSONResponse | None":
+    """Shared availability gate for the identify endpoints: None when ready,
+    else a 412 needs_setup (opt-in off / no key → the UI re-prompts) or a 503
+    (set up but fpcalc/network missing). Never lets a caller pretend a
+    fingerprint ran."""
+    if _acoustid_available():
+        return None
+    enabled, key = _acoustid_settings()
+    if not enabled or not key:
+        return JSONResponse(
+            {"error": "audio fingerprinting not set up", "needs_setup": True,
+             "detail": "Turn on AcoustID and add a free API key to identify by audio — "
+                       "it reads the recording itself, far more reliable than text search."},
+            status_code=412)
+    return JSONResponse(
+        {"error": "audio fingerprinting unavailable", "needs_setup": False,
+         "detail": "the fpcalc (Chromaprint) binary was not found on the server"},
+        status_code=503)
+
+
+def _song_audio_file(filename: str) -> "str | None":
+    """Resolve a LIBRARY song (by filename/id) to a local master-audio file for
+    fingerprinting: the full-mix `original_audio` extracted from a sloppak, or a
+    loose folder's audio. None when the song can't be found or ships no full-mix
+    audio (some packs carry only stems). Mirrors serve_sloppak_file's containment
+    guards so a crafted filename can't read outside DLC_DIR / the pack."""
+    dlc = _get_dlc_dir()
+    if not dlc:
+        return None
+    resolved = _resolve_dlc_path(dlc, filename)
+    if resolved is None or not resolved.exists():
+        return None
+    if sloppak_mod.is_sloppak(resolved):
+        try:
+            canon = resolved.relative_to(dlc.resolve()).as_posix()
+        except ValueError:
+            return None
+        rel = (sloppak_mod.load_manifest(resolved) or {}).get("original_audio")
+        if not isinstance(rel, str) or not rel.strip():
+            return None
+        src = sloppak_mod.get_cached_source_dir(canon)
+        if src is None:
+            try:
+                src = sloppak_mod.resolve_source_dir(canon, dlc, SLOPPAK_CACHE_DIR)
+            except Exception:
+                return None
+        target = (src / rel.strip()).resolve()
+        try:
+            target.relative_to(src.resolve())
+        except ValueError:
+            return None
+        return str(target) if target.is_file() else None
+    try:
+        audio = loosefolder_mod.find_audio(resolved)
+    except Exception:
+        audio = None
+    return str(audio) if audio and Path(str(audio)).is_file() else None
+
+
 def _mb_lookup_recording(mbid: str) -> dict | None:
     """Direct lookup for a manifest-carried recording MBID (tier 0)."""
     body = _mb_http_get(
@@ -7558,25 +7622,9 @@ def api_enrichment_identify(file: UploadFile = File(...)):
     opted in / has no key (the UI nudges them to Settings); 503 when it's set up
     but the fpcalc Chromaprint binary is missing or the network is off. Sync
     route: the fpcalc subprocess + HTTP run in FastAPI's threadpool."""
-    if not _acoustid_available():
-        enabled, key = _acoustid_settings()
-        # Separate "hasn't set it up" (opt-in off or no key → the inline enable
-        # nudge) from "configured but the binary/network is missing" (a real
-        # unavailability). Honesty: never pretend a fingerprint ran.
-        if not enabled or not key:
-            return JSONResponse(
-                {"error": "audio fingerprinting not set up",
-                 "needs_setup": True,
-                 "detail": "Turn on AcoustID and add a free API key to identify "
-                           "by audio — it reads the recording itself, far more "
-                           "reliable than text search."},
-                status_code=412)
-        return JSONResponse(
-            {"error": "audio fingerprinting unavailable",
-             "needs_setup": False,
-             "detail": "the fpcalc (Chromaprint) binary was not found on the "
-                       "server"},
-            status_code=503)
+    gate = _acoustid_gate()
+    if gate is not None:
+        return gate
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="empty upload")
@@ -7593,6 +7641,32 @@ def api_enrichment_identify(file: UploadFile = File(...)):
                             status_code=503)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+    return {"candidates": cands}
+
+
+@app.post("/api/enrichment/identify/{filename:path}")
+def api_enrichment_identify_song(filename: str):
+    """Identify an EXISTING library song by AUDIO FINGERPRINT — the library-side
+    counterpart to /api/enrichment/identify (which takes an upload). Fingerprints
+    the song's own master audio on disk (the manual "Identify by audio" action in
+    the Fix-metadata / match-review flow). Same candidate shape as /search, so the
+    review UI renders fingerprint hits like text hits. Same 412/503 gating; 404
+    when the song has no full-mix audio to fingerprint."""
+    gate = _acoustid_gate()
+    if gate is not None:
+        return gate
+    audio = _song_audio_file(filename)
+    if not audio:
+        return JSONResponse(
+            {"error": "no audio",
+             "detail": "couldn't find this song's master audio to fingerprint "
+                       "(a stems-only pack has no full mix to identify)."},
+            status_code=404)
+    try:
+        cands = _identify_by_fingerprint(audio)
+    except EnrichTransportError as e:
+        return JSONResponse({"error": "acoustid unavailable", "detail": str(e)},
+                            status_code=503)
     return {"candidates": cands}
 
 

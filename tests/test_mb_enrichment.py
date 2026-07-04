@@ -97,6 +97,43 @@ def mb_doc(rid="rec-1", title="Thunderstruck", artist="AC/DC", artist_id="art-1"
     }
 
 
+# ── strict-then-loose search fallback ────────────────────────────────────────
+
+def test_search_falls_back_to_loose_when_strict_is_empty(server, monkeypatch):
+    """The strict field-phrase query misses a non-Latin-primary artist; the
+    loose retry (no field scoping) searches aliases and finds it."""
+    calls = []
+
+    def _routed(path, params):
+        q = params.get("query", "")
+        calls.append(q)
+        if q.startswith("recording:"):        # strict phrase → nothing
+            return {"recordings": []}
+        return {"recordings": [mb_doc(rid="rec-x", title="Telephone Number")]}
+
+    monkeypatch.setattr(server, "_mb_http_get", _routed)
+    cands = server._mb_search_recordings("Junko Ohashi", "Telephone Number")
+    assert len(cands) == 1
+    assert len(calls) == 2                     # strict first, then the loose retry
+    assert calls[0].startswith("recording:")   # strict is the field-phrase form
+    assert "artist:" not in calls[1] and '"' not in calls[1]   # loose retry
+
+
+def test_search_does_not_retry_when_strict_hits(server, monkeypatch):
+    """A strict hit must not spend a second (throttled) request on the loose
+    query."""
+    calls = []
+
+    def _routed(path, params):
+        calls.append(params.get("query", ""))
+        return {"recordings": [mb_doc()]}
+
+    monkeypatch.setattr(server, "_mb_http_get", _routed)
+    cands = server._mb_search_recordings("AC/DC", "Thunderstruck")
+    assert len(cands) == 1
+    assert len(calls) == 1
+
+
 # ── offline safety (the pytest-never-hits-network contract) ──────────────────
 
 def test_offline_default_skips_matching(server, monkeypatch):

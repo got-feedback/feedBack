@@ -198,12 +198,29 @@ def _lucene_escape_phrase(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def build_recording_query(artist, title) -> str:
+def build_recording_query(artist, title, *, loose: bool = False) -> str:
     """Lucene query for /ws/2/recording. Built from the DENOISED fields —
     the noise we strip (author credits, "(Live)", "(v2)") would otherwise
-    poison the search server's own scoring."""
+    poison the search server's own scoring.
+
+    ``loose=True`` drops the field-scoped quoted PHRASES for plain AND-ed
+    term groups (``(telephone number) AND (junko ohashi)``). The point:
+    a field phrase like ``artist:"Junko Ohashi"`` only matches MusicBrainz's
+    *primary* artist name — it never searches ALIASES — so a recording stored
+    under a non-Latin primary (大橋純子) whose romanized name is only an alias
+    is invisible to the strict query. A loose term query searches the whole
+    document, aliases included, and surfaces it. Lower precision by design: it
+    is a FALLBACK for when the strict query returns nothing, and its results
+    are re-scored by ``rank_candidates`` (and, for auto-match, gated by the
+    per-field floors), so noise never auto-applies."""
     t = denoise(title)
     a = denoise(artist)
+    if loose:
+        # denoise() already reduced each field to lowercase [a-z0-9 and] tokens
+        # (punctuation → spaces, diacritics stripped, & → "and"), so no
+        # Lucene-special character survives to need escaping. Group each field's
+        # terms and require both groups.
+        return " AND ".join("(%s)" % g for g in (t, a) if g)
     parts = []
     if t:
         parts.append('recording:"%s"' % _lucene_escape_phrase(t))

@@ -160,6 +160,21 @@ def test_build_recording_query_escapes_and_handles_missing_artist():
     assert "artist:" not in q
 
 
+def test_build_recording_query_loose_drops_field_phrases():
+    # The strict form (unchanged) locks to the *primary* artist/title phrase.
+    assert m.build_recording_query("Junko Ohashi", "Telephone Number") == \
+        'recording:"telephone number" AND artist:"junko ohashi"'
+    # The loose form has no field scoping and no phrases, so MusicBrainz also
+    # searches artist ALIASES — rescues non-Latin-primary artists (大橋純子).
+    loose = m.build_recording_query("Junko Ohashi", "Telephone Number", loose=True)
+    assert loose == "(telephone number) AND (junko ohashi)"
+    assert "artist:" not in loose and '"' not in loose
+
+
+def test_build_recording_query_loose_missing_artist():
+    assert m.build_recording_query("", "Fantasy", loose=True) == "(fantasy)"
+
+
 # ── MusicBrainz response parsing ──────────────────────────────────────────────
 
 MB_DOC = {

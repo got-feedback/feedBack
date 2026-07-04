@@ -6258,10 +6258,26 @@ def _fpcalc_bin() -> str | None:
     return shutil.which("fpcalc")
 
 
+def _acoustid_settings() -> "tuple[bool, str]":
+    """(enabled, api_key) for AcoustID, resolved from settings with an env-var
+    fallback for the key. Opt-in: `acoustid_enabled` defaults off. The key lives
+    in settings so a user can set it themselves in the UI; $ACOUSTID_API_KEY is a
+    server-wide fallback for a headless deploy."""
+    cfg = _load_config(CONFIG_DIR / "config.json") or {}
+    enabled = cfg.get("acoustid_enabled", False) is True
+    key = cfg.get("acoustid_api_key")
+    if not isinstance(key, str) or not key.strip():
+        key = os.environ.get("ACOUSTID_API_KEY", "")
+    return enabled, (key or "").strip()
+
+
 def _acoustid_available() -> bool:
-    """True only when the network is on, an API key is set, AND fpcalc exists."""
-    return (_enrich_network_enabled()
-            and acoustid_match.is_configured()
+    """True only when the user opted in, a key is set (settings or env), the
+    network is on, AND fpcalc exists."""
+    enabled, key = _acoustid_settings()
+    return (enabled
+            and _enrich_network_enabled()
+            and acoustid_match.is_configured(key)
             and _fpcalc_bin() is not None)
 
 
@@ -6295,7 +6311,7 @@ def _acoustid_lookup(duration: int, fingerprint: str) -> list[dict]:
     """Look a fingerprint up on AcoustID → candidate dicts (mb_match shape).
     Throttled + offline-guarded like the MusicBrainz path. [] when unavailable
     or no hit; raises EnrichTransportError for network-shaped failures."""
-    key = acoustid_match.api_key()
+    _, key = _acoustid_settings()
     if not key or not _enrich_network_enabled():
         return []
     import requests
@@ -7534,14 +7550,28 @@ def api_enrichment_identify(file: UploadFile = File(...)):
     reliable way to get the EXACT recording/version (the studio take, not a live
     bootleg or an extended cut). Upload the master audio; returns candidates in
     the same shape as /search, so the review UI and the editor's Match popup can
-    render fingerprint hits identically. 503 when fingerprinting isn't configured
-    (needs the fpcalc Chromaprint binary + an ACOUSTID_API_KEY). Sync route: the
-    fpcalc subprocess + HTTP run in FastAPI's threadpool."""
+    render fingerprint hits identically. 412 `needs_setup` when the user hasn't
+    opted in / has no key (the UI nudges them to Settings); 503 when it's set up
+    but the fpcalc Chromaprint binary is missing or the network is off. Sync
+    route: the fpcalc subprocess + HTTP run in FastAPI's threadpool."""
     if not _acoustid_available():
+        enabled, key = _acoustid_settings()
+        # Separate "hasn't set it up" (opt-in off or no key → the inline enable
+        # nudge) from "configured but the binary/network is missing" (a real
+        # unavailability). Honesty: never pretend a fingerprint ran.
+        if not enabled or not key:
+            return JSONResponse(
+                {"error": "audio fingerprinting not set up",
+                 "needs_setup": True,
+                 "detail": "Turn on AcoustID and add a free API key to identify "
+                           "by audio — it reads the recording itself, far more "
+                           "reliable than text search."},
+                status_code=412)
         return JSONResponse(
             {"error": "audio fingerprinting unavailable",
-             "detail": "requires the fpcalc (Chromaprint) binary and an "
-                       "ACOUSTID_API_KEY"},
+             "needs_setup": False,
+             "detail": "the fpcalc (Chromaprint) binary was not found on the "
+                       "server"},
             status_code=503)
     content = file.file.read()
     if not content:
@@ -9908,6 +9938,17 @@ def _default_settings():
         # the external browser, never media delivered in-app.
         "artist_pages_enabled": True,
         "artist_external_links": False,
+        # Audio fingerprinting (AcoustID + Chromaprint). OPT-IN, default OFF.
+        # Text matching (MusicBrainz) can't reliably pick the exact recording
+        # for a song with many comp/live/reissue takes (especially a
+        # non-title-track — the title can't find the album); fingerprinting
+        # reads the audio itself and resolves the EXACT recording. Needs the
+        # user's own free AcoustID application key
+        # (https://acoustid.org/new-application) plus the `fpcalc` binary. The
+        # key lives here (settings) — not only an env var — so a user can set it
+        # themselves in the UI; $ACOUSTID_API_KEY stays a server-wide fallback.
+        "acoustid_enabled": False,
+        "acoustid_api_key": "",
     }
 
 
@@ -10082,13 +10123,24 @@ def save_settings(data: dict):
                       "enrich_apply_names", "enrich_apply_year",
                       "enrich_apply_genres", "enrich_apply_art",
                       # Artist pages (PR-B): page on/off + external-links opt-in.
-                      "artist_pages_enabled", "artist_external_links"):
+                      "artist_pages_enabled", "artist_external_links",
+                      # AcoustID audio-fingerprinting opt-in (default off).
+                      "acoustid_enabled"):
         if _bool_key in data:
             raw = data[_bool_key]
             if raw is not None:
                 if not isinstance(raw, bool):
                     return {"error": f"{_bool_key} must be a boolean"}
                 updates[_bool_key] = raw
+    if "acoustid_api_key" in data:
+        # Free AcoustID application key (opaque token). null is a no-op, empty
+        # string clears; length-capped so a bad POST can't bloat config.json.
+        # Never logged. The matcher trims + validates presence at read time.
+        raw = data["acoustid_api_key"]
+        if raw is not None:
+            if not isinstance(raw, str) or len(raw) > 128:
+                return {"error": "acoustid_api_key must be a string (at most 128 chars)"}
+            updates["acoustid_api_key"] = raw.strip()
     if "enrich_review_order" in data:
         raw = data["enrich_review_order"]
         if raw is not None:

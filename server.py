@@ -5229,10 +5229,52 @@ def _resolve_dlc_path(dlc: Path, filename: str) -> Path | None:
     check so every filename-bound handler validates before touching the
     filesystem.
 
-    Returns the validated resolved Path, or None if the path is empty
-    or escapes the DLC root.
+    Containment here is LEXICAL (normalize `.`/`..` WITHOUT following
+    symlinks), not `safe_join`'s `.resolve()`-based check — because users
+    commonly mount their song library through a directory JUNCTION/symlink
+    (a library shared across app installs; the desktop app's own mounts).
+    `.resolve()` follows that junction to its real target, sees it sits
+    outside DLC_DIR, and wrongly rejects every song reached through it — the
+    scanner's `rglob` indexes those songs, but art/load then 403/404s (broken
+    covers, unplayable songs). Lexical normalization still rejects the only
+    escapes a `:path` filename can express — `..` traversal and absolute
+    paths — which the traversal tests pin. `safe_join` stays strict (it is
+    the zip-slip / plugin-asset guard, where following a symlink out IS the
+    defense); the loose-folder art handler keeps its own per-file symlink
+    re-check for defence-in-depth.
+
+    Returns the validated Path (not necessarily link-resolved), or None if
+    the filename is empty, contains a NUL, or escapes the DLC root.
     """
-    return safe_join(dlc, filename)
+    if not filename:
+        return None
+    # Backslashes → forward slashes so a Windows-style `..\\x` traversal is
+    # rejected identically on POSIX (mirrors safe_join's normalisation).
+    safe = filename.replace("\\", "/")
+    if "\x00" in safe:
+        return None
+    # Reject drive-letter / absolute paths in BOTH conventions. A POSIX "/x" is
+    # caught by the containment check below (the `/` operator discards `root`),
+    # but a Windows drive-absolute "C:/x" is treated as a relative "C:" dir on
+    # POSIX and would otherwise slip in as `<root>/C:/x` — so the contract must
+    # hold cross-platform (a shared library is reached from either OS).
+    from pathlib import PurePosixPath, PureWindowsPath
+    if (PurePosixPath(safe).is_absolute()
+            or PureWindowsPath(safe).is_absolute()
+            or PureWindowsPath(safe).drive):
+        return None
+    try:
+        root = dlc.resolve()
+        # normpath collapses `.`/`..`/duplicate separators purely lexically —
+        # it never touches the filesystem, so an in-library junction component
+        # is preserved (allowed) while `..`/absolute segments still escape and
+        # get caught by the containment check below.
+        candidate = Path(os.path.normpath(root / safe))
+        if not candidate.is_relative_to(root):
+            return None
+    except (ValueError, OSError):
+        return None
+    return candidate
 
 
 _SMART_TYPE_BASE: dict[str, int] = {"Lead": 0, "Rhythm": 10, "Bass": 20}

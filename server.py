@@ -6317,9 +6317,13 @@ def _acoustid_lookup(duration: int, fingerprint: str) -> list[dict]:
     import requests
     _enrich_throttle()
     try:
-        resp = requests.get(
+        # POST, not GET: a fingerprint is multi-KB (a 3.5-min track is ~3.5k
+        # chars), so a GET crams it into the URL and a long song overflows the
+        # server's URL limit → a spurious failure. AcoustID accepts the same
+        # params form-encoded in the body.
+        resp = requests.post(
             f"{acoustid_match.ACOUSTID_API_ROOT}/lookup",
-            params={
+            data={
                 "client": key, "format": "json",
                 "meta": acoustid_match.LOOKUP_META,
                 "duration": duration, "fingerprint": fingerprint,

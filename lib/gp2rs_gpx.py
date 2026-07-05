@@ -1506,6 +1506,10 @@ def convert_file(
     # Surface that to the caller rather than only the docstring: if the score
     # actually uses repeats, the produced bar count/timing will differ from the
     # equivalent .gp5. Warn once so plugin code/logs don't silently drift.
+    # NB: lib/gp_autosync.gp_has_expandable_repeats() encodes this single-pass
+    # behaviour (.gp/.gpx never expand). Implementing GPIF expansion here MUST
+    # update that helper in the same change, or the editor's per-bar sync warp
+    # would silently retime repeated sections onto the wrong bars.
     if expand_repeats and any(
         mb.find('Repeat') is not None or mb.find('AlternateEndings') is not None
         for mb in masterbars

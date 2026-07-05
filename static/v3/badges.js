@@ -451,6 +451,12 @@
                 pill('inst', v, v[0].toUpperCase() + v.slice(1), settings.instrument === v)).join('')) +
             instRow('Strings', STRING_COUNTS[settings.instrument].map((v) =>
                 pill('strings', v, v + '', settings.string_count === v)).join('')) +
+            // Handedness — a left-hander flips the whole highway (frets mirror).
+            // Lives with the other player-orientation choices so it's part of the
+            // same "Choose your instrument" step the onboarding tour spotlights —
+            // i.e. set before you ever tune up or calibrate.
+            instRow('Handedness', pill('hand', 'right', 'Right', !_leftyPref()) +
+                pill('hand', 'left', 'Left', _leftyPref())) +
             '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">Tuning</div>' +
             '<select data-inst-tuning class="w-full bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1.5 text-xs text-fb-text outline-none focus:border-fb-primary">' +
             // An offset-array tuning has no named option — surface it as a
@@ -513,6 +519,10 @@
             setWorkingInstrument(settings.instrument, newSc);
             renderInstrument(); keepOpen();
         }));
+        menu.querySelectorAll('[data-pill="hand"]').forEach((b) => b.addEventListener('click', () => {
+            _setLeftyPref(b.getAttribute('data-val') === 'left');
+            renderInstrument(); keepOpen();   // reflect the active pill; keep the menu open
+        }));
         menu.querySelector('[data-inst-tuning]').addEventListener('change', (e) => saveSettings({ tuning: e.target.value }));
         menu.querySelector('[data-inst-pathway]').addEventListener('change', (e) => saveSettings({ pathway: e.target.value }));
         const ref = menu.querySelector('[data-inst-ref]');
@@ -527,6 +537,22 @@
     }
     function instRow(label, inner) {
         return '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">' + label + '</div><div class="flex flex-wrap gap-1">' + inner + '</div></div>';
+    }
+    // Handedness (left-handed) preference. The canonical store is the highway's
+    // `lefty` localStorage key; when a live highway exists, setLefty() also flips
+    // it immediately. Feature-detected so it works on the dashboard before any
+    // highway has been created (the value is read on the highway's next init).
+    function _leftyPref() {
+        try { if (window.highway && typeof window.highway.getLefty === 'function') return !!window.highway.getLefty(); } catch (_) { /* */ }
+        try { return localStorage.getItem('lefty') === '1'; } catch (_) { return false; }
+    }
+    function _setLeftyPref(on) {
+        try {
+            if (window.highway && typeof window.highway.setLefty === 'function') window.highway.setLefty(!!on);
+            else localStorage.setItem('lefty', on ? '1' : '0');
+        } catch (_) { /* storage blocked — the pill still reflects the choice via re-render */ }
+        // Keep the Settings "Left-handed" checkbox in sync when it's mounted.
+        try { const cb = document.getElementById('setting-lefty'); if (cb) cb.checked = !!on; } catch (_) { /* */ }
     }
     function pill(group, val, label, active) {
         return '<button type="button" data-pill="' + group + '" data-val="' + val + '" class="px-2 py-1 rounded-md text-xs ' +

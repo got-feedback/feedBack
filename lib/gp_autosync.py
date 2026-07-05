@@ -538,9 +538,32 @@ def _dtw_align(
     Returns wp where wp[i] = [score_frame_index, audio_frame_index].
     """
     import librosa
+    import numpy as np
     cs = _safe_normalise(chroma_score)
     ca = _safe_normalise(chroma_audio)
-    _D, wp = librosa.sequence.dtw(cs, ca, metric='cosine')
+    # Slope-constrained step pattern ([[1,1],[1,2],[2,1]], Müller's standard
+    # music-sync config): every step advances BOTH axes, bounding the local
+    # tempo ratio to 0.5x-2x. librosa's default steps allow pure
+    # horizontal/vertical runs, and on riff-based music (long self-similar
+    # chroma stretches, e.g. stoner/doom) the flat cost surface let the path
+    # collapse — whole minutes of score mapped onto a single audio frame,
+    # producing garbage sync points. The constrained pattern makes that
+    # degenerate path impossible.
+    steps = np.array([[1, 1], [1, 2], [2, 1]])
+    weights = np.array([1.0, 1.0, 1.0])
+    try:
+        _D, wp = librosa.sequence.dtw(
+            cs, ca, metric='cosine',
+            step_sizes_sigma=steps, weights_mul=weights,
+        )
+    except Exception as exc:
+        # The constrained pattern needs the global length ratio within its
+        # 0.5x-2x slope bounds; a pathological pairing (e.g. a 3-minute tab
+        # against a 20-minute video) is infeasible and librosa raises. Fall
+        # back to the unconstrained path rather than failing the whole sync.
+        _log.warning("gp_autosync: constrained DTW infeasible (%s) — "
+                     "falling back to unconstrained steps", exc)
+        _D, wp = librosa.sequence.dtw(cs, ca, metric='cosine')
     return wp[::-1]  # reverse to forward order
 
 # ── Sync point extraction from DTW path ──────────────────────────────────────

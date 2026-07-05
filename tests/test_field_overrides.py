@@ -209,6 +209,30 @@ def test_route_strips_private_sort_title(client, server):
     assert "_sort_title" not in row              # private keyset stash never leaks to the client
 
 
+def test_genre_override_drives_facet_and_filter(client, server):
+    # a.archive: pack genre "Rock"; b.archive: blank genre, overridden to "City Pop".
+    _put(server, "a.archive", title="A", genre="Rock")
+    _put(server, "b.archive", title="B", genre="")
+    server.meta_db.set_song_override("b.archive", "genre", value="City Pop")
+    # Facet lists the EFFECTIVE genres (override surfaces; empty raw doesn't).
+    genres = client.get("/api/library/genres").json()["genres"]
+    assert "City Pop" in genres and "Rock" in genres
+    # Filtering by the override genre returns the overridden song…
+    fns = [s["filename"] for s in client.get("/api/library?genre=City%20Pop").json()["songs"]]
+    assert fns == ["b.archive"]
+    # …and its raw (blank) genre no longer matches a stale query for it.
+    rock = [s["filename"] for s in client.get("/api/library?genre=Rock").json()["songs"]]
+    assert rock == ["a.archive"]
+
+
+def test_lock_only_genre_does_not_change_facet(server):
+    # A pure lock (no value) must not invent an effective genre.
+    _put(server, "a.archive", title="A", genre="Metal")
+    server.meta_db.set_song_override("a.archive", "genre", locked=True)
+    assert server.meta_db._has_genre_overrides() is False   # value-less rows don't count
+    assert server.meta_db._effective_genre_expr() == "genre"
+
+
 def test_title_keyset_paging_is_complete_with_overrides(client, server):
     # Raw titles A/B/C → title-sort order is A, B, C on the RAW column.
     _put(server, "b.archive", title="B")

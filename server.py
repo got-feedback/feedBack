@@ -1277,6 +1277,27 @@ class MetadataDB:
             (filename,)).fetchone()
         return {k: ((row[i] or "") if row else "") for i, k in enumerate(keys)}
 
+    # Effective genre = a per-song genre OVERRIDE (Fix-metadata popup) else the
+    # scanned pack genre. Applied at FILTER/FACET time (like the P4 artist alias)
+    # so a corrected genre is browsable — the correlated subquery is used ONLY
+    # when genre overrides actually exist; the common case stays on the plain
+    # indexed `genre` column. Genre stays a library-only overlay (it isn't a
+    # write-to-file field), so it never touches the pack.
+    _EFFECTIVE_GENRE_SQL = (
+        "COALESCE((SELECT o.value FROM song_field_override o "
+        "WHERE o.filename = songs.filename AND o.field = 'genre' "
+        "AND o.value IS NOT NULL AND o.value != ''), genre)"
+    )
+
+    def _has_genre_overrides(self) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM song_field_override WHERE field = 'genre' "
+            "AND value IS NOT NULL AND value != '' LIMIT 1").fetchone() is not None
+
+    def _effective_genre_expr(self) -> str:
+        """`genre` normally; the override-aware COALESCE only when overrides exist."""
+        return self._EFFECTIVE_GENRE_SQL if self._has_genre_overrides() else "genre"
+
     def set_song_tags(self, filename: str, tags) -> list:
         """Replace ALL of a song's tags with the given set (each normalized;
         blanks + case-dupes dropped). Full-replace so the whole personal-meta
@@ -3464,7 +3485,7 @@ class MetadataDB:
         # list on scan). OR within the selected set.
         if genre:
             _gph = ",".join(["?"] * len(genre))
-            where += f" AND genre COLLATE NOCASE IN ({_gph})"
+            where += f" AND ({self._effective_genre_expr()}) COLLATE NOCASE IN ({_gph})"
             params += list(genre)
         # Mastery bands = best accuracy across a song's arrangements (song_stats,
         # a separate table -> correlated subquery). mastered >= 0.9, in_progress =
@@ -9118,9 +9139,10 @@ def library_genres(provider: str = "local"):
     if is_remote:
         return {"genres": []}
     with meta_db._lock:
+        g = meta_db._effective_genre_expr()
         rows = meta_db.conn.execute(
-            "SELECT DISTINCT genre FROM songs WHERE genre IS NOT NULL AND genre != '' "
-            "ORDER BY genre COLLATE NOCASE"
+            f"SELECT g FROM (SELECT DISTINCT ({g}) AS g FROM songs) "
+            "WHERE g IS NOT NULL AND g != '' ORDER BY g COLLATE NOCASE"
         ).fetchall()
     return {"genres": [r[0] for r in rows]}
 

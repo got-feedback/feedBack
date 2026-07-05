@@ -462,7 +462,11 @@
     // Each field sits on its pack value: editing above the pack makes it an
     // override ("Yours"); a lock pins it so an auto-match can't recanonicalize
     // it; revert (↺) drops back to the pack value.
-    const DETAIL_FIELDS = [['title', 'Title'], ['artist', 'Artist'], ['album', 'Album'], ['year', 'Year']];
+    const DETAIL_FIELDS = [['title', 'Title'], ['artist', 'Artist'], ['album', 'Album'], ['year', 'Year'], ['genre', 'Genre']];
+    // Only these four are written into the pack file; genre is a library-only
+    // overlay (drives the genre filter/facet + the auto-match lock), never baked
+    // to the file — so Write to file leaves genre's override in place.
+    const WRITE_FIELDS = ['title', 'artist', 'album', 'year'];
 
     async function renderDetailsTab(body, song) {
         body.innerHTML = '<div class="p-5"><p class="text-sm text-fb-textDim">Loading…</p></div>';
@@ -510,6 +514,7 @@
         song._pendingDetails = {
             title: String(cand.title || ''), artist: String(cand.artist || ''),
             album: String(cand.album || ''), year: String(cand.year || ''),
+            genre: (Array.isArray(cand.genres) && cand.genres[0]) ? String(cand.genres[0]) : String(cand.genre || ''),
         };
         try {
             await post('/api/enrichment/review/' + enc(song.filename) + '/pick', { candidate: cand });
@@ -547,7 +552,7 @@
             '<div class="p-5 space-y-4 overflow-y-auto v3-scroll min-h-0">' +
             '<div class="flex items-start gap-3">' +
             '<img src="' + esc(artUrl(song)) + '" alt="" onerror="this.style.visibility=\'hidden\'" class="w-14 h-14 rounded-lg object-cover bg-fb-card shrink-0">' +
-            '<p class="text-xs text-fb-textDim pt-1"><span class="text-fb-text">Save</span> keeps edits as a reversible library overlay — the song files aren\'t touched. <span class="text-fb-text">Write to file</span> bakes them into the pack itself. Lock a field to keep an auto-match from changing it.</p>' +
+            '<p class="text-xs text-fb-textDim pt-1"><span class="text-fb-text">Save</span> keeps edits as a reversible library overlay — the song files aren\'t touched. <span class="text-fb-text">Write to file</span> bakes the title, artist, album and year into the pack (genre stays a library-only tag). Lock a field to keep an auto-match from changing it.</p>' +
             '</div>' +
             DETAIL_FIELDS.map(row).join('') +
             '<p data-df-status class="text-xs leading-relaxed"></p>' +
@@ -617,7 +622,7 @@
     async function writeToFile(body, song) {
         const st = song._detailsState;
         const fields = {};
-        for (const [f] of DETAIL_FIELDS) fields[f] = String(st[f].value || '').trim();
+        for (const f of WRITE_FIELDS) fields[f] = String(st[f].value || '').trim();
         const status = body.querySelector('[data-df-status]');
         const writeBtn = body.querySelector('[data-df-write]');
         const saveBtn = body.querySelector('[data-df-save]');
@@ -650,11 +655,11 @@
             const yr = /^[+-]?\d+$/.test(applied.year) ? parseInt(applied.year, 10) : 0;
             applied.year = yr ? String(yr) : '';
         }
-        for (const [f] of DETAIL_FIELDS) song[f] = applied[f];
+        for (const f of WRITE_FIELDS) song[f] = applied[f];
         try { window.feedBack?.emit('library:changed', { reason: 'write' }); } catch (_) { }
         if (persisted) {
             const clear = {};
-            for (const [f] of DETAIL_FIELDS) clear[f] = { value: null, locked: !!st[f].locked };
+            for (const f of WRITE_FIELDS) clear[f] = { value: null, locked: !!st[f].locked };
             try {
                 await fetch('/api/song/' + enc(song.filename) + '/overrides', {
                     method: 'PUT',

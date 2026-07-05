@@ -661,25 +661,31 @@
             status = r.status;
             body = await r.json().catch(() => null);
         } catch (_) { /* falls through to the no-results line */ }
-        // Honest states — never a fake hit.
+        // Honest states — never a fake hit. Each says plainly WHICH outcome this
+        // is, so an empty result reads as "it ran, found nothing" (not "broken")
+        // and points at the manual fallback when there's nothing to pick.
+        const note = (html) => { out.innerHTML = '<p class="text-xs text-fb-textDim leading-relaxed">' + html + '</p>'; };
+        const manual = _single
+            ? ' Try <b class="text-fb-text">Search</b>, or just set the album in <b class="text-fb-text">Details</b> and the cover in <b class="text-fb-text">Cover art</b> by hand.'
+            : ' Try <b class="text-fb-text">Search instead</b>.';
         if (status === 412 || (body && body.needs_setup)) {
-            out.innerHTML = '<p class="text-xs text-fb-textDim">Audio identification is off — enable AcoustID and add a free API key to use it.</p>';
+            note('Audio identification is <b class="text-fb-text">off</b>. Turn it on and add a free AcoustID API key in Settings → Library to use it.');
             return;
         }
         if (status === 404) {
-            out.innerHTML = "<p class=\"text-xs text-fb-textDim\">No full-mix audio to fingerprint for this song.</p>";
+            note('This pack has <b class="text-fb-text">no full mix to fingerprint</b> (it\'s chart-only or stems-only).' + manual);
             return;
         }
         if (status === 503) {
-            out.innerHTML = '<p class="text-xs text-fb-textDim">Audio identification is unavailable right now — try again.</p>';
+            note('Could not run the fingerprint right now — the audio tool or network is unavailable. Try again in a moment.');
             return;
         }
         const cands = (body && body.candidates) || [];
         if (!cands.length) {
-            out.innerHTML = '<p class="text-xs text-fb-textDim">No fingerprint match — try text search.</p>';
+            note('<span class="text-fb-good">✓ Fingerprinted the audio</span> — but AcoustID has <b class="text-fb-text">no match</b> for this exact recording (common for obscure or import tracks).' + manual);
             return;
         }
-        out.innerHTML = '<div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim mb-1">Fingerprint matches (AcoustID)</div>' +
+        out.innerHTML = '<div class="text-xs font-semibold uppercase tracking-wider text-fb-good mb-1">✓ Fingerprint matches (AcoustID)</div>' +
             cands.map((c, i) => candRowHtml(song, c, i, false)).join('');
         out.querySelectorAll('[data-mr-cand]').forEach((btn) => {
             btn.addEventListener('click', async () => {

@@ -110,6 +110,19 @@ def test_preview_excludes_author_set_keys(server, client):
     assert {"genres", "mbid", "isrc"} <= got
 
 
+def test_preview_excludes_locked_fields(server, client):
+    """A field LOCKED in the Fix-metadata popup is never gap-filled — writing
+    the matched value would be exactly the clobber the lock prevents — even
+    though the match has a value and the manifest lacks it."""
+    make_dir_sloppak(server, "a.sloppak")
+    seed_match(server, "a.sloppak")
+    server.meta_db.set_song_override("a.sloppak", "album", locked=True)
+    server.meta_db.set_song_override("a.sloppak", "year", locked=True)
+    got = {m["key"] for m in client.get("/api/song/a.sloppak/gap-fill").json()["missing"]}
+    assert "album" not in got and "year" not in got
+    assert {"genres", "mbid", "isrc"} <= got        # unlocked keys still offered
+
+
 def test_preview_excludes_present_but_empty_keys(server, client):
     """Gap-fill is append-only, so a present-but-empty value (album: '',
     year: 0) is NOT a gap the writer can fill — appending would duplicate the

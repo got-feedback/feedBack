@@ -131,7 +131,8 @@
     let _queue = [];
     let _idx = 0;
     let _lastFocus = null;
-    let _single = false;   // Fix-match mode: one song, no queue navigation
+    let _single = false;   // Fix-metadata mode: one song, no queue navigation
+    let _tab = 'details';  // active tab in single mode: details | cover | match
 
     function ensureModal() {
         let m = document.getElementById('v3-match-modal');
@@ -180,14 +181,17 @@
         loadQueue();
     }
 
-    // Fix-match (R2): the same modal for ONE song — the escape hatch for a
-    // wrong (or missing) match, reachable from the card's ⋮ / right-click
-    // menu. No stored candidates are required: the search panel opens
-    // pre-filled, and a pick pins the match exactly like the review flow.
+    // Fix metadata (R2 → popup slice 4): the tabbed per-song editor for ONE
+    // song, reachable from the card's ⋮ / right-click menu. Three tabs —
+    // Details (type + lock the displayed fields), Cover art (launch the picker),
+    // Match (pin a MusicBrainz identity). Opens on Details: for the obscure /
+    // blank-artist packs this exists to fix, typing the right title is the tool,
+    // and Match is the escape hatch when text search can surface a record.
     function fixMatch(song) {
         if (!song || !song.filename) return;
         _lastFocus = document.activeElement;
         _single = true;
+        _tab = 'details';
         _queue = [{
             filename: song.filename, title: song.title || song.filename,
             artist: song.artist || '', album: song.album || '',
@@ -198,10 +202,7 @@
         const m = ensureModal();
         m.classList.remove('hidden');
         document.getElementById('v3-match-overlay')?.classList.remove('hidden');
-        renderCurrent();
-        // Straight to the point: the search panel is why this mode exists.
-        document.getElementById('v3-match-panel')
-            ?.querySelector('[data-mr-search-toggle]')?.click();
+        renderCurrent();   // _single ⇒ renderTabbed()
     }
 
     function closeModal() {
@@ -214,7 +215,7 @@
     }
 
     function nav(step) {
-        if (!_queue.length) return;
+        if (_single || !_queue.length) return;   // single mode has no queue to page
         _idx = Math.min(Math.max(_idx + step, 0), _queue.length - 1);
         renderCurrent();
     }
@@ -302,20 +303,20 @@
             '<span class="text-xs text-fb-textDim shrink-0">' + esc(pct) + '</span></span>' +
             '<span class="block text-xs text-fb-textDim truncate">' + esc(meta) + '</span>' +
             diffChips(song, c) +
+            (_single ? '<span class="block text-xs text-fb-primary pt-1">Use these values →</span>' : '') +
             '</button>';
     }
 
-    function renderCurrent() {
-        const panel = document.getElementById('v3-match-panel');
-        if (!panel) return;
-        if (!_queue.length) { renderDone(); return; }
-        _idx = Math.min(_idx, _queue.length - 1);
-        const song = _queue[_idx];
-        if (song._sel == null) song._sel = 0;
+    // The middle content shared by the queue-review render and the single-song
+    // popup's Match tab: the chart being matched, its candidate list, and the
+    // "search instead" panel. Header + footer differ per surface. When there
+    // are no stored candidates (a manual fix), the search panel opens pre-filled
+    // — searching IS the point in that case.
+    function reviewBodyHtml(song) {
         const sub = [song.artist, song.album, song.year, fmtDur(song.duration)].filter(Boolean).join(' · ');
-
-        panel.innerHTML = headerHtml() +
-            '<div class="p-5 space-y-4 overflow-y-auto v3-scroll">' +
+        const noCands = !(song.candidates || []).length;
+        const prefill = noCands ? [song.artist, song.title].filter(Boolean).join(' – ') : '';
+        return '<div class="p-5 space-y-4 overflow-y-auto v3-scroll min-h-0">' +
             // The chart being matched
             '<div class="flex items-start gap-3">' +
             '<img data-mr-art src="' + esc(artUrl(song)) + '" alt="" loading="lazy" class="w-16 h-16 rounded-lg object-cover bg-fb-card shrink-0">' +
@@ -325,82 +326,391 @@
             '<div class="text-xs text-fb-textDim/70 truncate" title="' + esc(song.filename) + '">' + esc(song.filename) + '</div>' +
             missingChips(song) +
             '</div></div>' +
-            // Candidates (Fix-match mode arrives with none — the search panel
-            // is its whole point, so the empty header is suppressed).
-            ((song.candidates || []).length
-                ? '<div class="space-y-1" role="radiogroup" aria-label="Candidates">' +
+            (noCands
+                ? ''
+                : '<div class="space-y-1" role="radiogroup" aria-label="Candidates">' +
                 '<div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Candidates (MusicBrainz)</div>' +
                 song.candidates.map((c, i) => candRowHtml(song, c, i, i === song._sel)).join('') +
-                '</div>'
-                : '') +
-            // Search-instead panel
-            '<div data-mr-search-panel class="hidden space-y-2">' +
+                '</div>') +
+            // Search panel — hidden when candidates exist (a "Search instead…"
+            // toggle reveals it); open + pre-filled when there are none.
+            '<div data-mr-search-panel class="' + (noCands ? '' : 'hidden') + ' space-y-2">' +
             '<div class="flex gap-2">' +
-            '<input data-mr-search-input type="text" class="flex-1 bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1 text-sm text-fb-text outline-none focus:border-fb-primary" placeholder="Artist – Title">' +
+            '<input data-mr-search-input type="text" value="' + esc(prefill) + '" class="flex-1 bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1 text-sm text-fb-text outline-none focus:border-fb-primary" placeholder="Artist – Title">' +
             '<button data-mr-search-go class="text-sm text-fb-primary hover:text-fb-primaryHi border border-fb-primary/40 rounded-md px-3">Search</button></div>' +
             '<div data-mr-search-results class="space-y-1"></div></div>' +
-            '</div>' +
-            // Footer actions. Fix-match mode drops Skip (no queue) and the
-            // accept button when there is nothing to accept — search-result
-            // rows carry their own pick action.
-            '<div class="flex items-center justify-between gap-3 p-5 pt-3 border-t border-fb-border/40 shrink-0">' +
+            '</div>';
+    }
+
+    // Footer actions. Single mode drops Skip / Not-a-match (no queue); the
+    // accept button only shows when there is a stored candidate to accept —
+    // search-result rows carry their own pick action.
+    function footerHtml(song) {
+        return '<div class="flex items-center justify-between gap-3 p-5 pt-3 border-t border-fb-border/40 shrink-0">' +
             '<div class="flex items-center gap-3">' +
             (_single ? '' : '<button data-mr-reject class="text-sm text-fb-textDim hover:text-fb-text">Not a match</button>') +
-            '<button data-mr-search-toggle class="text-sm text-fb-textDim hover:text-fb-text">Search instead…</button></div>' +
+            '<button data-mr-search-toggle class="text-sm text-fb-textDim hover:text-fb-text">Search instead…</button>' +
+            '<button data-mr-identify class="text-sm text-fb-primary hover:text-fb-primaryHi" title="Fingerprint this song\'s audio to find the exact recording">Identify by audio</button></div>' +
             '<div class="flex items-center gap-2">' +
             (_single ? '' : '<button data-mr-skip class="text-sm text-fb-textDim hover:text-fb-text px-3 py-2">Skip</button>') +
             ((song.candidates || []).length ? '<button data-mr-accept class="bg-fb-primary hover:bg-fb-primaryHi text-white px-4 py-2 rounded-md text-sm">Use selected</button>' : '') +
             '</div></div>';
-
-        wireCurrent(panel, song);
     }
 
-    function wireCurrent(panel, song) {
+    function renderCurrent() {
+        const panel = document.getElementById('v3-match-panel');
+        if (!panel) return;
+        if (_single) { renderTabbed(); return; }   // popup: the tabbed shell
+        if (!_queue.length) { renderDone(); return; }
+        _idx = Math.min(_idx, _queue.length - 1);
+        const song = _queue[_idx];
+        if (song._sel == null) song._sel = 0;
+        panel.innerHTML = headerHtml() + reviewBodyHtml(song) + footerHtml(song);
         panel.querySelector('[data-mr-close]')?.addEventListener('click', closeModal);
         panel.querySelector('[data-mr-prev]')?.addEventListener('click', () => nav(-1));
         panel.querySelector('[data-mr-next]')?.addEventListener('click', () => nav(1));
         panel.querySelector('[data-mr-skip]')?.addEventListener('click', () => nav(1));
+        wireReviewBody(panel, song);
+    }
+
+    // Candidate / search / accept-reject wiring shared by the queue render and
+    // the popup's Match tab. Scoped to `root` so the tabbed shell can wire just
+    // its tab body — its close + tab chrome live in the header (wired once by
+    // renderTabbed), so wiring here must NOT touch close/prev/next/skip.
+    function wireReviewBody(root, song) {
         // Art failure → flag + re-render once so the "cover art" chip shows.
-        const img = panel.querySelector('[data-mr-art]');
+        const img = root.querySelector('[data-mr-art]');
         if (img) img.onerror = () => {
             img.style.visibility = 'hidden';
             if (!song._artMissing) { song._artMissing = true; renderCurrent(); }
         };
-        panel.querySelectorAll('[data-mr-cand]').forEach((btn) => {
+        root.querySelectorAll('[data-mr-cand]').forEach((btn) => {
             btn.addEventListener('click', () => {
                 song._sel = Number(btn.getAttribute('data-mr-cand'));
                 renderCurrent();
             });
         });
-        panel.querySelector('[data-mr-accept]')?.addEventListener('click', async () => {
+        root.querySelector('[data-mr-accept]')?.addEventListener('click', async () => {
             const cand = (song.candidates || [])[song._sel || 0];
             if (!cand) return;
             await post('/api/enrichment/review/' + enc(song.filename) + '/accept',
                 { recording_id: cand.recording_id });
             settle(song);
         });
-        panel.querySelector('[data-mr-reject]')?.addEventListener('click', async () => {
+        root.querySelector('[data-mr-reject]')?.addEventListener('click', async () => {
             await post('/api/enrichment/review/' + enc(song.filename) + '/reject');
             settle(song);
         });
-        const sp = panel.querySelector('[data-mr-search-panel]');
-        const input = panel.querySelector('[data-mr-search-input]');
-        panel.querySelector('[data-mr-search-toggle]')?.addEventListener('click', () => {
+        const sp = root.querySelector('[data-mr-search-panel]');
+        const input = root.querySelector('[data-mr-search-input]');
+        root.querySelector('[data-mr-search-toggle]')?.addEventListener('click', () => {
             sp?.classList.toggle('hidden');
             if (sp && !sp.classList.contains('hidden') && input && !input.value) {
                 input.value = [song.artist, song.title].filter(Boolean).join(' – ');
                 input.focus();
             }
         });
-        const go = () => runSearch(panel, song);
-        panel.querySelector('[data-mr-search-go]')?.addEventListener('click', go);
+        const go = () => runSearch(root, song);
+        root.querySelector('[data-mr-search-go]')?.addEventListener('click', go);
         input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+        // Identify-by-audio (AcoustID, #759) renders its hits into the same
+        // search-results area — scope to `root` (the tab body / panel), not the
+        // out-of-scope `panel` the pre-refactor #759 wiring referenced.
+        root.querySelector('[data-mr-identify]')?.addEventListener('click', () => runIdentify(root, song));
+    }
+
+    // ── Tabbed single-song popup (slice 4) ───────────────────────────────────
+    // Header + tab bar, then the active tab's body. The queue-review render
+    // above is untouched; this is only reached in _single mode.
+    function tabHeaderHtml() {
+        const tab = (id, label) =>
+            '<button data-mr-tab="' + id + '" role="tab" aria-selected="' + (_tab === id ? 'true' : 'false') + '" ' +
+            'class="px-3 py-2 text-sm -mb-px border-b-2 ' + (_tab === id
+                ? 'border-fb-primary text-fb-text'
+                : 'border-transparent text-fb-textDim hover:text-fb-text') + '">' + label + '</button>';
+        return '<div class="flex items-center justify-between gap-3 px-5 pt-4 shrink-0">' +
+            '<h3 class="text-lg font-semibold text-fb-text">Fix metadata</h3>' +
+            '<button data-mr-close class="text-fb-textDim hover:text-fb-text" aria-label="Close">✕</button></div>' +
+            '<div role="tablist" class="flex gap-1 px-4 border-b border-fb-border/40 shrink-0">' +
+            tab('details', 'Details') + tab('cover', 'Cover art') + tab('match', 'Match') + '</div>';
+    }
+
+    function renderTabbed() {
+        const panel = document.getElementById('v3-match-panel');
+        if (!panel) return;
+        const song = _queue[0];
+        if (!song) { closeModal(); return; }
+        panel.innerHTML = tabHeaderHtml() +
+            '<div data-mr-tabbody role="tabpanel" class="flex flex-col min-h-0 flex-1 overflow-hidden"></div>';
+        panel.querySelector('[data-mr-close]')?.addEventListener('click', closeModal);
+        panel.querySelectorAll('[data-mr-tab]').forEach((b) => b.addEventListener('click', () => {
+            const t = b.getAttribute('data-mr-tab');
+            if (t !== _tab) { _tab = t; renderTabbed(); }
+        }));
+        const body = panel.querySelector('[data-mr-tabbody]');
+        if (_tab === 'details') { renderDetailsTab(body, song); }
+        else if (_tab === 'cover') { renderCoverTab(body, song); }
+        else {
+            body.innerHTML = reviewBodyHtml(song) + footerHtml(song);
+            wireReviewBody(body, song);
+            if (!(song.candidates || []).length) body.querySelector('[data-mr-search-input]')?.focus();
+        }
+    }
+
+    // Details tab: type + lock the DISPLAYED fields. Values ride the reversible
+    // override store (GET/PUT /api/song/{fn}/overrides) — never the pack file.
+    // Each field sits on its pack value: editing above the pack makes it an
+    // override ("Yours"); a lock pins it so an auto-match can't recanonicalize
+    // it; revert (↺) drops back to the pack value.
+    const DETAIL_FIELDS = [['title', 'Title'], ['artist', 'Artist'], ['album', 'Album'], ['year', 'Year'], ['genre', 'Genre']];
+    // Only these four are written into the pack file; genre is a library-only
+    // overlay (drives the genre filter/facet + the auto-match lock), never baked
+    // to the file — so Write to file leaves genre's override in place.
+    const WRITE_FIELDS = ['title', 'artist', 'album', 'year'];
+
+    async function renderDetailsTab(body, song) {
+        body.innerHTML = '<div class="p-5"><p class="text-sm text-fb-textDim">Loading…</p></div>';
+        let data = { overrides: {}, pack: {} };
+        try {
+            const r = await fetch('/api/song/' + enc(song.filename) + '/overrides');
+            if (r.ok) data = await r.json();
+        } catch (_) { /* offline — fall back to the empty baseline */ }
+        if (!_single || _tab !== 'details') return;   // tab/modal changed while fetching
+        const pack = data.pack || {};
+        const ov = data.overrides || {};
+        const st = {};
+        for (const [f] of DETAIL_FIELDS) {
+            const o = ov[f] || {};
+            st[f] = {
+                pack: pack[f] || '',
+                value: (o.value != null ? o.value : (pack[f] || '')),
+                locked: !!o.locked,
+            };
+        }
+        song._detailsState = st;
+        // Match→Details bridge: a candidate picked with "Use these values" lands
+        // its fields here as the pending (unsaved) input values, shown pre-filled
+        // for review — the grid never adopts a match silently, so the user still
+        // Saves (or Writes to file).
+        const adopted = song._pendingDetails;
+        if (adopted) {
+            for (const [f] of DETAIL_FIELDS) {
+                if (f in adopted) st[f].value = String(adopted[f] || '');
+            }
+            song._pendingDetails = null;
+        }
+        paintDetails(body, song);
+        if (adopted) {
+            const s = body.querySelector('[data-df-status]');
+            if (s) { s.className = 'text-xs leading-relaxed text-fb-textDim'; s.textContent = 'Filled from the match — review, then Save or Write to file.'; }
+        }
+    }
+
+    // Match→Details bridge: adopt a candidate's display fields into the Details
+    // tab (opt-in — never silent). Pin the match too so the art/canon follow,
+    // then land on Details pre-filled for review.
+    async function useTheseValues(song, cand) {
+        if (!cand) return;
+        // Smart adopt for an English base: KEEP the readable name + title the card
+        // already shows (the author's romaji, e.g. "Junko Yagami / BAY CITY") — the
+        // match is often native script (kanji/kana). Take only what the pack lacks
+        // — album / year / genre — from the match; the pin below still brings the
+        // correct art + identity. The user can still edit any field.
+        song._pendingDetails = {
+            artist: String(song.artist || cand.artist || ''),
+            title:  String(song.title  || cand.title  || ''),
+            album:  String(cand.album  || song.album  || ''),
+            year:   String(cand.year   || song.year   || ''),
+            genre:  String((Array.isArray(cand.genres) && cand.genres[0]) || cand.genre || ''),
+        };
+        try {
+            await post('/api/enrichment/review/' + enc(song.filename) + '/pick', { candidate: cand });
+        } catch (_) { /* pin is best-effort; the values still populate Details */ }
+        try { window.feedBack?.emit('library:changed', { reason: 'match' }); } catch (_) { }
+        _tab = 'details';
+        renderTabbed();
+    }
+
+    function paintDetails(body, song) {
+        const st = song._detailsState;
+        const row = ([f, label]) => {
+            const s = st[f];
+            const isYours = !!(String(s.value).trim() && String(s.value).trim() !== String(s.pack).trim());
+            return '<div class="space-y-1">' +
+                '<div class="flex items-center justify-between">' +
+                '<label class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">' + esc(label) + '</label>' +
+                (isYours
+                    ? '<span class="text-[0.625rem] px-1.5 py-0.5 rounded bg-fb-primary/15 text-fb-primary">Yours</span>'
+                    : '<span class="text-[0.625rem] px-1.5 py-0.5 rounded bg-fb-card text-fb-textDim">Pack</span>') +
+                '</div>' +
+                '<div class="flex items-center gap-2">' +
+                '<input data-df-input="' + f + '" type="text" value="' + esc(s.value) + '" ' +
+                'class="flex-1 bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-fb-text outline-none focus:border-fb-primary" ' +
+                'placeholder="' + esc(s.pack || label) + '">' +
+                '<button data-df-lock="' + f + '" type="button" aria-pressed="' + (s.locked ? 'true' : 'false') + '" ' +
+                'title="' + (s.locked ? 'Locked — auto-match won’t change this field' : 'Lock this field against auto-match') + '" ' +
+                'class="px-2 py-1.5 rounded-md border ' + (s.locked ? 'border-fb-primary text-fb-primary bg-fb-primary/10' : 'border-fb-border/50 text-fb-textDim hover:text-fb-text') + '">' +
+                (s.locked ? '🔒' : '🔓') + '</button>' +
+                '<button data-df-revert="' + f + '" type="button" title="Revert to the pack value" ' +
+                'class="px-2 py-1.5 rounded-md border border-fb-border/50 text-fb-textDim hover:text-fb-text">↺</button>' +
+                '</div></div>';
+        };
+        body.innerHTML =
+            '<div class="p-5 space-y-4 overflow-y-auto v3-scroll min-h-0">' +
+            '<div class="flex items-start gap-3">' +
+            '<img src="' + esc(artUrl(song)) + '" alt="" onerror="this.style.visibility=\'hidden\'" class="w-14 h-14 rounded-lg object-cover bg-fb-card shrink-0">' +
+            '<p class="text-xs text-fb-textDim pt-1"><span class="text-fb-text">Save</span> keeps edits as a reversible library overlay — the song files aren\'t touched. <span class="text-fb-text">Write to file</span> bakes the title, artist, album and year into the pack (genre stays a library-only tag). Lock a field to keep an auto-match from changing it.</p>' +
+            '</div>' +
+            DETAIL_FIELDS.map(row).join('') +
+            '<p data-df-status class="text-xs leading-relaxed"></p>' +
+            '</div>' +
+            '<div class="flex items-center justify-between gap-2 p-5 pt-3 border-t border-fb-border/40 shrink-0">' +
+            '<button data-df-write type="button" title="Write these values into the song file itself — permanent, survives a full rescan. The rest of the pack is untouched." class="text-sm text-fb-textDim hover:text-fb-text border border-fb-border/50 rounded-md px-3 py-2">Write to file</button>' +
+            '<button data-df-save class="bg-fb-primary hover:bg-fb-primaryHi text-white px-4 py-2 rounded-md text-sm">Save</button>' +
+            '</div>';
+        body.querySelectorAll('[data-df-input]').forEach((inp) => {
+            inp.addEventListener('input', () => { st[inp.getAttribute('data-df-input')].value = inp.value; });
+        });
+        body.querySelectorAll('[data-df-lock]').forEach((b) => {
+            b.addEventListener('click', () => { const f = b.getAttribute('data-df-lock'); st[f].locked = !st[f].locked; paintDetails(body, song); });
+        });
+        body.querySelectorAll('[data-df-revert]').forEach((b) => {
+            b.addEventListener('click', () => { const f = b.getAttribute('data-df-revert'); st[f].value = st[f].pack || ''; st[f].locked = false; paintDetails(body, song); });
+        });
+        body.querySelector('[data-df-save]')?.addEventListener('click', () => saveDetails(body, song));
+        body.querySelector('[data-df-write]')?.addEventListener('click', () => writeToFile(body, song));
+    }
+
+    async function saveDetails(body, song) {
+        const st = song._detailsState;
+        const overrides = {};
+        for (const [f] of DETAIL_FIELDS) {
+            const v = String(st[f].value || '').trim();
+            const p = String(st[f].pack || '').trim();
+            // Only store a value that differs from the pack; equal / blank clears
+            // the override (the server drops a value-less, unlocked row).
+            overrides[f] = { value: (v && v !== p) ? v : null, locked: !!st[f].locked };
+        }
+        const status = body.querySelector('[data-df-status]');
+        const saveBtn = body.querySelector('[data-df-save]');
+        if (saveBtn) saveBtn.disabled = true;
+        let ok = false;
+        try {
+            const r = await fetch('/api/song/' + enc(song.filename) + '/overrides', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ overrides }),
+            });
+            ok = r.ok;
+        } catch (_) { ok = false; }
+        if (saveBtn) saveBtn.disabled = false;
+        if (!ok) {
+            if (status) { status.className = 'text-xs h-4 text-fb-accent'; status.textContent = 'Could not save — try again.'; }
+            return;
+        }
+        // Reflect the new effective values on the in-memory song (keeps the Match
+        // tab header consistent) and repaint the library so the card shows them —
+        // the grid reloads on library:changed (slice 3 overlay does the rest).
+        for (const [f] of DETAIL_FIELDS) {
+            const v = String(st[f].value || '').trim(); const p = String(st[f].pack || '').trim();
+            song[f] = (v && v !== p) ? v : (st[f].pack || '');
+        }
+        try { window.feedBack?.emit('library:changed', { reason: 'override' }); } catch (_) { }
+        if (status) { status.className = 'text-xs h-4 text-fb-good'; status.textContent = 'Saved.'; }
+    }
+
+    // "Write to file" — bake the shown title/artist/album/year INTO the pack
+    // itself (the one action here that touches the file), via the existing
+    // POST /api/song/{fn}/meta (writes the manifest, re-stats, coalesces a
+    // rescan). On a real file write the display overrides for those fields are
+    // now redundant, so clear their VALUES (keeping any locks) and re-render —
+    // the field then reads from the file as "Pack". Loose-folder / unwritable
+    // packs fall back to a DB-only update: we say so and keep the overlay.
+    async function writeToFile(body, song) {
+        const st = song._detailsState;
+        const fields = {};
+        for (const f of WRITE_FIELDS) fields[f] = String(st[f].value || '').trim();
+        const status = body.querySelector('[data-df-status]');
+        const writeBtn = body.querySelector('[data-df-write]');
+        const saveBtn = body.querySelector('[data-df-save]');
+        if (writeBtn) writeBtn.disabled = true;
+        if (saveBtn) saveBtn.disabled = true;
+        if (status) { status.className = 'text-xs leading-relaxed text-fb-textDim'; status.textContent = 'Writing to the song file…'; }
+        let ok = false, persisted = false;
+        try {
+            const r = await fetch('/api/song/' + enc(song.filename) + '/meta', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(fields),
+            });
+            ok = r.ok;
+            const j = await r.json().catch(() => ({}));
+            persisted = !!(j && j.persisted);
+        } catch (_) { ok = false; }
+        if (writeBtn) writeBtn.disabled = false;
+        if (saveBtn) saveBtn.disabled = false;
+        if (!ok) {
+            if (status) { status.className = 'text-xs leading-relaxed text-fb-accent'; status.textContent = 'Could not write to the file — try again.'; }
+            return;
+        }
+        // Keep the in-memory song + grid in step with what was *persisted*, not
+        // the raw input: the server coerces a non-numeric/empty year to "" (see
+        // update_song_meta), so mirror that here or the grid card flashes the
+        // typed text (e.g. "abcd") until the next natural refresh corrects it.
+        const applied = { ...fields };
+        if ('year' in applied) {
+            const yr = /^[+-]?\d+$/.test(applied.year) ? parseInt(applied.year, 10) : 0;
+            applied.year = yr ? String(yr) : '';
+        }
+        for (const f of WRITE_FIELDS) song[f] = applied[f];
+        try { window.feedBack?.emit('library:changed', { reason: 'write' }); } catch (_) { }
+        if (persisted) {
+            const clear = {};
+            for (const f of WRITE_FIELDS) clear[f] = { value: null, locked: !!st[f].locked };
+            try {
+                await fetch('/api/song/' + enc(song.filename) + '/overrides', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ overrides: clear }),
+                });
+            } catch (_) { /* the file write still succeeded; the overlay just lingers */ }
+            await renderDetailsTab(body, song);   // re-fetch: pack now = written values, overrides cleared
+            const s2 = body.querySelector('[data-df-status]');
+            if (s2) { s2.className = 'text-xs leading-relaxed text-fb-good'; s2.textContent = 'Written to the song file.'; }
+        } else if (status) {
+            status.className = 'text-xs leading-relaxed text-fb-textDim';
+            status.textContent = 'Saved to the library — this pack’s file couldn’t be written, so it may revert on a full rescan.';
+        }
+    }
+
+    // Cover-art tab: the current art + a button that hands off to the shared
+    // cover picker (image-picker.js, its own z-[200] modal). A pick there
+    // refreshes every <img> for this song's art — including this thumbnail — so
+    // there's nothing to wire back.
+    function renderCoverTab(body, song) {
+        body.innerHTML =
+            '<div class="p-5 space-y-4 overflow-y-auto v3-scroll min-h-0 flex flex-col items-center text-center">' +
+            '<img src="' + esc(artUrl(song)) + '" alt="" onerror="this.style.visibility=\'hidden\'" class="w-40 h-40 rounded-xl object-cover bg-fb-card">' +
+            '<p class="text-sm text-fb-textDim max-w-sm">Choose from the Cover Art Archive, paste an image link, or upload your own. Your song files are never changed.</p>' +
+            '<button data-cover-open class="bg-fb-primary hover:bg-fb-primaryHi text-white px-4 py-2 rounded-md text-sm">Choose cover art…</button>' +
+            '</div>';
+        body.querySelector('[data-cover-open]')?.addEventListener('click', () => {
+            if (window.__fbOpenImagePicker) {
+                window.__fbOpenImagePicker({ filename: song.filename, title: song.title || song.filename, artist: song.artist, album: song.album });
+            }
+        });
     }
 
     // Silent-on-success: the chart just leaves the queue and the next one
     // renders; the last one renders the done state. No toasts, no sounds.
     function settle(song) {
-        if (_single) { closeModal(); return; }   // Fix-match: done means done
+        if (_single) {
+            // Popup Match tab: a pinned identity can change the art/canon — nudge
+            // the grid to repaint (silent otherwise, like the queue flow).
+            try { window.feedBack?.emit('library:changed', { reason: 'match' }); } catch (_) { }
+            closeModal();
+            return;
+        }
         const i = _queue.indexOf(song);
         if (i >= 0) _queue.splice(i, 1);
         if (_idx >= _queue.length) _idx = Math.max(0, _queue.length - 1);
@@ -440,6 +750,60 @@
             btn.addEventListener('click', async () => {
                 const cand = cands[Number(btn.getAttribute('data-mr-cand'))];
                 if (!cand) return;
+                if (_single) { useTheseValues(song, cand); return; }   // popup → adopt into Details
+                await post('/api/enrichment/review/' + enc(song.filename) + '/pick',
+                    { candidate: cand });
+                settle(song);
+            });
+        });
+    }
+
+    // "Identify by audio" — fingerprint the song's OWN master audio (AcoustID)
+    // and render the hits into the same search-results area. The reliable path
+    // when text search can't tell the studio take from live/comp versions.
+    async function runIdentify(panel, song) {
+        const out = panel.querySelector('[data-mr-search-results]');
+        const sp = panel.querySelector('[data-mr-search-panel]');
+        if (!out) return;
+        sp?.classList.remove('hidden');   // give the results somewhere to render
+        out.innerHTML = '<p class="text-xs text-fb-textDim">Fingerprinting audio…</p>';
+        let body = null, status = 0;
+        try {
+            const r = await fetch('/api/enrichment/identify/' + enc(song.filename), { method: 'POST' });
+            status = r.status;
+            body = await r.json().catch(() => null);
+        } catch (_) { /* falls through to the no-results line */ }
+        // Honest states — never a fake hit. Each says plainly WHICH outcome this
+        // is, so an empty result reads as "it ran, found nothing" (not "broken")
+        // and points at the manual fallback when there's nothing to pick.
+        const note = (html) => { out.innerHTML = '<p class="text-xs text-fb-textDim leading-relaxed">' + html + '</p>'; };
+        const manual = _single
+            ? ' Try <b class="text-fb-text">Search</b>, or just set the album in <b class="text-fb-text">Details</b> and the cover in <b class="text-fb-text">Cover art</b> by hand.'
+            : ' Try <b class="text-fb-text">Search instead</b>.';
+        if (status === 412 || (body && body.needs_setup)) {
+            note('Audio identification is <b class="text-fb-text">off</b>. Turn it on and add a free AcoustID API key in Settings → Library to use it.');
+            return;
+        }
+        if (status === 404) {
+            note('This pack has <b class="text-fb-text">no full mix to fingerprint</b> (it\'s chart-only or stems-only).' + manual);
+            return;
+        }
+        if (status === 503) {
+            note('Could not run the fingerprint right now — the audio tool or network is unavailable. Try again in a moment.');
+            return;
+        }
+        const cands = (body && body.candidates) || [];
+        if (!cands.length) {
+            note('<span class="text-fb-good">✓ Fingerprinted the audio</span> — but AcoustID has <b class="text-fb-text">no match</b> for this exact recording (common for obscure or import tracks).' + manual);
+            return;
+        }
+        out.innerHTML = '<div class="text-xs font-semibold uppercase tracking-wider text-fb-good mb-1">✓ Fingerprint matches (AcoustID)</div>' +
+            cands.map((c, i) => candRowHtml(song, c, i, false)).join('');
+        out.querySelectorAll('[data-mr-cand]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const cand = cands[Number(btn.getAttribute('data-mr-cand'))];
+                if (!cand) return;
+                if (_single) { useTheseValues(song, cand); return; }   // popup → adopt into Details
                 await post('/api/enrichment/review/' + enc(song.filename) + '/pick',
                     { candidate: cand });
                 settle(song);
@@ -483,7 +847,10 @@
         // opt-IN per the dev-chat thread.
         const optInToggles = [
             ['artist-external-links', 'artist_external_links'],
+            // Audio fingerprinting is opt-in (needs a key + fpcalc), default OFF.
+            ['acoustid-enabled', 'acoustid_enabled'],
         ].map(([id, key]) => [document.getElementById(id), key]).filter(([el]) => el);
+        const acoustidKeyEl = document.getElementById('acoustid-api-key');
         if (!toggles.length && !optInToggles.length && !sel && !btn) return;
         (async () => {
             try {
@@ -492,6 +859,7 @@
                     const cfg = await r.json();
                     for (const [el, key] of toggles) el.checked = cfg[key] !== false;
                     for (const [el, key] of optInToggles) el.checked = cfg[key] === true;
+                    if (acoustidKeyEl) acoustidKeyEl.value = cfg.acoustid_api_key || '';
                     if (sel) {
                         const t = Number(cfg.enrich_auto_threshold);
                         const want = Number.isFinite(t) ? t : 0.9;
@@ -516,6 +884,7 @@
         }
         sel?.addEventListener('change', () => save('enrich_auto_threshold', Number(sel.value)));
         order?.addEventListener('change', () => save('enrich_review_order', order.value));
+        acoustidKeyEl?.addEventListener('change', () => save('acoustid_api_key', acoustidKeyEl.value.trim()));
         btn?.addEventListener('click', async () => {
             await post('/api/enrichment/kick');
             const line = document.getElementById('enrich-status');

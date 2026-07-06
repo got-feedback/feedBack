@@ -26,6 +26,13 @@ def safe_join(root: Path, name: str) -> Path | None:
     """
     if not name:
         return None
+    # Reject embedded NULs explicitly. This used to ride on `.resolve()`
+    # raising ValueError, but on Python 3.13 (Windows) resolve() no longer
+    # raises for an embedded NUL, so the byte would otherwise leak through
+    # containment. An explicit guard is strictly-more-rejection (no effect on
+    # the zip-slip / traversal contract).
+    if "\x00" in name:
+        return None
     safe = name.replace("\\", "/")
     try:
         root_resolved = root.resolve()

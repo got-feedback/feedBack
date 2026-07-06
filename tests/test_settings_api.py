@@ -753,27 +753,140 @@ def test_defaults_include_gameplay_keys(client, tmp_path):
     assert data["fail_behavior"] == "continue"
 
 
+
+def test_get_settings_exposes_default_instrument_profiles(client, tmp_path):
+    data = client.get("/api/settings").json()
+    assert data["active_instrument_profile"] == "guitar-lead"
+    assert set(data["instrument_profiles"]) == {"guitar-lead", "guitar-rhythm", "bass"}
+    assert data["instrument"] == "guitar"
+    assert data["string_count"] == 6
+    assert data["tuning"] == "Standard"
+    assert data["pathway"] == "songs"
+
+
+def test_post_flat_instrument_updates_active_profile(client, tmp_path):
+    r = client.post("/api/settings", json={"instrument": "bass", "pathway": "practice"})
+    assert r.status_code == 200
+    cfg = _read_cfg(tmp_path)
+    assert cfg["active_instrument_profile"] == "bass"
+    assert cfg["instrument"] == "bass"
+    assert cfg["string_count"] == 4
+    assert cfg["tuning"] == "Standard"
+    assert cfg["pathway"] == "practice"
+    assert cfg["instrument_profiles"]["bass"]["string_count"] == 4
+    assert cfg["instrument_profiles"]["bass"]["pathway"] == "practice"
+
+
+def test_post_instrument_profiles_mirrors_active_profile(client, tmp_path):
+    r = client.post("/api/settings", json={
+        "active_instrument_profile": "guitar-rhythm",
+        "instrument_profiles": {
+            "guitar-rhythm": {
+                "string_count": 7,
+                "tuning": "Drop A",
+                "reference_pitch": 432,
+                "pathway": "studio",
+            },
+            "bass": {
+                "string_count": 6,
+                "tuning": "C Standard",
+            },
+        },
+    })
+    assert r.status_code == 200
+    cfg = _read_cfg(tmp_path)
+    assert cfg["active_instrument_profile"] == "guitar-rhythm"
+    assert cfg["instrument"] == "guitar"
+    assert cfg["string_count"] == 7
+    assert cfg["tuning"] == "Drop A"
+    assert cfg["reference_pitch"] == 432
+    assert cfg["pathway"] == "studio"
+
+
+def test_post_pathway_rejects_bad_value(client, tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps({"pathway": "songs"}))
+    r = client.post("/api/settings", json={"pathway": "invalid"})
+    assert "error" in r.json()
+    assert _read_cfg(tmp_path)["pathway"] == "songs"
+
+
+def test_post_instrument_profiles_rejects_bad_custom_string_count(client, tmp_path):
+    r = client.post("/api/settings", json={
+        "instrument_profiles": {
+            "bass": {"string_count": 6, "tuning": [0, 0, 0, 0]},
+        },
+    })
+    assert "error" in r.json()
+
 # ── /api/settings/reset ─────────────────────────────────────────────────────
 
 def test_reset_clears_requested_keys(client, tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({
         "master_difficulty": 40,
         "countdown_before_song": True,
+        "pathway": "studio",
         "default_arrangement": "Lead",
         "demucs_server_url": "http://demucs.example:9000",
     }))
     r = client.post("/api/settings/reset",
-                    json={"keys": ["master_difficulty", "countdown_before_song"]})
+                    json={"keys": ["master_difficulty", "countdown_before_song", "pathway"]})
     assert r.status_code == 200
     body = r.json()
-    assert set(body["reset"]) == {"master_difficulty", "countdown_before_song"}
+    assert set(body["reset"]) == {"master_difficulty", "countdown_before_song", "pathway"}
     cfg = _read_cfg(tmp_path)
     # Reset removes the key so GET falls back to the default.
     assert "master_difficulty" not in cfg
     assert "countdown_before_song" not in cfg
+    assert "pathway" not in cfg
     # Unlisted keys are untouched.
     assert cfg["default_arrangement"] == "Lead"
     assert cfg["demucs_server_url"] == "http://demucs.example:9000"
+
+
+def test_partial_instrument_profiles_update_preserves_others(client, tmp_path):
+    # /api/settings is a partial-merge endpoint, so a POST that carries only ONE
+    # instrument profile must not reset the others to defaults.
+    gl = client.get("/api/settings").json()["instrument_profiles"]["guitar-lead"]
+    gl = dict(gl); gl["tuning"] = "Drop D"
+    client.post("/api/settings", json={"instrument_profiles": {"guitar-lead": gl}})
+    assert (client.get("/api/settings").json()["instrument_profiles"]
+            ["guitar-lead"]["tuning"] == "Drop D")
+    # Now update ONLY bass (Drop D is valid for a 4-string bass).
+    bass = client.get("/api/settings").json()["instrument_profiles"]["bass"]
+    bass = dict(bass); bass["tuning"] = "Drop D"
+    client.post("/api/settings", json={"instrument_profiles": {"bass": bass}})
+    out = client.get("/api/settings").json()["instrument_profiles"]
+    assert out["guitar-lead"]["tuning"] == "Drop D", "the untouched profile survived"
+    assert out["bass"]["tuning"] == "Drop D"
+
+
+def test_active_profile_switch_on_fresh_config(client, tmp_path):
+    # A fresh config has no instrument_profiles; an explicit active-profile
+    # switch must be honored, not overwritten by the profile inferred from the
+    # legacy flat defaults (guitar-lead).
+    r = client.post("/api/settings", json={"active_instrument_profile": "bass"})
+    assert r.status_code == 200 and "error" not in r.json()
+    got = client.get("/api/settings").json()
+    assert got["active_instrument_profile"] == "bass"
+    assert got["instrument"] == "bass"
+
+
+def test_reset_pathway_reaches_into_instrument_profiles(client, tmp_path):
+    # pathway is mirrored into every instrument profile, so a Gameplay reset
+    # that only deleted the flat key would leave GET re-deriving the old value
+    # from the profile. The reset must reach into the persisted profiles too.
+    client.post("/api/settings", json={"pathway": "studio"})
+    assert client.get("/api/settings").json()["pathway"] == "studio"
+    profiles = _read_cfg(tmp_path)["instrument_profiles"]
+    assert any(p["pathway"] == "studio" for p in profiles.values())
+
+    r = client.post("/api/settings/reset", json={"keys": ["pathway"]})
+    assert r.status_code == 200
+    assert "pathway" in r.json()["reset"]
+    # GET re-derives from the profile — which must now be back to the default.
+    assert client.get("/api/settings").json()["pathway"] == "songs"
+    for prof in _read_cfg(tmp_path)["instrument_profiles"].values():
+        assert prof["pathway"] == "songs"
 
 
 def test_reset_ignores_unknown_keys(client, tmp_path):

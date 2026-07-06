@@ -42,7 +42,7 @@
                 id: 'instrument', shape: 'spotlight', position: 'bottom',
                 selector: '#v3-instrument-wrap', waitFor: '#v3-instrument-wrap',
                 title: 'Choose your instrument',
-                content: 'Set your instrument, string count and tuning here. The highway, tuner and scoring all adapt to this selection.',
+                content: 'Set your instrument, string count and tuning here — and if you play left-handed, flip Handedness to Left so the whole highway mirrors. The highway, tuner and scoring all adapt to this selection.',
             },
             {
                 id: 'tuner', shape: 'spotlight', position: 'bottom',

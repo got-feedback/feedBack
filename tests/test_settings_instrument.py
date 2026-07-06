@@ -31,12 +31,14 @@ def _cfg(tmp_path):
 def test_instrument_fields_persist(env):
     srv, tmp = env
     c = TestClient(srv.app)
+    # "Drop A" is the 5-string bass drop tuning (its low string is B, not E, so
+    # "Drop D" is a 4-string tuning — now correctly rejected per-profile).
     r = c.post("/api/settings", json={"instrument": "bass", "string_count": 5,
-                                      "tuning": "Drop D", "reference_pitch": 442})
+                                      "tuning": "Drop A", "reference_pitch": 442})
     assert r.status_code == 200
     cfg = _cfg(tmp)
     assert cfg["instrument"] == "bass" and cfg["string_count"] == 5
-    assert cfg["tuning"] == "Drop D" and cfg["reference_pitch"] == 442.0
+    assert cfg["tuning"] == "Drop A" and cfg["reference_pitch"] == 442.0
     # Reflected back through GET.
     got = c.get("/api/settings").json()
     assert got["instrument"] == "bass" and got["reference_pitch"] == 442.0

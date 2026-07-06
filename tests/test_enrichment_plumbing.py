@@ -150,3 +150,152 @@ def test_art_cache_dir_created(server):
     d = server._enrichment_art_dir()
     assert d.is_dir()
     assert d.name == "art_cache"
+
+
+# ── Refresh Metadata batch: per-tile states, progress, Stop ───────────────────
+
+def test_states_for_returns_only_known_filenames(server):
+    _put(server, "a.archive")
+    server._background_enrich()
+    got = server.meta_db.enrichment_states_for(["a.archive", "nope.archive"])
+    assert got == {"a.archive": "unscanned"}          # unknown filename absent
+    assert server.meta_db.enrichment_states_for([]) == {}
+
+
+def test_states_endpoint(client, server):
+    _put(server, "a.archive")
+    _put(server, "b.archive", title="Other")
+    server._background_enrich()
+    body = client.post("/api/enrichment/states",
+                       json={"filenames": ["a.archive", "zzz.missing"]}).json()
+    assert body["states"] == {"a.archive": "unscanned"}
+    assert body["running"] is False
+    assert body["current"] is None
+
+
+def test_status_exposes_progress_fields(client, server):
+    _put(server, "a.archive")
+    server._background_enrich()
+    body = client.get("/api/enrichment/status").json()
+    for k in ("total", "matched", "current", "cancelling"):
+        assert k in body
+    assert body["cancelling"] is False
+
+
+def test_cancel_is_noop_when_idle(client, server):
+    body = client.post("/api/enrichment/cancel").json()
+    assert body == {"ok": True, "was_running": False}
+    # A no-op must not arm the flag (which would then poison the next pass).
+    assert server._enrich_cancel.is_set() is False
+
+
+def test_cancel_flag_halts_matching_loop_between_songs(server, monkeypatch):
+    for i in range(4):
+        _put(server, f"s{i}.archive", title=f"Song {i}")
+    # Force the matcher path on (the test env is offline by default) and stub the
+    # per-song matcher so nothing touches the network — it just trips Stop after
+    # the first song, exactly as the /cancel route would mid-pass.
+    monkeypatch.setattr(server, "_enrich_network_enabled", lambda: True)
+    calls = []
+
+    def fake_enrich_one(row, **_kw):
+        calls.append(row["filename"])
+        server._enrich_cancel.set()
+
+    monkeypatch.setattr(server, "_enrich_one", fake_enrich_one)
+    server._enrich_cancel.clear()
+    server._background_enrich()
+    # The loop checks cancel BEFORE each song, so exactly one is processed before
+    # it breaks — not the whole 4-row queue.
+    assert calls == ["s0.archive"]
+    assert server._enrich_status["total"] == 4
+    assert server._enrich_status["matched"] == 1
+
+
+def test_rematch_requeues_visible_but_skips_manual(server, client):
+    _put(server, "a.archive")                       # will be 'matched'
+    _put(server, "b.archive", title="Other")        # will be 'failed'
+    _put(server, "c.archive", title="Pinned")       # will be 'manual' — untouchable
+    server._background_enrich()
+    with server.meta_db._lock:
+        server.meta_db.conn.execute(
+            "UPDATE song_enrichment SET match_state='matched' WHERE filename='a.archive'")
+        server.meta_db.conn.execute(
+            "UPDATE song_enrichment SET match_state='failed' WHERE filename='b.archive'")
+        server.meta_db.conn.execute(
+            "UPDATE song_enrichment SET match_state='manual' WHERE filename='c.archive'")
+        server.meta_db.conn.commit()
+    body = client.post("/api/enrichment/rematch", json={
+        "filenames": ["a.archive", "b.archive", "c.archive", "nope.archive"]}).json()
+    # A per-view refresh re-runs everything shown EXCEPT the manual pin (and an
+    # unknown filename); matched + failed are both re-queued.
+    assert set(body["queued"]) == {"a.archive", "b.archive"}
+    assert body["count"] == 2
+    server._join_background_db_threads()
+    assert server.meta_db.get_enrichment("a.archive")["match_state"] == "unscanned"
+    assert server.meta_db.get_enrichment("b.archive")["match_state"] == "unscanned"
+    assert server.meta_db.get_enrichment("c.archive")["match_state"] == "manual"
+
+
+# ── filename-derived artist/title fallback (blank-artist packs) ───────────────
+
+def test_filename_artist_title_parse(server):
+    f = server._artist_title_from_filename
+    assert f("CDLC/0 - City Pop/Tatsuro-Yamashita_Ride-On-Time_v1_p.feedpak") == \
+        {"artist": "Tatsuro Yamashita", "title": "Ride On Time"}
+    assert f("Anri_Windy-Summer_v1_p.feedpak") == {"artist": "Anri", "title": "Windy Summer"}
+    # a trailing "(440Hz)" retune tag is stripped before parsing
+    assert f("Cindy_Watashitachi-o-Shinjite-Ite_v1_p (440Hz).feedpak") == \
+        {"artist": "Cindy", "title": "Watashitachi o Shinjite Ite"}
+    # doesn't fit the convention → no guess
+    assert f("nounderscore.feedpak") is None
+
+
+def test_blank_artist_seeds_match_from_filename(server, monkeypatch):
+    server.meta_db.put("Tatsuro-Yamashita_Ride-On-Time_v1_p.feedpak", 0, 0, {
+        "title": "Tatsuro-Yamashita_Ride-On-Time_v1_p", "artist": "", "album": "",
+        "duration": 240, "arrangements": [{"name": "Bass", "index": 0}]})
+    monkeypatch.setattr(server, "_enrich_network_enabled", lambda: True)
+    monkeypatch.setattr(server, "_manifest_exact_ids", lambda fn: {})
+    seen = {}
+
+    def fake_search(artist, title, limit=8):
+        seen["artist"], seen["title"] = artist, title
+        return []
+
+    monkeypatch.setattr(server, "_mb_search_recordings", fake_search)
+    row = next(r for r in server.meta_db.enrichment_pending()
+               if r["filename"].startswith("Tatsuro"))
+    server._enrich_one(row)
+    # the blank pack artist was replaced by the filename-derived identity for
+    # the search (this is exactly what rescues the 'failed' pile)
+    assert seen == {"artist": "Tatsuro Yamashita", "title": "Ride On Time"}
+
+
+def test_present_artist_is_not_overridden_by_filename(server, monkeypatch):
+    server.meta_db.put("Weird-Filename_x_y.feedpak", 0, 0, {
+        "title": "Real Title", "artist": "Real Artist", "album": "", "duration": 100,
+        "arrangements": [{"name": "Lead", "index": 0}]})
+    monkeypatch.setattr(server, "_enrich_network_enabled", lambda: True)
+    monkeypatch.setattr(server, "_manifest_exact_ids", lambda fn: {})
+    seen = {}
+
+    def fake_search(artist, title, limit=8):
+        seen["artist"], seen["title"] = artist, title
+        return []
+
+    monkeypatch.setattr(server, "_mb_search_recordings", fake_search)
+    row = next(r for r in server.meta_db.enrichment_pending()
+               if r["filename"].startswith("Weird"))
+    server._enrich_one(row)
+    # a pack that DOES carry an artist keeps it — the filename is never consulted
+    assert seen == {"artist": "Real Artist", "title": "Real Title"}
+
+
+def test_kick_clears_a_stale_cancel(server):
+    # A cancelled-then-rekicked pass must start clean: _kick_enrich clears the
+    # flag so the fresh pass isn't aborted the instant it checks.
+    server._enrich_cancel.set()
+    server._kick_enrich()
+    server._join_background_db_threads()
+    assert server._enrich_cancel.is_set() is False

@@ -4,51 +4,132 @@ Kept separate from server.py so tests can import it without triggering
 FastAPI / SQLite module-level side effects.
 """
 
+from __future__ import annotations
+
+import math
+
 DEFAULT_REFERENCE_PITCH = 440.0
 
-# Canonical tuning frequencies at 440 Hz reference, keyed by instrument then
-# tuning name. This is the authoritative source; tuner/routes.py previously
-# held a copy — it was removed in favour of this one.
-DEFAULT_TUNINGS: dict[str, dict[str, list[float]]] = {
+# Canonical open strings, low to high, as MIDI notes. This is the host-level
+# source of truth for guitar/bass tuning profiles; UI surfaces derive names,
+# frequencies, and semitone offsets from these absolute pitches.
+STANDARD_OPEN_MIDIS: dict[str, list[int]] = {
+    "guitar-6": [40, 45, 50, 55, 59, 64],
+    "guitar-7": [35, 40, 45, 50, 55, 59, 64],
+    "guitar-8": [30, 35, 40, 45, 50, 55, 59, 64],
+    "bass-4": [28, 33, 38, 43],
+    "bass-5": [23, 28, 33, 38, 43],
+    "bass-6": [23, 28, 33, 38, 43, 48],
+}
+
+# Curated built-in profiles. This intentionally starts by absorbing the useful
+# Virtuoso guitar/bass coverage into host-owned data so the host selector,
+# tuner, practice tools, and plugins can converge on one profile model.
+TUNING_PRESET_MIDIS: dict[str, dict[str, list[int]]] = {
     "guitar-6": {
-        "Standard":    [82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-        "Eb Standard": [77.78, 103.83, 138.59, 185.00, 233.08, 311.13],
-        "Drop D":      [73.42, 110.00, 146.83, 196.00, 246.94, 329.63],
-        "D Standard":  [73.42,  98.00, 130.81, 174.61, 220.00, 293.66],
-        "Drop C":      [65.41,  98.00, 130.81, 174.61, 220.00, 293.66],
-        "Open G":      [73.42,  98.00, 146.83, 196.00, 246.94, 293.66],
-        "Open D":      [73.42, 110.00, 146.83, 185.00, 220.00, 293.66],
-        "DADGAD":      [73.42, 110.00, 146.83, 196.00, 220.00, 293.66],
-        "Open E":      [82.41, 123.47, 164.81, 207.65, 246.94, 329.63],
+        "Standard": [40, 45, 50, 55, 59, 64],
+        "Eb Standard": [39, 44, 49, 54, 58, 63],
+        "D Standard": [38, 43, 48, 53, 57, 62],
+        "C# Standard": [37, 42, 47, 52, 56, 61],
+        "C Standard": [36, 41, 46, 51, 55, 60],
+        "Drop D": [38, 45, 50, 55, 59, 64],
+        "Drop C": [36, 43, 48, 53, 57, 62],
+        "Drop B": [35, 42, 47, 52, 56, 61],
+        "Drop A": [33, 40, 45, 50, 54, 59],
+        "Drop Ab": [32, 39, 44, 49, 53, 58],
+        "Open G": [38, 43, 50, 55, 59, 62],
+        "Open D": [38, 45, 50, 54, 57, 62],
+        "DADGAD": [38, 45, 50, 55, 57, 62],
+        "Open E": [40, 47, 52, 56, 59, 64],
     },
     "guitar-7": {
-        "Standard":    [61.74, 82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-        "Drop A":      [55.00, 82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-        "A Standard":  [55.00, 73.42,  98.00, 130.81, 174.61, 220.00, 293.66],
-        "Drop G":      [49.00, 73.42, 110.00, 146.83, 196.00, 246.94, 329.63],
-        "Bb Standard": [58.27, 77.78, 103.83, 138.59, 185.00, 233.08, 311.13],
+        "Standard": [35, 40, 45, 50, 55, 59, 64],
+        "Bb Standard": [34, 39, 44, 49, 54, 58, 63],
+        "A Standard": [33, 38, 43, 48, 53, 57, 62],
+        "G Standard": [31, 36, 41, 46, 51, 55, 60],
+        "Drop A": [33, 40, 45, 50, 55, 59, 64],
+        "Drop G": [31, 38, 43, 48, 53, 57, 62],
+        "Drop F#": [30, 37, 42, 47, 52, 56, 61],
     },
     "guitar-8": {
-        "Standard":    [46.25, 61.74, 82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-        "Drop E":      [41.20, 61.74, 82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-        "E Standard":  [41.20, 55.00, 73.42,  98.00, 130.81, 174.61, 220.00, 293.66],
-        "Drop D":      [36.71, 55.00, 73.42,  98.00, 130.81, 174.61, 220.00, 293.66],
-        "Eb Standard": [38.89, 51.91, 69.30,  92.50, 123.47, 164.81, 207.65, 277.18],
+        "Standard": [30, 35, 40, 45, 50, 55, 59, 64],
+        "Drop E": [28, 35, 40, 45, 50, 55, 59, 64],
+        "Drop A + Drop E": [28, 33, 40, 45, 50, 55, 59, 64],
+        "E Standard": [28, 33, 38, 43, 48, 53, 57, 62],
+        "Eb Standard": [27, 32, 37, 42, 47, 52, 56, 61],
+        "Drop D": [26, 33, 38, 43, 48, 53, 57, 62],
     },
     "bass-4": {
-        "Standard":    [41.20, 55.00, 73.42,  98.00],
-        "Eb Standard": [38.89, 51.91, 69.30,  92.50],
-        "Drop D":      [36.71, 55.00, 73.42,  98.00],
-        "D Standard":  [36.71, 48.99, 65.41,  87.31],
-        "Drop C":      [32.70, 48.99, 65.41,  87.31],
+        "Standard": [28, 33, 38, 43],
+        "Eb Standard": [27, 32, 37, 42],
+        "D Standard": [26, 31, 36, 41],
+        "C# Standard": [25, 30, 35, 40],
+        "C Standard": [24, 29, 34, 39],
+        "Drop D": [26, 33, 38, 43],
+        "Drop C": [24, 31, 36, 41],
+        "BEAD": [23, 28, 33, 38],
     },
     "bass-5": {
-        "Standard":    [30.87, 41.20, 55.00, 73.42,  98.00],
-        "Eb Standard": [29.14, 38.89, 51.91, 69.30,  92.50],
-        "Drop D":      [30.87, 36.71, 55.00, 73.42,  98.00],
-        "D Standard":  [27.50, 36.71, 48.99, 65.41,  87.31],
-        "Drop C":      [27.50, 32.70, 48.99, 65.41,  87.31],
+        "Standard": [23, 28, 33, 38, 43],
+        "High C": [28, 33, 38, 43, 48],
+        "Eb Standard": [22, 27, 32, 37, 42],
+        "D Standard": [21, 26, 31, 36, 41],
+        "C# Standard": [20, 25, 30, 35, 40],
+        "C Standard": [19, 24, 29, 34, 39],
+        "Drop A": [21, 28, 33, 38, 43],
     },
+    "bass-6": {
+        "Standard": [23, 28, 33, 38, 43, 48],
+        "Eb Standard": [22, 27, 32, 37, 42, 47],
+        "D Standard": [21, 26, 31, 36, 41, 46],
+        "C# Standard": [20, 25, 30, 35, 40, 45],
+        "C Standard": [19, 24, 29, 34, 39, 44],
+    },
+}
+
+
+def midi_to_freq(midi: int, reference_pitch: float = DEFAULT_REFERENCE_PITCH) -> float:
+    """Return the frequency for a MIDI note at the supplied A4 reference."""
+    return reference_pitch * math.pow(2, (midi - 69) / 12)
+
+
+def open_midis_to_freqs(midis: list[int], reference_pitch: float = DEFAULT_REFERENCE_PITCH) -> list[float]:
+    """Return rounded frequencies for low-to-high MIDI open strings."""
+    return [round(midi_to_freq(m, reference_pitch), 2) for m in midis]
+
+
+def tuning_offsets_from_midis(instrument_key: str, midis: list[int]) -> list[int] | None:
+    """Return semitone offsets from the instrument's standard open strings."""
+    standard = STANDARD_OPEN_MIDIS.get(instrument_key)
+    if not standard or len(standard) != len(midis):
+        return None
+    return [int(m - s) for m, s in zip(midis, standard)]
+
+
+def tuning_midis_from_offsets(instrument_key: str, offsets: list[int]) -> list[int] | None:
+    """Return absolute open-string MIDI notes for host semitone offsets."""
+    standard = STANDARD_OPEN_MIDIS.get(instrument_key)
+    if not standard or len(standard) != len(offsets):
+        return None
+    return [int(s + o) for s, o in zip(standard, offsets)]
+
+
+def tuning_preset_offsets(instrument_key: str, name: str) -> list[int] | None:
+    """Return host semitone offsets for a named preset."""
+    midis = TUNING_PRESET_MIDIS.get(instrument_key, {}).get(name)
+    if not midis:
+        return None
+    return tuning_offsets_from_midis(instrument_key, midis)
+
+
+# Canonical tuning frequencies at 440 Hz reference, keyed by instrument then
+# tuning name. Kept for the existing /api/tunings contract.
+DEFAULT_TUNINGS: dict[str, dict[str, list[float]]] = {
+    instrument: {
+        name: open_midis_to_freqs(midis)
+        for name, midis in presets.items()
+    }
+    for instrument, presets in TUNING_PRESET_MIDIS.items()
 }
 
 
@@ -66,6 +147,256 @@ def apply_reference_pitch(
         for instrument, names in tunings.items()
     }
 
+
+PROFILE_IDS = ("guitar-lead", "guitar-rhythm", "bass")
+PROFILE_PATHWAYS = ("songs", "practice", "learn", "studio")
+DEFAULT_ACTIVE_INSTRUMENT_PROFILE = "guitar-lead"
+PROFILE_DEFAULTS: dict[str, dict] = {
+    "guitar-lead": {
+        "id": "guitar-lead",
+        "label": "Lead Guitar",
+        "instrument": "guitar",
+        "role": "lead",
+        "string_count": 6,
+        "tuning": "Standard",
+        "reference_pitch": DEFAULT_REFERENCE_PITCH,
+        "pathway": "songs",
+    },
+    "guitar-rhythm": {
+        "id": "guitar-rhythm",
+        "label": "Rhythm Guitar",
+        "instrument": "guitar",
+        "role": "rhythm",
+        "string_count": 6,
+        "tuning": "Standard",
+        "reference_pitch": DEFAULT_REFERENCE_PITCH,
+        "pathway": "songs",
+    },
+    "bass": {
+        "id": "bass",
+        "label": "Bass",
+        "instrument": "bass",
+        "role": "bass",
+        "string_count": 4,
+        "tuning": "Standard",
+        "reference_pitch": DEFAULT_REFERENCE_PITCH,
+        "pathway": "songs",
+    },
+}
+
+
+def instrument_key(instrument: str, string_count: int) -> str:
+    return f"{instrument}-{string_count}"
+
+
+def default_instrument_profiles() -> dict[str, dict]:
+    return {profile_id: dict(profile) for profile_id, profile in PROFILE_DEFAULTS.items()}
+
+
+def _valid_reference_pitch(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        ref = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(ref) or ref < 430.0 or ref > 450.0:
+        return None
+    return ref
+
+
+def _valid_tuning_for_key(key: str, tuning):
+    if isinstance(tuning, str):
+        if len(tuning) > 64:
+            return None
+        if tuning in TUNING_PRESET_MIDIS.get(key, {}):
+            return tuning
+        # A name that IS a built-in preset for a different key is a misapplied
+        # built-in (e.g. "Drop D" on a 5-string bass, whose low string is B) —
+        # reject it. A name unknown to every built-in table is a provider/custom
+        # tuning (the tuner plugin's, exposed via /api/tunings) that this pure
+        # layer can't resolve — accept it so settings round-trip; the provider
+        # owns its validity.
+        if any(tuning in names for names in TUNING_PRESET_MIDIS.values()):
+            return None
+        return tuning
+    if isinstance(tuning, list):
+        expected = len(STANDARD_OPEN_MIDIS.get(key, []))
+        if len(tuning) != expected:
+            return None
+        if any(isinstance(o, bool) or not isinstance(o, int) or o < -12 or o > 12 for o in tuning):
+            return None
+        return list(tuning)
+    return None
+
+
+def normalize_instrument_profile(profile_id: str, raw) -> tuple[dict | None, str | None]:
+    """Validate one persisted host instrument profile."""
+    base = dict(PROFILE_DEFAULTS.get(profile_id, {}))
+    if not base:
+        return None, f"unknown instrument profile: {profile_id}"
+    if raw is None:
+        return base, None
+    if not isinstance(raw, dict):
+        return None, f"instrument_profiles.{profile_id} must be an object"
+
+    instrument = raw.get("instrument", base["instrument"])
+    if instrument not in ("guitar", "bass"):
+        return None, f"instrument_profiles.{profile_id}.instrument must be 'guitar' or 'bass'"
+
+    try:
+        string_count = int(raw.get("string_count", base["string_count"]))
+    except (TypeError, ValueError, OverflowError):
+        return None, f"instrument_profiles.{profile_id}.string_count must be valid for the instrument"
+    key = instrument_key(instrument, string_count)
+    if key not in STANDARD_OPEN_MIDIS:
+        return None, f"instrument_profiles.{profile_id}.string_count must be valid for the instrument"
+
+    tuning = _valid_tuning_for_key(key, raw.get("tuning", base["tuning"]))
+    if tuning is None:
+        return None, f"instrument_profiles.{profile_id}.tuning must match {key}"
+
+    ref = _valid_reference_pitch(raw.get("reference_pitch", base["reference_pitch"]))
+    if ref is None:
+        return None, f"instrument_profiles.{profile_id}.reference_pitch must be a number between 430 and 450"
+
+    label = raw.get("label", base["label"])
+    if not isinstance(label, str) or len(label) > 64:
+        return None, f"instrument_profiles.{profile_id}.label must be a short string"
+    role = raw.get("role", base["role"])
+    if not isinstance(role, str) or len(role) > 32:
+        return None, f"instrument_profiles.{profile_id}.role must be a short string"
+    pathway = raw.get("pathway", base["pathway"])
+    if not isinstance(pathway, str) or pathway not in PROFILE_PATHWAYS:
+        return None, f"instrument_profiles.{profile_id}.pathway must be one of songs, practice, learn, studio"
+
+    out = dict(base)
+    out.update({
+        "id": profile_id,
+        "label": label,
+        "instrument": instrument,
+        "role": role,
+        "string_count": string_count,
+        "tuning": tuning,
+        "reference_pitch": ref,
+        "pathway": pathway,
+    })
+    return out, None
+
+
+def normalize_instrument_profiles(raw_profiles=None) -> tuple[dict[str, dict] | None, str | None]:
+    """Validate persisted host profiles, filling omitted built-ins with defaults."""
+    if raw_profiles is None:
+        return default_instrument_profiles(), None
+    if not isinstance(raw_profiles, dict):
+        return None, "instrument_profiles must be an object"
+    profiles = {}
+    for profile_id in PROFILE_IDS:
+        profile, error = normalize_instrument_profile(profile_id, raw_profiles.get(profile_id))
+        if error:
+            return None, error
+        profiles[profile_id] = profile
+    return profiles, None
+
+
+def active_profile_id(raw) -> str:
+    return raw if raw in PROFILE_DEFAULTS else DEFAULT_ACTIVE_INSTRUMENT_PROFILE
+
+
+def profile_from_legacy_settings(cfg: dict) -> dict:
+    """Build an active profile from the old flat settings keys."""
+    instrument = cfg.get("instrument") if cfg.get("instrument") in ("guitar", "bass") else "guitar"
+    fallback_sc = 4 if instrument == "bass" else 6
+    try:
+        sc = int(cfg.get("string_count", fallback_sc))
+    except (TypeError, ValueError, OverflowError):
+        sc = fallback_sc
+    key = instrument_key(instrument, sc)
+    if key not in STANDARD_OPEN_MIDIS:
+        sc = fallback_sc
+        key = instrument_key(instrument, sc)
+    tuning = _valid_tuning_for_key(key, cfg.get("tuning", "Standard")) or "Standard"
+    ref = _valid_reference_pitch(cfg.get("reference_pitch", DEFAULT_REFERENCE_PITCH)) or DEFAULT_REFERENCE_PITCH
+    pathway = cfg.get("pathway") if cfg.get("pathway") in PROFILE_PATHWAYS else "songs"
+    profile_id = "bass" if instrument == "bass" else DEFAULT_ACTIVE_INSTRUMENT_PROFILE
+    profile = dict(PROFILE_DEFAULTS[profile_id])
+    profile.update({
+        "instrument": instrument,
+        "string_count": sc,
+        "tuning": tuning,
+        "reference_pitch": ref,
+        "pathway": pathway,
+    })
+    return profile
+
+
+def settings_with_instrument_profiles(cfg: dict) -> dict:
+    """Return settings with canonical host profiles and mirrored flat keys."""
+    out = dict(cfg)
+    profiles, _error = normalize_instrument_profiles(out.get("instrument_profiles"))
+    if profiles is None:
+        profiles = default_instrument_profiles()
+    if "instrument_profiles" not in out:
+        legacy = profile_from_legacy_settings(out)
+        profiles[legacy["id"]] = legacy
+        # Default the active profile to the one migrated from the legacy flat
+        # fields, but DON'T clobber an explicit request — a fresh-config
+        # `POST {"active_instrument_profile": "bass"}` must switch, not be
+        # overwritten by the guitar-lead inferred from defaults. active_profile_id
+        # below normalizes an invalid value.
+        out.setdefault("active_instrument_profile", legacy["id"])
+    active = active_profile_id(out.get("active_instrument_profile"))
+    selected = profiles[active]
+    out["instrument_profiles"] = profiles
+    out["active_instrument_profile"] = active
+    out["instrument"] = selected["instrument"]
+    out["string_count"] = selected["string_count"]
+    out["tuning"] = selected["tuning"]
+    out["reference_pitch"] = selected["reference_pitch"]
+    out["pathway"] = selected["pathway"]
+    return out
+
+
+def apply_flat_instrument_patch_to_profiles(cfg: dict, updates: dict) -> dict:
+    """Mirror legacy flat instrument updates into the active host profile."""
+    out = settings_with_instrument_profiles(cfg)
+    if not any(k in updates for k in ("instrument", "string_count", "tuning", "reference_pitch", "pathway")):
+        return out
+    active = active_profile_id(out.get("active_instrument_profile"))
+    if "instrument" in updates:
+        active = "bass" if updates["instrument"] == "bass" else "guitar-lead"
+        out["active_instrument_profile"] = active
+    current = dict(out["instrument_profiles"][active])
+
+    if "instrument" in updates:
+        current["instrument"] = updates["instrument"]
+        if "string_count" not in updates:
+            current["string_count"] = 4 if updates["instrument"] == "bass" else 6
+    if "string_count" in updates:
+        current["string_count"] = updates["string_count"]
+    if "reference_pitch" in updates:
+        current["reference_pitch"] = updates["reference_pitch"]
+    if "pathway" in updates:
+        current["pathway"] = updates["pathway"]
+    if "tuning" in updates:
+        current["tuning"] = updates["tuning"]
+    else:
+        key = instrument_key(current["instrument"], current["string_count"])
+        if _valid_tuning_for_key(key, current.get("tuning")) is None:
+            current["tuning"] = "Standard"
+
+    profile, error = normalize_instrument_profile(active, current)
+    if error:
+        raise ValueError(error)
+    out["instrument_profiles"][active] = profile
+    out.update({
+        "instrument": profile["instrument"],
+        "string_count": profile["string_count"],
+        "tuning": profile["tuning"],
+        "reference_pitch": profile["reference_pitch"],
+        "pathway": profile["pathway"],
+    })
+    return out
 
 def tuning_name(offsets: list[int]) -> str:
     # All three pattern checks below are gated on `len(offsets) == 6`. The

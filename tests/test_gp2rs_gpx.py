@@ -122,6 +122,79 @@ def test_parse_bcfs_rejects_bad_magic():
         _parse_bcfs(b"NOPE" + b"\x00" * 16)
 
 
+# ── _parse_bcfs container round-trip (GP6 .gpx partial final-sector) ─────────
+
+def _build_bcfs(entries, short_by=0):
+    """Assemble a minimal in-memory BCFS container for _parse_bcfs.
+
+    ``entries`` is ``[(name: bytes, payload: bytes, data_sector: int), ...]``.
+    The directory entry for entry *i* is written to sector ``i + 1``; each
+    entry's payload goes in the sector index it names. ``short_by`` truncates
+    the final buffer by N bytes to emulate a real .gpx's partial trailing
+    sector (the BCFZ-declared decompressed size isn't 0x1000-aligned). Layout
+    mirrors the reader: a 4-byte ``BCFS`` header, then 0x1000-byte sectors,
+    with every value read at ``HDR + sector * 0x1000``.
+    """
+    SECTOR = 0x1000
+    HDR = 4
+    max_sector = max([e[2] for e in entries] + [len(entries)])
+    buf = bytearray(b"BCFS" + b"\x00" * ((max_sector + 1) * SECTOR))
+
+    def put_u32(off, val):
+        struct.pack_into("<I", buf, HDR + off, val)
+
+    for i, (name, payload, data_sector) in enumerate(entries):
+        dir_off = (i + 1) * SECTOR                 # directory entry -> sector i+1
+        put_u32(dir_off + 0x00, 2)                 # entry type: file
+        nm = name[:127]
+        buf[HDR + dir_off + 0x04: HDR + dir_off + 0x04 + len(nm)] = nm
+        put_u32(dir_off + 0x8C, len(payload))      # declared file size
+        put_u32(dir_off + 0x94, data_sector)       # first data-sector pointer
+        put_u32(dir_off + 0x94 + 4, 0)             # chain terminator
+        dpos = HDR + data_sector * SECTOR
+        buf[dpos: dpos + len(payload)] = payload
+    if short_by:
+        del buf[len(buf) - short_by:]
+    return bytes(buf)
+
+
+def test_parse_bcfs_reads_short_final_sector():
+    """The regression: a real .gpx ends a byte short of a full 0x1000 sector,
+    so its last (small) container file lands in a partial trailing sector. The
+    reader must clamp that read, not reject the whole container — rejecting it
+    is what made every GP6 .gpx fail to import with 'sector pointer out of
+    range'."""
+    bcfs = _build_bcfs([(b"score.gpif", b"hello", 2)], short_by=1)
+    assert (len(bcfs) - 4) % 0x1000 == 0x1000 - 1   # final sector is 1 short
+    assert _parse_bcfs(bcfs)["score.gpif"] == b"hello"
+
+
+def test_parse_bcfs_full_sector_round_trip():
+    """A sector-aligned container round-trips unchanged (baseline)."""
+    assert _parse_bcfs(_build_bcfs([(b"misc.xml", b"<x/>", 2)]))["misc.xml"] == b"<x/>"
+
+
+def test_parse_bcfs_multi_file_short_final_sector():
+    """Real-world shape: score.gpif plus small config files, the last one in
+    the partial trailing sector."""
+    out = _parse_bcfs(_build_bcfs([
+        (b"score.gpif", b"<GPIF/>", 3),
+        (b"LayoutConfiguration", b"AB", 4),
+    ], short_by=1))
+    assert out["score.gpif"] == b"<GPIF/>"
+    assert out["LayoutConfiguration"] == b"AB"
+
+
+def test_parse_bcfs_rejects_sector_starting_past_end():
+    """A sector pointer whose *start* is beyond the container is genuinely
+    malformed and must still raise — the clamp tolerates a partial final
+    sector, not arbitrary out-of-range pointers."""
+    bcfs = bytearray(_build_bcfs([(b"x", b"y", 2)]))
+    struct.pack_into("<I", bcfs, 4 + 0x1000 + 0x94, 9999)  # absurd data-sector ptr
+    with pytest.raises(ValueError, match="out of range"):
+        _parse_bcfs(bytes(bcfs))
+
+
 # ── _note_is_tie ────────────────────────────────────────────────────────────
 
 def test_note_is_tie_destination():

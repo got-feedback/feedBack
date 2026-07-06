@@ -305,7 +305,7 @@
                     return fetch('/api/tunings')
                         .then(function (r) { return r && r.ok ? r.json() : null; })
                         .then(function (t) {
-                            const byName = t && t[key];
+                            const byName = t && ((t.tunings && t.tunings[key]) || t[key]);
                             commit(byName ? _offsetsFromFreqs(byName[s.tuning], byName.Standard) : null);
                         })
                         .catch(function () { commit(null); });

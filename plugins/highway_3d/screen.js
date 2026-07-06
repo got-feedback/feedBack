@@ -3747,6 +3747,15 @@
         // ── Per-instance Three.js state ───────────────────────────────────
         let scene = null, cam = null, ren = null;
         let wrap = null;
+        // WebGL context-loss recovery. Switching the active window / alt-tabbing
+        // (especially on Windows) can trigger a GPU context reset; with no
+        // handler the lost context escalates into a render-process crash. The
+        // listeners (bound in initScene on ren.domElement, removed in teardown)
+        // preventDefault the loss so the browser keeps the context restorable,
+        // _ctxLost gates draw() off the dead context, and on restore we reset the
+        // viewport + resume (Three re-uploads scene resources on the next render).
+        let _ctxLost = false;
+        let _onCtxLost = null, _onCtxRestored = null;
         let bcCtrl = null; // Butterchurn audio-reactive background (the 'butterchurn' bg-style)
         let _chartEnv = 0, _chartPrevT = -1, _bcBeatIdx = 0, _bcNoteIdx = 0, _bcChordIdx = 0, _bcTintTarget = null;
         let _tintR = 20, _tintG = 24, _tintB = 40; // smoothed instrument-color tint for the bg
@@ -6525,6 +6534,26 @@
             _probe = new T.Vector3();
             ren.setClearColor(0x101820, _bcActive() ? 0 : 1);
             wrap.appendChild(ren.domElement);
+
+            // WebGL context-loss recovery (see the _ctxLost declaration). Bound
+            // on Three's own canvas — the context that actually resets on a GPU
+            // reset / alt-tab. preventDefault() keeps the context restorable
+            // instead of letting the loss escalate to a render-process crash;
+            // _ctxLost then makes draw() bail so no GL work runs on the dead
+            // context; on restore we reset the viewport and resume (Three
+            // re-uploads geometry/materials/textures lazily on the next render).
+            _onCtxLost = (e) => {
+                if (e && typeof e.preventDefault === 'function') e.preventDefault();
+                _ctxLost = true;
+                console.warn('[3D-Hwy] WebGL context lost — pausing render until it is restored.');
+            };
+            _onCtxRestored = () => {
+                _ctxLost = false;
+                console.warn('[3D-Hwy] WebGL context restored — resuming render.');
+                try { const s = canvasSize(highwayCanvas); if (s.w > 0 && s.h > 0) applySize(s.w, s.h); } catch (err) {}
+            };
+            ren.domElement.addEventListener('webglcontextlost', _onCtxLost, false);
+            ren.domElement.addEventListener('webglcontextrestored', _onCtxRestored, false);
 
             lyricsCanvas = document.createElement('canvas');
             lyricsCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:1;';
@@ -14829,6 +14858,15 @@
             // mid-teardown settings change doesn't try to rebuild a torn-
             // down scene; then dispose the active style's resources.
             if (_bgListener) { _bgUnsubscribe(_bgListener); _bgListener = null; }
+            // WebGL context-loss listeners (bound in initScene on ren.domElement).
+            // Remove before ren is disposed below so a torn-down instance can't
+            // keep firing them; reset the flag so a reused instance starts clean.
+            if (ren && ren.domElement) {
+                if (_onCtxLost) { try { ren.domElement.removeEventListener('webglcontextlost', _onCtxLost, false); } catch (e) {} }
+                if (_onCtxRestored) { try { ren.domElement.removeEventListener('webglcontextrestored', _onCtxRestored, false); } catch (e) {} }
+            }
+            _onCtxLost = _onCtxRestored = null;
+            _ctxLost = false;
             // Notedetect listeners (issue #9). Remove on destroy so a
             // panel that stops doesn't keep accumulating marks. Marks
             // arrays are cleared too — they hold stale chart positions
@@ -15154,6 +15192,7 @@
 
             draw(bundle) {
                 if (!_isReady) return;
+                if (_ctxLost) return;   // GPU context lost (alt-tab / reset) — skip until restored
                 if (!_chartPrewarmed) {
                     _chartPrewarmed = true;
                     _prewarmChart(bundle);

@@ -2004,18 +2004,32 @@ function createHighway() {
                 const seedBase = (_frameIdx + n.s + ((n.t * 60) | 0)) | 0;
                 ctx.save();
                 ctx.fillStyle = col;
-                ctx.shadowColor = col;
-                ctx.shadowBlur = (8 + 6 * _shimmerNoise(seedBase)) * a;          // shimmering glow
-                ctx.globalAlpha = (0.45 + 0.45 * a) * (0.78 + 0.22 * _shimmerNoise(seedBase + 17));
-                ctx.beginPath();
-                ctx.moveTo(x0 - sw0, y0);
-                ctx.lineTo(x0 + sw0, y0);
-                ctx.lineTo(x1 + sw1, y1);
-                ctx.lineTo(x1 - sw1, y1);
-                ctx.fill();
+                // Shimmering glow WITHOUT ctx.shadowBlur: blur cost scales with
+                // the blurred DEVICE-pixel area, and a held sustain's trail can
+                // span half the (DPR-scaled) canvas — profiling the "stutters
+                // while playing" report put this per-frame blur pass at the top
+                // exactly while a sustain is held. Three inflated low-alpha
+                // fills of the same quad read as the same soft glow at a flat,
+                // area-independent cost. The shimmer LUT still drives the
+                // per-frame size/brightness flicker (feedBack#254 intent).
+                const glowPx = (8 + 6 * _shimmerNoise(seedBase)) * a;
+                const baseA = (0.45 + 0.45 * a) * (0.78 + 0.22 * _shimmerNoise(seedBase + 17));
+                const fillTrail = (inflate) => {
+                    ctx.beginPath();
+                    ctx.moveTo(x0 - sw0 - inflate, y0);
+                    ctx.lineTo(x0 + sw0 + inflate, y0);
+                    ctx.lineTo(x1 + sw1 + inflate, y1);
+                    ctx.lineTo(x1 - sw1 - inflate, y1);
+                    ctx.fill();
+                };
+                ctx.globalAlpha = baseA * 0.22;
+                fillTrail(glowPx);
+                ctx.globalAlpha = baseA * 0.4;
+                fillTrail(glowPx * 0.45);
+                ctx.globalAlpha = baseA;
+                fillTrail(0);
                 // Crackling "current" — a jittery white core line down
                 // the trail, re-randomised each frame.
-                ctx.shadowBlur = 0;
                 ctx.globalCompositeOperation = 'lighter';
                 ctx.globalAlpha = a * (0.55 + 0.45 * _shimmerNoise(seedBase + 31));
                 ctx.strokeStyle = '#ffffff';

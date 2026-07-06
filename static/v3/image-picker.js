@@ -138,6 +138,17 @@
             '<div class="flex flex-wrap gap-3">' + SKELETON_TILE + SKELETON_TILE + SKELETON_TILE + '</div>' +
             '<div class="text-xs text-fb-textDim pt-2">Fetching covers… the source is rate-limited.</div>' +
             '</div>' +
+            // Search Cover Art Archive — find an album cover even when the song has
+            // no match (the auto candidates above are empty then). Pre-filled from
+            // the song's artist + album/title; the source is rate-limited.
+            '<div class="space-y-2 pt-1">' +
+            '<div class="text-xs font-semibold uppercase tracking-wider text-fb-textDim">Search covers</div>' +
+            '<div class="flex gap-2">' +
+            '<input data-ip-search-input type="text" value="' + esc(_cur.query || '') + '" placeholder="artist album" class="flex-1 bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1 text-sm text-fb-text outline-none focus:border-fb-primary">' +
+            '<button data-ip-search-go class="text-sm text-fb-primary hover:text-fb-primaryHi border border-fb-primary/40 rounded-md px-3">Search</button>' +
+            '</div>' +
+            '<div data-ip-search-results class="flex flex-wrap gap-3"></div>' +
+            '</div>' +
             '<div data-ip-status class="hidden text-xs text-fb-accent"></div>' +
             '</div></div>' +
             '<input type="file" accept="image/*" data-ip-file class="hidden">';
@@ -185,7 +196,45 @@
                 }
             });
         });
+        const searchInput = panel.querySelector('[data-ip-search-input]');
+        const runSearch = () => coverSearch(panel, (searchInput && searchInput.value) || '');
+        panel.querySelector('[data-ip-search-go]')?.addEventListener('click', runSearch);
+        searchInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
         panel.querySelector('[data-ip-close]')?.focus();
+    }
+
+    // Search Cover Art Archive (via the song-scoped cover-search endpoint) and
+    // render the album covers as pickable tiles — the same apply('url') path as
+    // the auto candidates. Covers with no CAA art self-hide (img onerror).
+    async function coverSearch(panel, query) {
+        const out = panel.querySelector('[data-ip-search-results]');
+        const fn = _cur && _cur.filename;
+        if (!out || !fn) return;
+        out.innerHTML = '<div class="flex flex-wrap gap-3">' + SKELETON_TILE + SKELETON_TILE + '</div>';
+        let body = null;
+        try {
+            const r = await fetch('/api/song/' + enc(fn) + '/art/cover-search?q=' + enc(String(query).trim()));
+            if (r.ok) body = await r.json();
+        } catch (_) { /* falls through to the empty state */ }
+        if (!_cur || _cur.filename !== fn) return;   // closed / changed song while searching
+        const covers = (body && body.covers) || [];
+        if (!covers.length) {
+            out.innerHTML = '<div class="text-xs text-fb-textDim">' +
+                ((body && body.error) ? 'Cover search is unavailable right now.' : 'No covers found — try a different search.') +
+                '</div>';
+            return;
+        }
+        out.innerHTML = covers.map((c, i) =>
+            tileHtml('data-ip-cover="' + i + '"', imgFace(c.thumb_url), c.label || 'Cover')).join('');
+        out.querySelectorAll('[data-ip-cover]').forEach((btn) => {
+            const img = btn.querySelector('img');
+            if (img) img.onerror = () => btn.classList.add('hidden');   // no CAA art for this album → hide
+            btn.addEventListener('click', () => {
+                if (_busy) return;
+                const c = covers[Number(btn.getAttribute('data-ip-cover'))];
+                if (c) apply('url', c.thumb_url);
+            });
+        });
     }
 
     // The one candidates fetch, cancelled if the modal closes first. Failure
@@ -281,7 +330,13 @@
         const filename = opts && opts.filename;
         if (!filename) return;
         _lastFocus = document.activeElement;
-        _cur = { filename: filename, title: (opts && opts.title) || filename };
+        const title = (opts && opts.title) || filename;
+        const artist = (opts && opts.artist) || '';
+        const album = (opts && opts.album) || '';
+        // Pre-fill the cover search: "artist album" when the album is known, else
+        // just the artist, else the title — the server default backs it up.
+        const query = [artist, album].filter(Boolean).join(' ').trim() || title;
+        _cur = { filename: filename, title: title, query: query };
         _busy = false;
         const m = ensureModal();
         const panel = document.getElementById('v3-imgpick-panel');

@@ -97,6 +97,110 @@ def mb_doc(rid="rec-1", title="Thunderstruck", artist="AC/DC", artist_id="art-1"
     }
 
 
+# ── strict-then-loose search fallback ────────────────────────────────────────
+
+def test_search_falls_back_to_loose_when_strict_is_empty(server, monkeypatch):
+    """The strict field-phrase query misses a non-Latin-primary artist; the
+    loose retry (no field scoping) searches aliases and finds it."""
+    calls = []
+
+    def _routed(path, params):
+        q = params.get("query", "")
+        calls.append(q)
+        if q.startswith("recording:"):        # strict phrase → nothing
+            return {"recordings": []}
+        return {"recordings": [mb_doc(rid="rec-x", title="Telephone Number")]}
+
+    monkeypatch.setattr(server, "_mb_http_get", _routed)
+    cands = server._mb_search_recordings("Junko Ohashi", "Telephone Number")
+    assert len(cands) == 1
+    assert len(calls) == 2                     # strict first, then the loose retry
+    assert calls[0].startswith("recording:")   # strict is the field-phrase form
+    assert "artist:" not in calls[1] and '"' not in calls[1]   # loose retry
+
+
+def test_search_does_not_retry_when_strict_hits(server, monkeypatch):
+    """A strict hit must not spend a second (throttled) request on the loose
+    query."""
+    calls = []
+
+    def _routed(path, params):
+        calls.append(params.get("query", ""))
+        return {"recordings": [mb_doc()]}
+
+    monkeypatch.setattr(server, "_mb_http_get", _routed)
+    cands = server._mb_search_recordings("AC/DC", "Thunderstruck")
+    assert len(cands) == 1
+    assert len(calls) == 1
+
+
+# ── alias-aware scoring (non-Latin-primary artists) ──────────────────────────
+
+_AID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def test_artist_aliases_fetched_and_cached(server, monkeypatch):
+    calls = []
+
+    def fake(path, params):
+        calls.append(path)
+        return {"sort-name": "Ohashi, Junko",
+                "aliases": [{"name": "Junko Ohashi"}, {"name": "大橋 純子"}]}
+
+    monkeypatch.setattr(server, "_mb_http_get", fake)
+    names = server._mb_artist_aliases(_AID)
+    assert "Junko Ohashi" in names and "Ohashi, Junko" in names
+    server._mb_artist_aliases(_AID)          # cached → no second request
+    assert len(calls) == 1
+
+
+def test_artist_aliases_rejects_bad_id(server, monkeypatch):
+    def boom(path, params):
+        raise AssertionError("must not fetch for a non-UUID id")
+
+    monkeypatch.setattr(server, "_mb_http_get", boom)
+    assert server._mb_artist_aliases("not-a-uuid") == []
+
+
+def test_enrich_auto_matches_japanese_primary_via_alias(server, monkeypatch):
+    # A pack whose (romanized) artist MB stores under a Japanese primary name.
+    _put(server, "x.sloppak", title="Telephone Number", artist="Junko Ohashi")
+
+    def _routed(path, params):
+        if path.startswith("artist/"):                      # alias lookup
+            return {"sort-name": "Ohashi, Junko",
+                    "aliases": [{"name": "Junko Ohashi"}]}
+        q = params.get("query", "")
+        if q.startswith("recording:"):                      # strict phrase → nothing
+            return {"recordings": []}
+        return {"recordings": [mb_doc(rid="rec-jp", title="Telephone Number",
+                                      artist="大橋純子", artist_id=_AID)]}   # loose hit
+
+    monkeypatch.setattr(server, "_mb_http_get", _routed)
+    monkeypatch.setattr(server, "_enrich_network_enabled", lambda: True)
+    server._background_enrich()
+    row = server.meta_db.get_enrichment("x.sloppak")
+    # The romanized alias lifts the artist over the auto floor → auto-confirmed.
+    assert row["match_state"] == "matched"
+    assert row["mb_recording_id"] == "rec-jp"
+
+
+# ── per-song field locks respected by the auto-matcher ───────────────────────
+
+def test_locked_field_not_canonicalized_by_auto_match(server, monkeypatch):
+    _put(server, "x.sloppak")                       # title "Thunderstruck (v2)", artist "ACDC"
+    server.meta_db.set_song_override("x.sloppak", "artist", locked=True)
+    monkeypatch.setattr(server, "_mb_http_get",
+                        lambda path, params: {"recordings": [mb_doc()]})
+    monkeypatch.setattr(server, "_enrich_network_enabled", lambda: True)
+    server._background_enrich()
+    row = server.meta_db.get_enrichment("x.sloppak")
+    assert row["match_state"] == "matched"          # still matches (identity applies)…
+    assert row["canon_artist"] is None              # …but the LOCKED artist isn't canonicalized
+    assert row["canon_title"] == "Thunderstruck"    # unlocked display fields still apply
+    assert row["mb_recording_id"]                   # identity keys still stored (art needs them)
+
+
 # ── offline safety (the pytest-never-hits-network contract) ──────────────────
 
 def test_offline_default_skips_matching(server, monkeypatch):

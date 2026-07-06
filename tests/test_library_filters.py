@@ -614,3 +614,16 @@ def test_artist_filter_is_case_insensitive(client, seeded):
     data = _get(client, artist="a band")
     assert data["total"] == 1
     assert data["songs"][0]["filename"] == "a.archive"
+
+
+def test_unmatched_flag_and_quick_filter(server_mod, client):
+    # A per-card "no match" badge needs the row to carry the enrichment state.
+    _put(server_mod, filename="a.archive", title="Matched", artist="A")
+    _put(server_mod, filename="b.archive", title="Missed", artist="B")
+    server_mod.meta_db.apply_enrichment_match("b.archive", "h", "failed")   # no-match
+    rows = {s["filename"]: s for s in server_mod.meta_db.query_page()[0]}
+    assert rows["b.archive"]["unmatched"] is True
+    assert rows["a.archive"]["unmatched"] is False
+    # The "Unmatched" quick-filter (match=unmatched) returns only the failed song.
+    fns = [s["filename"] for s in client.get("/api/library?match=unmatched").json()["songs"]]
+    assert fns == ["b.archive"]

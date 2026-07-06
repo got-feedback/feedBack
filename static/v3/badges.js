@@ -21,7 +21,13 @@
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-    const STRING_COUNTS = { guitar: [6, 7, 8], bass: [4, 5] };
+    const STRING_COUNTS = { guitar: [6, 7, 8], bass: [4, 5, 6] };
+    const PATHWAY_OPTIONS = [
+        { id: 'songs', label: 'Songs' },
+        { id: 'practice', label: 'Practice' },
+        { id: 'learn', label: 'Learn' },
+        { id: 'studio', label: 'Studio' },
+    ];
     // Tuning names per instrument key (e.g. 'guitar-6', 'bass-4'), loaded from
     // GET /api/tunings. Falls back to empty arrays until the fetch resolves.
     let _tuningsByKey = {};
@@ -106,7 +112,7 @@
         }
     }
 
-    let settings = { instrument: 'guitar', string_count: 6, tuning: 'Standard', reference_pitch: 440 };
+    let settings = { instrument: 'guitar', string_count: 6, tuning: 'Standard', reference_pitch: 440, pathway: 'songs', instrument_profiles: {}, active_instrument_profile: 'guitar-lead' };
 
     async function loadTunings() {
         try {
@@ -124,6 +130,15 @@
                 }
             }
         } catch (_) { /* non-fatal — TUNINGS falls back to empty, dropdown shows nothing */ }
+    }
+
+    function pathwayForProfile(profiles, profileId, fallback) {
+        const p = profiles && profiles[profileId];
+        return p && PATHWAY_OPTIONS.some((o) => o.id === p.pathway) ? p.pathway : (fallback || 'songs');
+    }
+
+    function profileIdForInstrument(inst) {
+        return inst === 'bass' ? 'bass' : 'guitar-lead';
     }
 
     async function loadSettings() {
@@ -150,16 +165,34 @@
                 if (typeof s.tuning === 'string') tuning = tunings.includes(s.tuning) ? s.tuning : (tunings[0] || 'Standard');
                 else if (Array.isArray(s.tuning)) tuning = s.tuning;
                 else tuning = tunings[0] || 'Standard';
+                const profiles = s.instrument_profiles && typeof s.instrument_profiles === 'object' ? s.instrument_profiles : {};
+                const pathway = PATHWAY_OPTIONS.some((o) => o.id === s.pathway) ? s.pathway : 'songs';
                 settings = {
                     instrument: instrument,
                     string_count: scValid,
                     tuning: tuning,
                     reference_pitch: Math.min(450, Math.max(430, ref)),
+                    pathway: pathway,
+                    instrument_profiles: profiles,
+                    active_instrument_profile: typeof s.active_instrument_profile === 'string' ? s.active_instrument_profile : profileIdForInstrument(instrument),
                 };
             }
         } catch (e) { /* settings endpoint always present */ }
     }
 
+    function syncLocalProfilePatch(patch) {
+        const profileId = profileIdForInstrument(patch.instrument || settings.instrument);
+        if (!settings.instrument_profiles || typeof settings.instrument_profiles !== 'object') settings.instrument_profiles = {};
+        if (patch.instrument) settings.active_instrument_profile = profileId;
+        const profile = Object.assign({}, settings.instrument_profiles[profileId] || {});
+        let changed = false;
+        if (patch.instrument) { profile.instrument = patch.instrument; changed = true; }
+        if (patch.string_count != null) { profile.string_count = patch.string_count; changed = true; }
+        if (patch.tuning != null) { profile.tuning = patch.tuning; changed = true; }
+        if (patch.reference_pitch != null) { profile.reference_pitch = patch.reference_pitch; changed = true; }
+        if (patch.pathway != null) { profile.pathway = patch.pathway; changed = true; }
+        if (changed) settings.instrument_profiles[profileId] = profile;
+    }
     async function saveSettings(patch) {
         // Only adopt the patch once the server accepts it. /api/settings returns
         // {error: ...} with HTTP 200 on a validation failure, so a rejected
@@ -177,8 +210,9 @@
         } catch (e) { /* non-fatal — leave settings unchanged */ }
         if (!accepted) return false;
         Object.assign(settings, patch);
+        syncLocalProfilePatch(patch);
         if (sm && sm.emit) sm.emit('instrument:changed', {
-            instrument: settings.instrument, stringCount: settings.string_count, tuning: settings.tuning,
+            instrument: settings.instrument, stringCount: settings.string_count, tuning: settings.tuning, pathway: settings.pathway,
         });
         pushToTuner();
         renderTuner(); // reflect new tuning on the tuner card
@@ -417,6 +451,12 @@
                 pill('inst', v, v[0].toUpperCase() + v.slice(1), settings.instrument === v)).join('')) +
             instRow('Strings', STRING_COUNTS[settings.instrument].map((v) =>
                 pill('strings', v, v + '', settings.string_count === v)).join('')) +
+            // Handedness — a left-hander flips the whole highway (frets mirror).
+            // Lives with the other player-orientation choices so it's part of the
+            // same "Choose your instrument" step the onboarding tour spotlights —
+            // i.e. set before you ever tune up or calibrate.
+            instRow('Handedness', pill('hand', 'right', 'Right', !_leftyPref()) +
+                pill('hand', 'left', 'Left', _leftyPref())) +
             '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">Tuning</div>' +
             '<select data-inst-tuning class="w-full bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1.5 text-xs text-fb-text outline-none focus:border-fb-primary">' +
             // An offset-array tuning has no named option — surface it as a
@@ -424,6 +464,9 @@
             // (picking a named tuning still works and replaces the custom one).
             (typeof settings.tuning === 'string' ? '' : '<option selected disabled>Custom</option>') +
             _tuningsForInstrument(settings.instrument, settings.string_count).map((t) => '<option' + (t === settings.tuning ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select></div>' +
+            '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">Pathway</div>' +
+            '<select data-inst-pathway class="w-full bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1.5 text-xs text-fb-text outline-none focus:border-fb-primary">' +
+            PATHWAY_OPTIONS.map((p) => '<option value="' + esc(p.id) + '"' + (p.id === settings.pathway ? ' selected' : '') + '>' + esc(p.label) + '</option>').join('') + '</select></div>' +
             '<div><div class="flex justify-between text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1"><span>Reference pitch</span><span data-ref-val>' + settings.reference_pitch + ' Hz</span></div>' +
             '<input data-inst-ref type="range" min="430" max="450" step="1" value="' + settings.reference_pitch + '" class="w-full slider-input"></div>' +
             '</div></div>';
@@ -454,6 +497,7 @@
                 instrument: v,
                 string_count: newSc,
                 tuning: tunings.includes(settings.tuning) ? settings.tuning : (tunings[0] || settings.tuning),
+                pathway: pathwayForProfile(settings.instrument_profiles, profileIdForInstrument(v), settings.pathway),
             });
             // Only move the working-tuning context once the switch was actually persisted —
             // otherwise the selector stays on the old instrument while the card shows the
@@ -462,11 +506,25 @@
             renderInstrument(); keepOpen();
         }));
         menu.querySelectorAll('[data-pill="strings"]').forEach((b) => b.addEventListener('click', async () => {
-            await saveSettings({ string_count: Number(b.getAttribute('data-val')) });
-            setWorkingInstrument(settings.instrument, settings.string_count);
+            const newSc = Number(b.getAttribute('data-val'));
+            // Clamp the tuning to one valid for the new string count and post it
+            // alongside string_count — otherwise the backend silently resets a
+            // now-invalid tuning to Standard while this UI keeps showing the old
+            // one (settings/tuner desync). Mirrors the instrument-switch clamp.
+            const tunings = _tuningsForInstrument(settings.instrument, newSc);
+            await saveSettings({
+                string_count: newSc,
+                tuning: tunings.includes(settings.tuning) ? settings.tuning : (tunings[0] || settings.tuning),
+            });
+            setWorkingInstrument(settings.instrument, newSc);
             renderInstrument(); keepOpen();
         }));
+        menu.querySelectorAll('[data-pill="hand"]').forEach((b) => b.addEventListener('click', () => {
+            _setLeftyPref(b.getAttribute('data-val') === 'left');
+            renderInstrument(); keepOpen();   // reflect the active pill; keep the menu open
+        }));
         menu.querySelector('[data-inst-tuning]').addEventListener('change', (e) => saveSettings({ tuning: e.target.value }));
+        menu.querySelector('[data-inst-pathway]').addEventListener('change', (e) => saveSettings({ pathway: e.target.value }));
         const ref = menu.querySelector('[data-inst-ref]');
         ref.addEventListener('input', (e) => { menu.querySelector('[data-ref-val]').textContent = e.target.value + ' Hz'; });
         ref.addEventListener('change', (e) => saveSettings({ reference_pitch: Number(e.target.value) }));
@@ -479,6 +537,22 @@
     }
     function instRow(label, inner) {
         return '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">' + label + '</div><div class="flex flex-wrap gap-1">' + inner + '</div></div>';
+    }
+    // Handedness (left-handed) preference. The canonical store is the highway's
+    // `lefty` localStorage key; when a live highway exists, setLefty() also flips
+    // it immediately. Feature-detected so it works on the dashboard before any
+    // highway has been created (the value is read on the highway's next init).
+    function _leftyPref() {
+        try { if (window.highway && typeof window.highway.getLefty === 'function') return !!window.highway.getLefty(); } catch (_) { /* */ }
+        try { return localStorage.getItem('lefty') === '1'; } catch (_) { return false; }
+    }
+    function _setLeftyPref(on) {
+        try {
+            if (window.highway && typeof window.highway.setLefty === 'function') window.highway.setLefty(!!on);
+            else localStorage.setItem('lefty', on ? '1' : '0');
+        } catch (_) { /* storage blocked — the pill still reflects the choice via re-render */ }
+        // Keep the Settings "Left-handed" checkbox in sync when it's mounted.
+        try { const cb = document.getElementById('setting-lefty'); if (cb) cb.checked = !!on; } catch (_) { /* */ }
     }
     function pill(group, val, label, active) {
         return '<button type="button" data-pill="' + group + '" data-val="' + val + '" class="px-2 py-1 rounded-md text-xs ' +

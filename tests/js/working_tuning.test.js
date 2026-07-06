@@ -16,8 +16,8 @@ const { createWindow, ROOT } = require('./capabilities_test_harness');
 const CAPABILITIES_JS = path.join(ROOT, 'static', 'capabilities.js');
 const WORKING_TUNING_JS = path.join(ROOT, 'static', 'capabilities', 'working-tuning.js');
 
-// A /api/tunings-shaped fixture (frequencies at 440), enough to resolve names to offsets.
-const TUNINGS = {
+// Tuning frequency fixture at 440 Hz, enough to resolve names to offsets.
+const TUNING_TABLE = {
     'guitar-6': {
         Standard: [82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
         'Drop D': [73.42, 110.00, 146.83, 196.00, 246.94, 329.63],
@@ -26,6 +26,7 @@ const TUNINGS = {
         Standard: [30.87, 41.20, 55.00, 73.42, 98.00],
     },
 };
+const API_TUNINGS = { referencePitch: 440, tunings: TUNING_TABLE };
 
 function deferred() {
     let resolve;
@@ -159,7 +160,7 @@ test('bare-instrument writes target the current selection, not a hard-coded defa
 test('seed resolves a NAMED tuning to offsets via /api/tunings', async () => {
     const { wt, changes } = loadWorkingTuning({
         '/api/settings': { instrument: 'guitar', string_count: 6, tuning: 'Drop D', reference_pitch: 440 },
-        '/api/tunings': TUNINGS,
+        '/api/tunings': API_TUNINGS,
     });
     await flush();
     const s = wt.get('guitar-6');
@@ -183,7 +184,7 @@ test('boot race: an explicit set() before settings resolve is not clobbered by t
     const settings = deferred();
     const { wt } = loadWorkingTuning({
         '/api/settings': settings.promise,           // held open
-        '/api/tunings': TUNINGS,
+        '/api/tunings': API_TUNINGS,
     });
     // A consumer writes before the seed lands.
     wt.set({ offsets: [-5, -5, -5, -5, -5, -5] }, { instrument: 'guitar-6' });

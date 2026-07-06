@@ -39,6 +39,14 @@ DURATION_BONUS_LOOSE = 0.025   # …within 15s
 _DURATION_TIGHT = 5
 _DURATION_LOOSE = 15
 
+# Release-group secondary types that mark a NON-canonical release (a live album,
+# a greatest-hits comp, a remix/DJ set, …). Used both to pick the canonical
+# studio album for display and to reward studio recordings in ranking.
+_SECONDARY_SKIP = {
+    "live", "compilation", "remix", "dj-mix", "mixtape/street",
+    "demo", "interview", "audiobook", "spokenword",
+}
+
 # ── Denoise ───────────────────────────────────────────────────────────────────
 # A parenthetical/bracketed group is dropped when it contains any of these
 # noise terms as a whole word (chart-variant markers, tuning/pitch notes,
@@ -136,12 +144,31 @@ def _duration_int(v):
         return None
 
 
+def cand_artist_sim(song: dict, cand: dict) -> float:
+    """Best artist similarity between the song's reference artist and the
+    candidate's PRIMARY name OR any of its `artist_aliases` (romanized/alternate
+    names). MusicBrainz stores many artists under a non-Latin primary name
+    (大橋純子) with the romanized form ("Junko Ohashi") only as an alias, so a
+    reference typed/derived in romaji scores 0 against the primary but 1.0
+    against the alias. The caller (server) attaches `artist_aliases` only for
+    promising near-misses, so this is a plain max when they're present and the
+    original single comparison when they're not."""
+    best = similarity(song.get("artist"), cand.get("artist"), artist=True)
+    for alias in cand.get("artist_aliases") or []:
+        if best >= 1.0:
+            break
+        s = similarity(song.get("artist"), alias, artist=True)
+        if s > best:
+            best = s
+    return best
+
+
 def score_candidate(song: dict, cand: dict) -> float:
     """Combined confidence that MusicBrainz candidate `cand` is the song the
     chart transcribes. 0.5*artist + 0.5*title, plus small year/duration
     corroboration bonuses, capped at 1.0. Missing fields score 0 on their
     half — classify() separately refuses to auto-match without both."""
-    artist_sim = similarity(song.get("artist"), cand.get("artist"), artist=True)
+    artist_sim = cand_artist_sim(song, cand)
     title_sim = similarity(song.get("title"), cand.get("title"))
     score = 0.5 * artist_sim + 0.5 * title_sim
     sy, cy = _year_int(song.get("year")), _year_int(cand.get("year"))
@@ -154,6 +181,10 @@ def score_candidate(song: dict, cand: dict) -> float:
             score += DURATION_BONUS
         elif diff <= _DURATION_LOOSE:
             score += DURATION_BONUS_LOOSE
+    # NB: the studio-vs-live distinction is deliberately NOT scored here — a live
+    # take is still the RIGHT SONG (same title/artist), so it must not change the
+    # auto/review confidence. Canonical-version preference lives in the RANK sort
+    # (rank_candidates) instead, where it only reorders same-song candidates.
     return min(score, 1.0)
 
 
@@ -168,7 +199,7 @@ def classify(song: dict, cand: dict, score: float, auto_min: float | None = None
     """
     if auto_min is None:
         auto_min = AUTO_MIN
-    artist_sim = similarity(song.get("artist"), cand.get("artist"), artist=True)
+    artist_sim = cand_artist_sim(song, cand)
     title_sim = similarity(song.get("title"), cand.get("title"))
     if (score >= auto_min and artist_sim >= AUTO_ARTIST_MIN
             and title_sim >= AUTO_TITLE_MIN):
@@ -179,15 +210,34 @@ def classify(song: dict, cand: dict, score: float, auto_min: float | None = None
 
 
 def rank_candidates(song: dict, candidates: list[dict]) -> list[dict]:
-    """Score every candidate against the song and return them sorted by our
-    score (MusicBrainz's own search score is only a tiebreak). Each returned
-    dict is a copy carrying `score` (rounded — it's displayed and stored)."""
+    """Score every candidate against the song and return them sorted best-first.
+    The combined `score` caps at 1.0, so a perfect-text-match query (every "AC/DC
+    Highway to Hell" recording) ties at the top — there the studio flag and, when
+    the caller knows the audio length, the duration match break the tie so the
+    canonical studio take wins over live/promo/extended cuts. Each returned dict
+    is a copy carrying `score` (rounded — it's displayed and stored)."""
+    sd = _duration_int(song.get("duration"))
+    # For a chart that IS a live take (build_recording_query keeps live
+    # recordings for these) the studio take is the WRONG recording, so drop the
+    # studio tiebreak — duration proximity + text/mb score then pick the right
+    # live version instead of auto-matching the studio one.
+    prefer_studio = not _LIVE_GROUP_RE.search(str(song.get("title") or ""))
+
+    def _dur_diff(c):
+        cd = _duration_int(c.get("duration"))
+        return abs(sd - cd) if (sd and cd) else 10 ** 6
+
     ranked = []
     for cand in candidates or []:
         c = dict(cand)
         c["score"] = round(score_candidate(song, cand), 4)
         ranked.append(c)
-    ranked.sort(key=lambda c: (c["score"], c.get("mb_score") or 0), reverse=True)
+    ranked.sort(
+        key=lambda c: (c["score"],
+                       (1 if c.get("studio") else 0) if prefer_studio else 0,
+                       -_dur_diff(c),                 # closest to the audio length
+                       c.get("mb_score") or 0),
+        reverse=True)
     return ranked
 
 
@@ -198,18 +248,63 @@ def _lucene_escape_phrase(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def build_recording_query(artist, title) -> str:
+# A parenthetical/bracketed "(Live …)" marker — the live signal denoise() strips
+# from the title. Mirrors _NOISE_GROUP_RE but for the `live` term only.
+_LIVE_GROUP_RE = re.compile(r"[(\[][^)\]]*\blive\b[^)\]]*[)\]]", re.IGNORECASE)
+
+
+def build_recording_query(artist, title, *, loose: bool = False) -> str:
     """Lucene query for /ws/2/recording. Built from the DENOISED fields —
     the noise we strip (author credits, "(Live)", "(v2)") would otherwise
-    poison the search server's own scoring."""
+    poison the search server's own scoring.
+
+    ``loose=True`` drops the field-scoped quoted PHRASES for plain AND-ed
+    term groups (``(telephone number) AND (junko ohashi)``). The point:
+    a field phrase like ``artist:"Junko Ohashi"`` only matches MusicBrainz's
+    *primary* artist name — it never searches ALIASES — so a recording stored
+    under a non-Latin primary (大橋純子) whose romanized name is only an alias
+    is invisible to the strict query. A loose term query searches the whole
+    document, aliases included, and surfaces it. Lower precision by design: it
+    is a FALLBACK for when the strict query returns nothing, and its results
+    are re-scored by ``rank_candidates`` (and, for auto-match, gated by the
+    per-field floors), so noise never auto-applies."""
     t = denoise(title)
     a = denoise(artist)
+    if loose:
+        # denoise() already reduced each field to lowercase [a-z0-9 and] tokens
+        # (punctuation → spaces, diacritics stripped, & → "and"), so no
+        # Lucene-special character survives to need escaping. Group each field's
+        # terms and require both groups.
+        q = " AND ".join("(%s)" % g for g in (t, a) if g)
+        # Keep the SAME live exclusion as the strict path: the loose query is
+        # lower-precision, and score_candidate doesn't penalize a live take, so
+        # without this a studio chart whose strict query missed could fall back
+        # to — and auto-confirm — a live-only recording. Skipped only when the
+        # source title is itself a live take (mirrors the strict path).
+        if q and not _LIVE_GROUP_RE.search(str(title or "")):
+            q += " AND -secondarytype:Live"
+        return q
     parts = []
     if t:
         parts.append('recording:"%s"' % _lucene_escape_phrase(t))
     if a:
         parts.append('artist:"%s"' % _lucene_escape_phrase(a))
-    return " AND ".join(parts)
+    q = " AND ".join(parts)
+    # Drop live-ONLY recordings (bootlegs, live albums) — the canonical studio
+    # take is never tagged Live, and this is the single biggest source of junk in
+    # a flat recording search. Compilations are deliberately NOT excluded: they
+    # REUSE the studio recording, so filtering them would drop the very recording
+    # we want (verified against MusicBrainz — `-secondarytype:Compilation` cut the
+    # AC/DC studio "Highway to Hell" recording entirely).
+    #
+    # EXCEPT when the source chart is itself a live take: denoise() strips the
+    # "(Live at …)" qualifier from the query, so filtering Live would leave the
+    # genuinely-live chart with NO correct recording. Only a parenthetical marker
+    # counts — a bare title word ("Live and Let Die") is a real word, not a live
+    # tag — mirroring what denoise removes.
+    if q and not _LIVE_GROUP_RE.search(str(title or "")):
+        q += " AND -secondarytype:Live"
+    return q
 
 
 def _artist_credit(doc: dict) -> tuple[str, str, str]:
@@ -226,19 +321,33 @@ def _artist_credit(doc: dict) -> tuple[str, str, str]:
     return name, str(artist.get("id", "") or ""), str(artist.get("sort-name", "") or "")
 
 
+def _is_clean_studio_album(rg: dict) -> bool:
+    """A release-group that is a primary-type Album with NO non-canonical
+    secondary type (Live / Compilation / Remix / …) — i.e. a studio album."""
+    if str(rg.get("primary-type", "")).lower() != "album":
+        return False
+    secs = {str(s).lower() for s in (rg.get("secondary-types") or [])}
+    return not (secs & _SECONDARY_SKIP)
+
+
 def _best_release(doc: dict) -> dict:
-    """Pick the release used for canon album/year: prefer Official status and
-    an Album release-group, then the earliest date. Returns {} if none."""
+    """Pick the release used for canon album/year: prefer an OFFICIAL studio
+    Album (primary Album with no Live/Compilation/… secondary type), then the
+    earliest date. Falls back to any release when none is clean. {} if none."""
     releases = [r for r in (doc.get("releases") or []) if isinstance(r, dict)]
     if not releases:
         return {}
 
     def sort_key(r):
-        status_ok = 0 if str(r.get("status", "")).lower() == "official" else 1
         rg = r.get("release-group") or {}
-        album_ok = 0 if str(rg.get("primary-type", "")).lower() == "album" else 1
+        clean = 0 if _is_clean_studio_album(rg) else 1
+        status_ok = 0 if str(r.get("status", "")).lower() == "official" else 1
         date = str(r.get("date", "") or "9999")
-        return (status_ok, album_ok, date)
+        # Official FIRST, then prefer a clean studio album: this still surfaces
+        # the studio album over an (official) live/comp album for the display
+        # album/year, but never lets an UNofficial bootleg album outrank an
+        # official single/EP/comp — which `(clean, status_ok, …)` would.
+        return (status_ok, clean, date)
 
     return sorted(releases, key=sort_key)[0]
 
@@ -261,6 +370,7 @@ def parse_recording_doc(doc: dict) -> dict | None:
         return None
     artist_name, artist_id, artist_sort = _artist_credit(doc)
     release = _best_release(doc)
+    studio = _is_clean_studio_album(release.get("release-group") or {})
     length = doc.get("length")
     try:
         duration = int(round(float(length) / 1000.0)) if length else None
@@ -281,6 +391,7 @@ def parse_recording_doc(doc: dict) -> dict | None:
         "isrc": isrcs[0] if isrcs else "",
         "genres": _genres(doc),
         "mb_score": int(doc.get("score") or 0),
+        "studio": studio,
     }
 
 

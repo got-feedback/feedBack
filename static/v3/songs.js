@@ -490,6 +490,49 @@
             '<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>' + pct + '%</span>';
     }
 
+    // ── Metadata-refresh per-tile state (the "Refresh Metadata" batch) ─────────
+    // A transient badge painted ONLY while a metadata refresh is running: the
+    // songs actually being (re)matched animate queued → working → done. Keyed by
+    // the card's data-fn (= the local filename the enrichment cache keys on).
+    // Empty for every song outside a refresh, so an idle card is byte-identical
+    // to before (keeps the windowed grid's height math untouched). Honest state
+    // transitions, NOT a fake per-song %: a match is binary (design §11).
+    const _metaTile = {};   // fn -> 'queued' | 'working' | 'done' | 'nochange'
+    // Cards whose enrichment landed 'failed' (from the grid payload) — tracked so
+    // the PERSISTENT "no match" badge survives a batch tile clearing (a
+    // _patchCardEnrich with no flag falls back to this instead of wiping it).
+    // Populated as cards render (enrichBadge is called per card with the flag).
+    const _unmatched = new Set();
+    function enrichBadge(fn, unmatched) {
+        if (unmatched !== undefined) { if (unmatched) _unmatched.add(fn); else _unmatched.delete(fn); }
+        // A live batch tile wins over the resting no-match marker (they never
+        // coexist — the batch clears its tiles when it finishes).
+        const st = _metaTile[fn] || (_unmatched.has(fn) ? 'nomatch' : null);
+        if (!st) return '';
+        const M = {
+            queued:   ['bg-black/60 text-fb-textDim', '• Queued', ''],
+            working:  ['bg-fb-primary text-white', '⟳ Matching…', ''],
+            done:     ['bg-fb-good/90 text-black', '✓ Updated', ''],
+            nochange: ['bg-black/60 text-fb-textDim', '— No match', ''],
+            // Resting indicator: subtle, so a mostly-unmatched library isn't a
+            // wall of loud badges. Clickable — a one-click handoff into the
+            // Fix-metadata popup for this song (see the [data-meta-fix] wiring).
+            nomatch:  ['bg-black/60 text-fb-textDim', 'No match', 'Click to fix the metadata by hand'],
+        };
+        const conf = M[st] || M.queued;
+        const fixable = st === 'nomatch';   // resting badge → opens Fix-metadata
+        // top-10 clears the tuning chip (top-2) in both normal and select mode;
+        // z-20 sits it above the art. Batch states are non-interactive; the
+        // resting "no match" badge is the handoff into the popup.
+        const cls = 'v3-meta-tile absolute top-10 left-2 z-20 ' + conf[0] +
+            ' text-[0.5625rem] font-bold px-1.5 py-0.5 rounded-sm leading-tight ' +
+            (fixable ? 'pointer-events-auto cursor-pointer hover:bg-fb-primary hover:text-white transition-colors' : 'pointer-events-none');
+        return '<span class="' + cls + '"' +
+            (fixable ? ' data-meta-fix="1"' : '') +
+            (conf[2] ? ' title="' + conf[2] + '"' : '') +
+            '>' + conf[1] + '</span>';
+    }
+
     // After a song is scored, the badge for that card is stale until the next
     // full render(). Refresh state.accuracy from the server and patch the badge
     // of any currently-rendered card/row in place (grid + tree). `_dirtyScores`
@@ -845,7 +888,7 @@
         return '<div class="group relative" data-fn="' + esc(key) + '" data-letter="' + esc(songBucket(song)) + '" data-library-song="' + esc(songId(song)) + '" data-library-provider="' + esc(state.provider) + '">' +
             '<div class="relative aspect-square rounded-lg overflow-hidden bg-fb-card cursor-pointer' + selRing + '" data-v3-play>' +
             '<img src="' + esc(artUrl(shown)) + '" alt="" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" onerror="this.style.visibility=\'hidden\'">' +
-            tuning + checkbox + accuracyBadge(key) + fmtBadge(shown) + personalBadges(song) + overlay +
+            tuning + checkbox + accuracyBadge(key) + fmtBadge(shown) + personalBadges(song) + enrichBadge(key, song.unmatched) + overlay +
             '<div class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">' +
             inlineBtns +
             '<button data-fav data-fav-idle="text-white" title="Favorite" aria-label="Favorite" aria-pressed="' + (fav ? 'true' : 'false') + '" class="w-7 h-7 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-sm ' + (fav ? 'text-fb-accent' : 'text-white') + '">' + (fav ? '♥' : '♡') + '</button>' +
@@ -913,7 +956,7 @@
             // address the local DB / filesystem). Both openers (⋮ and
             // right-click) share this list, so parity is structural.
             ...(state.provider === 'local' && song.filename ? [
-                { id: '__fixmatch', label: 'Fix match…' },
+                { id: '__fixmatch', label: 'Fix metadata…' },
                 { id: '__cover', label: 'Change cover…' },
                 { id: '__refreshmeta', label: 'Refresh metadata' },
                 { id: '__getinfo', label: 'Get info…' },
@@ -964,7 +1007,7 @@
             // the group's work_key/chart_count and pre-ticks the shown chart.)
             if (id === '__fixmatch') { if (window.__fbFixMatch) window.__fbFixMatch(playTarget); return; }
             if (id === '__cover') {
-                if (window.__fbOpenImagePicker) window.__fbOpenImagePicker({ filename: playTarget.filename, title: playTarget.title || playTarget.filename });
+                if (window.__fbOpenImagePicker) window.__fbOpenImagePicker({ filename: playTarget.filename, title: playTarget.title || playTarget.filename, artist: playTarget.artist, album: playTarget.album });
                 return;
             }
             if (id === '__refreshmeta') {
@@ -1431,6 +1474,13 @@
                 e.stopPropagation();
                 openChartsDrawer(e.currentTarget.getAttribute('data-charts'), song);
             });
+            // "No match" badge → straight into the Fix-metadata popup for this
+            // song (the batch → fix handoff). stopPropagation so it doesn't also
+            // trigger the card's play. Follows the displayed chart, like the menu.
+            el.querySelector('[data-meta-fix]')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (window.__fbFixMatch) window.__fbFixMatch(playTarget);
+            });
             // Artist line → the artist page (PR-B). In select mode the grid's
             // capture-phase toggle intercepts first, so selection still wins.
             el.querySelector('[data-v3-artist]')?.addEventListener('click', (e) => {
@@ -1834,13 +1884,57 @@
             '</div>';
     }
 
-    function _renderCardsRange(start, end) {
-        let html = '';
-        for (let i = start; i < end; i++) {
-            const s = state.songs[i];
-            html += s ? songCard(s) : _skeletonCard();
+    // Signature of the card at absolute index i: real-card vs skeleton, plus the
+    // select-mode it was built under. A change here is the ONLY reason a recycled
+    // node must be rebuilt (a hole filled after a fetch, or select mode toggled) —
+    // otherwise the node is reused as-is across window slides.
+    function _cardSig(i) {
+        return (state.songs[i] ? 'r' : 's') + (state.selectMode ? '1' : '0');
+    }
+
+    function _buildCardNode(i) {
+        const s = state.songs[i];
+        const tmp = document.createElement('div');
+        tmp.innerHTML = s ? songCard(s) : _skeletonCard();
+        const node = tmp.firstElementChild;
+        node.setAttribute('data-idx', String(i));
+        node.setAttribute('data-sig', _cardSig(i));
+        return node;
+    }
+
+    // Reconcile the grid's children to exactly cover [start, end) in ascending
+    // index order, REUSING the card nodes that stay in-window. Sliding the window
+    // one row now mutates only the row that entered/left instead of tearing down +
+    // rebuilding (+ re-wiring) the whole ~60-card window every frame — that
+    // per-slide teardown was the main-thread stall behind the "library skips every
+    // so many scrolls, up or down" report (the stall buffers held-arrow key-repeats
+    // that then flush in a burst). wireCards()'s data-wired guard wires only the
+    // freshly-built nodes.
+    function _syncWindow(grid, start, end) {
+        // Pass 1: drop nodes that left the window, are untagged, or whose content
+        // signature is stale (skeleton→real, or select-mode toggled). What remains
+        // is a reusable, correctly-rendered subset in ascending DOM order.
+        for (const el of Array.from(grid.children)) {
+            const a = el.getAttribute('data-idx');
+            const idx = a == null ? NaN : Number(a);
+            if (!(idx >= start && idx < end) || el.getAttribute('data-sig') !== _cardSig(idx)) {
+                el.remove();
+            }
         }
-        return html;
+        // Pass 2: walk [start, end) in order, reusing survivors and inserting new
+        // nodes into their correct slot; `ref` tracks the child expected next.
+        const existing = new Map();
+        for (const el of grid.children) existing.set(Number(el.getAttribute('data-idx')), el);
+        let ref = grid.firstChild;
+        for (let i = start; i < end; i++) {
+            let node = existing.get(i);
+            if (!node) node = _buildCardNode(i);
+            if (node === ref) {
+                ref = ref.nextSibling;
+            } else {
+                grid.insertBefore(node, ref);
+            }
+        }
     }
 
     // Fetch a single OFFSET page into the sparse store. Uses the stage-1 keyset
@@ -1958,7 +2052,7 @@
         }
         if (_closeCardMenu) _closeCardMenu();   // its DOM is about to be replaced
         grid.style.top = (firstRow * rowH) + 'px';
-        grid.innerHTML = _renderCardsRange(start, end);
+        _syncWindow(grid, start, end);   // recycle in-window nodes; only the entering/leaving row rebuilds
         wireCards(grid);
         decorateTuningChips(grid);   // colour tuning chips by working-tuning match (async, feature-detected)
         state.winRange = { start, end };
@@ -3032,7 +3126,7 @@
             // when image-picker.js isn't loaded.
             artWrap.addEventListener('click', () => {
                 if (window.__fbOpenImagePicker) {
-                    window.__fbOpenImagePicker({ filename: song.filename, title: song.title || song.filename });
+                    window.__fbOpenImagePicker({ filename: song.filename, title: song.title || song.filename, artist: song.artist, album: song.album });
                 } else {
                     artFile.click();
                 }
@@ -3402,7 +3496,13 @@
             // shown by match-review.js (window.__fbMatchReviewChip), which
             // also owns the drawer the click opens.
             '<div class="flex items-baseline gap-3"><p class="text-fb-textDim text-sm" id="v3-songs-count"></p>' +
-            '<button id="v3-songs-match-review" class="hidden text-xs text-fb-primary hover:text-fb-primaryHi border border-fb-primary/40 rounded-full px-2.5 py-0.5"></button></div>' +
+            '<button id="v3-songs-match-review" class="hidden text-xs text-fb-primary hover:text-fb-primaryHi border border-fb-primary/40 rounded-full px-2.5 py-0.5"></button>' +
+            // Batch progress for the Refresh Metadata button (shown only while a
+            // pass runs). A real songs-processed ratio, not a fake per-song %.
+            '<span id="v3-meta-progress" class="hidden items-center gap-2 text-xs text-fb-textDim">' +
+            '<span id="v3-meta-progress-label"></span>' +
+            '<span class="inline-block w-24 rounded-full bg-fb-border/40 overflow-hidden align-middle" style="height:6px"><span id="v3-meta-progress-fill" class="block h-full bg-fb-primary transition-all" style="width:0%"></span></span>' +
+            '</span></div>' +
             '<div class="flex flex-wrap gap-2">' +
             (providers.length > 1 ? '<select id="v3-songs-provider" class="' + ctrl + '">' + provOpts + '</select>' : '') +
             '<select id="v3-songs-artist" class="' + ctrl + ' max-w-[11rem]" aria-label="Artist">' + artistSelectHtml() + '</select>' +
@@ -3413,6 +3513,8 @@
             '<button id="v3-songs-filters" class="relative ' + ctrl + ' flex items-center gap-2">Filters<span id="v3-songs-filter-count" class="hidden bg-fb-primary text-white text-xs rounded-full px-1.5">0</span></button>' +
             '<button id="v3-songs-select" class="' + ctrl + (state.selectMode ? ' bg-fb-primary text-white' : '') + '">Select</button>' +
             '<button id="v3-songs-refresh" title="Refresh library (scan for new songs)" class="' + ctrl + '">⟳ Refresh</button>' +
+            '<button id="v3-songs-refresh-meta" title="Refresh metadata for the songs shown (re-match titles, artwork &amp; more)" class="' + ctrl + '">🏷 Metadata</button>' +
+            '<button id="v3-songs-unmatched" title="Show only songs with no metadata match" class="' + ctrl + ((state.filters.match || []).includes('unmatched') ? ' bg-fb-primary text-white' : '') + '">Unmatched</button>' +
             '<button id="v3-songs-upload" class="' + ctrl + '">Upload</button>' +
             '</div></div></div>' +
             // Practice-aware library home: a repertoire progress meter + a
@@ -3450,6 +3552,7 @@
             state.artist = '';
             state.album = '';
             try { sm.libraryProviders && await sm.libraryProviders.select(state.provider); } catch (err) { /* */ }
+            _updateMetaBtnVisibility();   // enrichment is local-only
             await loadArtistCatalog();
             refreshArtistAlbumSelects();
             reload();
@@ -3479,6 +3582,11 @@
         });
         byId('v3-songs-select').addEventListener('click', () => setSelectMode(!state.selectMode));
         byId('v3-songs-refresh')?.addEventListener('click', refreshLibrary);
+        // Refresh Metadata: local-only, so hide it for remote providers. The
+        // button doubles as its own Stop while a pass runs (see onMetaBtnClick).
+        byId('v3-songs-refresh-meta')?.addEventListener('click', onMetaBtnClick);
+        byId('v3-songs-unmatched')?.addEventListener('click', toggleUnmatchedFilter);
+        _updateMetaBtnVisibility();
         // Reflect a scan already in progress (Settings button or a background
         // pass) on the Refresh button, so its state isn't just tied to clicks here.
         (async () => {
@@ -3486,6 +3594,15 @@
                 const r = await fetch('/api/scan-status');
                 const sd = r.ok ? await r.json() : null;
                 if (sd && sd.running) { _setRefreshState(sd); _watchScan({ announce: false }); }
+            } catch (e) { /* */ }
+        })();
+        // Reflect an enrichment pass already running (Settings "Match now" or a
+        // post-scan background pass) on the Metadata button + bar.
+        (async () => {
+            try {
+                const r = await fetch('/api/enrichment/status');
+                const es = r.ok ? await r.json() : null;
+                if (es && es.running) { _setMetaState(es); _watchEnrich({ announce: false }); }
             } catch (e) { /* */ }
         })();
 
@@ -3704,6 +3821,215 @@
                 if (sawRunning) reload();
             }
         }, 1000);
+    }
+
+    // ── Refresh Metadata (batch enrichment) from the Songs toolbar ─────────────
+    // The metadata counterpart to ⟳ Refresh (which scans FILES): matches
+    // titles/artist/album/artwork against MusicBrainz for the songs that still
+    // need it — the ambient background matcher, run on demand (a media-server's
+    // "Refresh Metadata" vs "Scan Files"). Mirrors the scan machinery: a 1 Hz
+    // poll of /api/enrichment/status drives the button + batch bar, while
+    // /api/enrichment/states drives per-tile badges on the visible window.
+    // Enrichment is local-only, so the button hides for remote providers.
+    let _metaPoll = null;
+    let _metaRunning = false;
+
+    function _updateMetaBtnVisibility() {
+        const local = state.provider === 'local';   // enrichment + its filter are local-only
+        const btn = document.getElementById('v3-songs-refresh-meta');
+        if (btn) btn.style.display = local ? '' : 'none';
+        const um = document.getElementById('v3-songs-unmatched');
+        if (um) um.style.display = local ? '' : 'none';
+    }
+
+    // Quick "Show unmatched" — the same filter as the drawer's Match → Unmatched,
+    // one click from the toolbar so the no-match pile is reachable right after a
+    // batch. Toggles the button + re-queries the grid.
+    function toggleUnmatchedFilter() {
+        const m = state.filters.match || (state.filters.match = []);
+        const i = m.indexOf('unmatched');
+        const on = i < 0;
+        if (on) m.push('unmatched'); else m.splice(i, 1);
+        const btn = document.getElementById('v3-songs-unmatched');
+        if (btn) { btn.classList.toggle('bg-fb-primary', on); btn.classList.toggle('text-white', on); }
+        reload();
+    }
+
+    // The local filenames the grid is currently SHOWING (data-fn is the local
+    // filename the enrichment cache keys on). The grid is windowed, so this is
+    // the visible slice only — exactly what the per-tile poll should cover.
+    function _visibleLocalFilenames() {
+        const grid = document.getElementById('v3-songs-grid');
+        if (!grid) return [];
+        return [...grid.querySelectorAll('[data-fn]')]
+            .map((el) => el.getAttribute('data-fn')).filter(Boolean);
+    }
+
+    // Set/clear one card's live badge (recycled cards re-derive from _metaTile on
+    // the next paint, so update the map too — mirrors _patchCardFav).
+    function _patchCardEnrich(fn, st) {
+        if (st) _metaTile[fn] = st; else delete _metaTile[fn];
+        const sel = (window.CSS && CSS.escape) ? CSS.escape(fn) : fn;
+        document.querySelectorAll('[data-fn="' + sel + '"] [data-v3-play]').forEach((play) => {
+            const el = play.querySelector('.v3-meta-tile');
+            const html = enrichBadge(fn);
+            if (!html) { if (el) el.remove(); return; }
+            if (el) el.outerHTML = html; else play.insertAdjacentHTML('beforeend', html);
+        });
+    }
+
+    function _clearMetaTiles() {
+        Object.keys(_metaTile).forEach((fn) => { delete _metaTile[fn]; });
+        document.querySelectorAll('.v3-meta-tile').forEach((el) => el.remove());
+        // The persistent "No match" badge derives from _unmatched (not _metaTile),
+        // yet shares the .v3-meta-tile class — so the blanket remove above strips it.
+        // Repaint the resting indicator on any rendered card so a metadata rescan's
+        // tile-clear doesn't silently drop it until the next scroll/re-render.
+        _unmatched.forEach((fn) => {
+            const sel = (window.CSS && CSS.escape) ? CSS.escape(fn) : fn;
+            document.querySelectorAll('[data-fn="' + sel + '"] [data-v3-play]').forEach((play) => {
+                if (play.querySelector('.v3-meta-tile')) return;
+                const html = enrichBadge(fn);
+                if (html) play.insertAdjacentHTML('beforeend', html);
+            });
+        });
+    }
+
+
+    // Drive the button (which doubles as Stop) + the batch bar from a status body.
+    function _setMetaState(es) {
+        const btn = document.getElementById('v3-songs-refresh-meta');
+        const prog = document.getElementById('v3-meta-progress');
+        const fill = document.getElementById('v3-meta-progress-fill');
+        const label = document.getElementById('v3-meta-progress-label');
+        if (!btn) return;
+        const running = !!(es && es.running);
+        _metaRunning = running;
+        if (running) {
+            const total = (es && es.total) || 0, done = (es && es.matched) || 0;
+            const cancelling = !!(es && es.cancelling);
+            btn.textContent = cancelling ? 'Stopping…' : ('⏹ Stop' + (total ? ' · ' + done + '/' + total : ''));
+            btn.disabled = cancelling;
+            btn.classList.toggle('opacity-70', cancelling);
+            btn.title = cancelling ? 'Stopping after the current song…' : 'Stop refreshing metadata';
+            if (prog) {
+                prog.classList.remove('hidden'); prog.classList.add('flex');
+                if (label) label.textContent = total ? ('Matching metadata ' + done + '/' + total) : 'Matching metadata…';
+                // Real songs-processed ratio; a tiny sliver while the queue size
+                // is still being computed (phase 1) so the bar isn't dead-empty.
+                if (fill) fill.style.width = (total ? Math.round((done / total) * 100) : 6) + '%';
+            }
+        } else {
+            btn.textContent = '🏷 Metadata';
+            btn.disabled = false;
+            btn.classList.remove('opacity-70');
+            btn.title = 'Refresh metadata for the songs shown (re-match titles, artwork & more)';
+            if (prog) { prog.classList.add('hidden'); prog.classList.remove('flex'); }
+        }
+    }
+
+    // Completion toast — reuse the shared fbNotify surface (visual-only, so
+    // hearing-safe for free). Honest + never-punishing copy, in-game suppressed.
+    function _metaCompleteToast(es) {
+        const active = document.querySelector('.screen.active');
+        if (active && active.id === 'player') return;
+        if (!window.fbNotify) return;
+        const matched = (es && es.matched) || 0;
+        const msg = matched
+            ? (matched + ' song' + (matched === 1 ? '' : 's') + ' matched')
+            : 'Your library metadata is up to date';
+        try { window.fbNotify.show({ title: 'Metadata refresh complete', message: msg, icon: '🏷️', accent: '#22C55E' }); } catch (e) { /* */ }
+    }
+
+    // Poll enrichment status (button + bar) AND the visible window's per-song
+    // states (tile badges) until the pass finishes. announce:false = we only
+    // attached to a pass we didn't start (no toast unless it actually changed
+    // something).
+    function _watchEnrich(opts) {
+        if (_metaPoll) return;
+        const announce = !opts || opts.announce !== false;
+        let sawRunning = false, ticks = 0, lastStatus = null;
+        _metaPoll = setInterval(async () => {
+            ticks++;
+            let es = null;
+            try { const r = await fetch('/api/enrichment/status'); if (r.ok) es = await r.json(); } catch (e) { /* */ }
+            if (es) { lastStatus = es; _setMetaState(es); if (es.running) sawRunning = true; }
+            // Per-tile badges: only songs we're tracking (seeded 'queued'). A
+            // tile flips to 'working' when it's the current song, then to
+            // 'done' (matched) / 'nochange' (failed) once it leaves unscanned.
+            if (Object.keys(_metaTile).length) {
+                const fns = _visibleLocalFilenames();
+                try {
+                    const r = await fetch('/api/enrichment/states', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filenames: fns }),
+                    });
+                    if (r.ok) {
+                        const j = await r.json();
+                        const states = j.states || {}, current = j.current;
+                        fns.forEach((fn) => {
+                            if (!(fn in _metaTile)) return;
+                            if (fn === current) { _patchCardEnrich(fn, 'working'); return; }
+                            const s = states[fn];
+                            if (s && s !== 'unscanned' && s !== 'pending') {
+                                _patchCardEnrich(fn, s === 'failed' ? 'nochange' : 'done');
+                            }
+                        });
+                    }
+                } catch (e) { /* */ }
+            }
+            // Cap at 20 min (a ~1000-song trickle at ≤1/s is ~17 min); a
+            // user-initiated no-op that never saw a running pass ends quickly.
+            const noopDone = announce && !sawRunning && ticks >= 3;
+            if ((sawRunning && es && !es.running) || noopDone || ticks >= 1200) {
+                clearInterval(_metaPoll); _metaPoll = null;
+                _setMetaState(null);
+                const changed = sawRunning && lastStatus && (lastStatus.matched || 0) > 0;
+                if (announce || changed) _metaCompleteToast(lastStatus);
+                // Let the final 'done' badges register, then clear + (if anything
+                // matched) reload so new canonical titles/art show.
+                setTimeout(() => {
+                    _clearMetaTiles();
+                    if (changed && window.feedBack) { try { window.feedBack.emit('library:changed', { reason: 'enrich', matched: lastStatus.matched }); } catch (e) { /* */ } }
+                }, 1600);
+            }
+        }, 1000);
+    }
+
+    // Force a fresh re-match of the songs currently SHOWN (the visible grid
+    // window) — a media-server-style per-view "Refresh Metadata". Resets those
+    // songs and re-fetches, so it's visible even on an already-matched library.
+    // Manual pins are skipped server-side; scoped to the visible set so it's
+    // fast + can't blow the whole rate budget.
+    async function refreshMetadata() {
+        if (_metaRunning || _metaPoll) return;       // already running
+        const fns = _visibleLocalFilenames();
+        _clearMetaTiles();
+        if (!fns.length) { _metaCompleteToast({ matched: 0 }); return; }
+        let queued = [];
+        try {
+            const r = await fetch('/api/enrichment/rematch', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filenames: fns }),
+            });
+            if (r.ok) queued = (await r.json()).queued || [];
+        } catch (e) { /* offline → nothing queued */ }
+        // Badge exactly what the server queued (everything visible except your
+        // manual pins). Nothing queued = all visible songs are pinned/unknown.
+        queued.forEach((fn) => _patchCardEnrich(fn, 'queued'));
+        if (!queued.length) { _metaCompleteToast({ matched: 0 }); return; }
+        _watchEnrich({ announce: true });
+    }
+
+    async function stopMetadata() {
+        try { await fetch('/api/enrichment/cancel', { method: 'POST' }); } catch (e) { /* */ }
+        _setMetaState({ running: true, cancelling: true });   // optimistic; the poll confirms
+    }
+
+    // The Metadata button toggles role: kick a refresh when idle, Stop when a
+    // pass is running.
+    function onMetaBtnClick() {
+        if (_metaRunning) stopMetadata(); else refreshMetadata();
     }
 
     // Topbar search drives this screen.

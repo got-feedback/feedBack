@@ -145,11 +145,40 @@ def test_rank_candidates_orders_by_our_score():
     assert all("score" in c for c in ranked)
 
 
+def test_rank_candidates_studio_preference_is_dropped_for_live_charts():
+    """Tied-score candidates: a studio chart prefers the studio take, but a
+    LIVE chart must NOT be forced to the studio recording."""
+    studio = {"recording_id": "studio", "artist": "AC/DC", "title": "Highway to Hell",
+              "studio": True, "mb_score": 90}
+    live = {"recording_id": "live", "artist": "AC/DC", "title": "Highway to Hell",
+            "studio": False, "mb_score": 95}
+    # Studio chart -> studio take wins the tie (studio flag), despite lower mb_score.
+    studio_song = {"artist": "AC/DC", "title": "Highway to Hell"}
+    assert m.rank_candidates(studio_song, [live, studio])[0]["recording_id"] == "studio"
+    # Live chart -> studio preference dropped, so the higher-mb_score live take wins.
+    live_song = {"artist": "AC/DC", "title": "Highway to Hell (Live at Donington)"}
+    assert m.rank_candidates(live_song, [studio, live])[0]["recording_id"] == "live"
+
+
 # ── query building ────────────────────────────────────────────────────────────
 
 def test_build_recording_query_denoises_and_quotes():
     q = m.build_recording_query("ACDC", 'Thunderstruck (v2)')
-    assert q == 'recording:"thunderstruck" AND artist:"acdc"'
+    # Live-only recordings are excluded — the studio take is never tagged Live,
+    # and it's the biggest source of junk in a flat recording search.
+    assert q == 'recording:"thunderstruck" AND artist:"acdc" AND -secondarytype:Live'
+
+
+def test_build_recording_query_keeps_live_for_live_charts():
+    """A chart that IS a live take must NOT get the live filter, or its only
+    correct recording is excluded. A bare title word ("Live and Let Die") is a
+    real word, not a marker, so it still filters."""
+    live = m.build_recording_query("AC/DC", "Highway to Hell (Live at Donington)")
+    assert "-secondarytype:Live" not in live
+    assert 'recording:"highway to hell"' in live
+    # A real word "live" in the title is not a live marker → still filtered.
+    bare = m.build_recording_query("Wings", "Live and Let Die")
+    assert "-secondarytype:Live" in bare
 
 
 def test_build_recording_query_escapes_and_handles_missing_artist():
@@ -158,6 +187,54 @@ def test_build_recording_query_escapes_and_handles_missing_artist():
     # the artist clause must be absent entirely.
     assert q.startswith('recording:"')
     assert "artist:" not in q
+
+
+def test_build_recording_query_loose_drops_field_phrases():
+    # The strict form locks to the *primary* artist/title phrase (and drops
+    # live-only recordings — the chart isn't a live take).
+    assert m.build_recording_query("Junko Ohashi", "Telephone Number") == \
+        'recording:"telephone number" AND artist:"junko ohashi" AND -secondarytype:Live'
+    # The loose form has no field scoping and no phrases, so MusicBrainz also
+    # searches artist ALIASES — rescues non-Latin-primary artists (大橋純子) —
+    # but keeps the same live exclusion (a studio chart must not fall back to a
+    # live-only recording).
+    loose = m.build_recording_query("Junko Ohashi", "Telephone Number", loose=True)
+    assert loose == "(telephone number) AND (junko ohashi) AND -secondarytype:Live"
+    assert "artist:" not in loose and '"' not in loose
+
+
+def test_build_recording_query_loose_missing_artist():
+    assert m.build_recording_query("", "Fantasy", loose=True) == \
+        "(fantasy) AND -secondarytype:Live"
+
+
+def test_build_recording_query_loose_keeps_live_for_live_charts():
+    # A live chart's loose fallback must NOT exclude live recordings (same gate
+    # as the strict path) — else its only correct recording is filtered out.
+    loose = m.build_recording_query("AC/DC", "Highway to Hell (Live at Donington)", loose=True)
+    assert "-secondarytype:Live" not in loose
+    assert loose == "(highway to hell) AND (ac dc)"
+
+
+# ── alias-aware artist scoring ────────────────────────────────────────────────
+
+def test_cand_artist_sim_uses_aliases():
+    song = {"artist": "Junko Ohashi", "title": "Telephone Number"}
+    # primary is the Japanese name → romanized reference scores 0…
+    assert m.cand_artist_sim(song, {"artist": "大橋純子"}) == 0.0
+    # …but a romanized alias confirms it
+    assert m.cand_artist_sim(
+        song, {"artist": "大橋純子", "artist_aliases": ["Ohashi Junko", "Junko Ohashi"]}) == 1.0
+
+
+def test_alias_lifts_candidate_to_auto():
+    song = {"artist": "Junko Ohashi", "title": "Telephone Number"}
+    jp = {"artist": "大橋純子", "title": "Telephone Number"}
+    # Without the alias: title matches but the artist floor fails → never auto.
+    assert m.classify(song, jp, m.score_candidate(song, jp)) != "auto"
+    # With the romanized alias attached: artist clears the floor → auto.
+    jp_alias = dict(jp, artist_aliases=["Junko Ohashi"])
+    assert m.classify(song, jp_alias, m.score_candidate(song, jp_alias)) == "auto"
 
 
 # ── MusicBrainz response parsing ──────────────────────────────────────────────
@@ -198,6 +275,29 @@ def test_parse_recording_doc_normalizes():
     assert c["isrc"] == "AUAP09000045"
     assert c["genres"] == ["hard rock", "rock"]
     assert c["mb_score"] == 98
+
+
+def test_best_release_prefers_official_single_over_unofficial_album():
+    """An OFFICIAL single/EP must outrank an UNofficial bootleg album for the
+    canonical album/year: official comes before the studio-album preference, so
+    a single-only song is never seeded from a bootleg. (`(clean, status_ok, …)`
+    would wrongly pick the bootleg.)"""
+    doc = {
+        "id": "rec-x", "title": "One-Off", "score": 90,
+        "artist-credit": [
+            {"name": "A", "joinphrase": "",
+             "artist": {"id": "a", "name": "A", "sort-name": "A"}}],
+        "releases": [
+            {"id": "rel-boot", "title": "Boot LP", "status": "Bootleg",
+             "date": "1990-01-01", "release-group": {"primary-type": "Album"}},
+            {"id": "rel-single", "title": "The Single", "status": "Official",
+             "date": "1988-01-01", "release-group": {"primary-type": "Single"}},
+        ],
+    }
+    c = m.parse_recording_doc(doc)
+    assert c["release_id"] == "rel-single"
+    assert c["album"] == "The Single"
+    assert c["studio"] is False   # a Single isn't a clean studio ALBUM
 
 
 def test_parse_recording_doc_joined_artist_credit():

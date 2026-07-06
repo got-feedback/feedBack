@@ -10765,6 +10765,9 @@ def save_settings(data: dict):
     config_file = CONFIG_DIR / "config.json"
     updates: dict = {}
     messages: list[str] = []
+    # Named dlc_warnings (not `warnings`) so it can't shadow the module-level
+    # `import warnings` used elsewhere in this file.
+    dlc_warnings: list[str] = []
 
     if "dlc_dir" in data:
         dlc_path = data["dlc_dir"]
@@ -10784,7 +10787,16 @@ def save_settings(data: dict):
                             if f.suffix.lower() in sloppak_mod.SONG_EXTS)
                 messages.append(f"DLC folder: {count} song files found")
             else:
-                return {"error": f"DLC directory not found: {dlc_path}"}
+                # A non-resolving DLC path (a stale value, an unplugged
+                # external/network drive, or a path carried over from another
+                # machine) must NOT abort the whole POST. saveSettings() bundles
+                # dlc_dir together with demucs_server_url / default_arrangement /
+                # av_offset_ms in a single request, so an early `return` here
+                # silently dropped every co-submitted key — this is the "can't
+                # set the Demucs server address" report (feedBack-demucs-server
+                # #3). Record it as a warning, skip persisting dlc_dir, and keep
+                # validating the rest so the other settings still save.
+                dlc_warnings.append(f"DLC directory not found: {dlc_path}")
 
     # Both of these are consumed downstream as strings (e.g.
     # demucs_server_url.rstrip('/')), so reject non-string shapes
@@ -11041,7 +11053,15 @@ def save_settings(data: dict):
                 return {"error": str(exc)}
             cfg = settings_with_instrument_profiles(cfg)
         _atomic_write_file(config_file, json.dumps(cfg, indent=2).encode("utf-8"))
-    return {"message": ". ".join(messages) if messages else "Settings saved"}
+    resp = {"message": ". ".join(messages) if messages else "Settings saved"}
+    if dlc_warnings:
+        # `warnings` is an additive response field (existing clients read
+        # `message || error`); fold the text into `message` too so the current
+        # settings status line still surfaces the bad DLC path even though the
+        # rest of the save succeeded.
+        resp["warnings"] = dlc_warnings
+        resp["message"] = resp["message"] + " — " + "; ".join(dlc_warnings)
+    return resp
 
 
 # Keys a client "Reset {category}" action may clear. Resetting removes the key

@@ -219,6 +219,47 @@ def test_dlc_dir_empty_string_clears(client, tmp_path):
     assert _read_cfg(tmp_path)["dlc_dir"] == ""
 
 
+def test_unresolvable_dlc_dir_does_not_block_other_keys(client, tmp_path):
+    # Regression (feedBack-demucs-server#3): the v3 "Save" button next to the
+    # Demucs field bundles dlc_dir with demucs_server_url in one POST. A DLC
+    # path that doesn't resolve on THIS machine (stale value / unplugged drive)
+    # must not abort the whole request — the co-submitted demucs_server_url has
+    # to persist, and the bad path is surfaced as a warning rather than a hard
+    # error that drops every other key.
+    missing = str(tmp_path / "does-not-exist")
+    r = client.post("/api/settings", json={
+        "dlc_dir": missing,
+        "demucs_server_url": "http://demucs.example:7865",
+        "default_arrangement": "Lead",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    # No hard error; the bad path is reported as a warning.
+    assert "error" not in body
+    assert any("does-not-exist" in w for w in body.get("warnings", []))
+    assert "does-not-exist" in body["message"]
+    cfg = _read_cfg(tmp_path)
+    # The valid keys persisted...
+    assert cfg["demucs_server_url"] == "http://demucs.example:7865"
+    assert cfg["default_arrangement"] == "Lead"
+    # ...and the unresolvable path was NOT written.
+    assert cfg.get("dlc_dir", "") != missing
+
+
+def test_valid_dlc_dir_still_reports_song_count(client, tmp_path):
+    # The happy path is unchanged: a resolvable DLC dir persists and the
+    # response message still carries the "N song files found" summary (no
+    # warnings key when nothing went wrong).
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    r = client.post("/api/settings", json={"dlc_dir": str(dlc)})
+    assert r.status_code == 200
+    body = r.json()
+    assert "warnings" not in body
+    assert "song files found" in body["message"]
+    assert _read_cfg(tmp_path)["dlc_dir"] == str(dlc)
+
+
 @pytest.mark.parametrize("key", ["default_arrangement", "demucs_server_url"])
 def test_string_key_null_is_noop(client, tmp_path, key):
     # Match the dlc_dir contract: null preserves the on-disk value.

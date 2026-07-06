@@ -641,7 +641,12 @@
                             </div>
                         </div>
                         <div class="fb-srow-control">
+                            <!-- Autosave on blur/enter via a single-key POST (like every other v3
+                                 setting), so setting the address never depends on the shared Save
+                                 button — whose bundled dlc_dir could otherwise block it. Save button
+                                 kept for discoverability. -->
                             <input type="text" id="demucs-server-url" placeholder="http://192.168.1.100:7865"
+                                onchange="persistSetting('demucs_server_url', this.value.trim())"
                                 class="bg-dark-700 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-gray-300 placeholder-gray-600 focus:border-accent/50 outline-none">
                             <button onclick="saveSettings()" class="bg-accent hover:bg-accent-light px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition">Save</button>
                         </div>

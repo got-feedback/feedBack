@@ -293,6 +293,45 @@ def test_year_sort_asc_oldest_first(client, seeded):
     assert files == ["b.archive", "a.archive", "f.archive", "d.sloppak", "c.sloppak", "e.sloppak"]
 
 
+def test_difficulty_sort_pushes_unrated_to_bottom(client, server_mod):
+    """Personal difficulty (song_user_meta.user_difficulty) sorts like
+    mastery: an unrated (NULL) row must fall to the bottom in BOTH
+    directions rather than colliding with a real 1..5 rating at either
+    end."""
+    _put(server_mod, filename="easy.archive", title="Easy", artist="A",
+         arrangements=[{"index": 0, "name": "Lead", "notes": 1}])
+    _put(server_mod, filename="hard.archive", title="Hard", artist="B",
+         arrangements=[{"index": 0, "name": "Lead", "notes": 1}])
+    _put(server_mod, filename="unrated.archive", title="Unrated", artist="C",
+         arrangements=[{"index": 0, "name": "Lead", "notes": 1}])
+    server_mod.meta_db.set_song_user_meta("easy.archive", user_difficulty=1)
+    server_mod.meta_db.set_song_user_meta("hard.archive", user_difficulty=5)
+
+    asc = [s["filename"] for s in _get(client, sort="difficulty")["songs"]]
+    assert asc == ["easy.archive", "hard.archive", "unrated.archive"]
+
+    desc = [s["filename"] for s in _get(client, sort="difficulty-desc")["songs"]]
+    assert desc == ["hard.archive", "easy.archive", "unrated.archive"]
+
+
+def test_tree_view_songs_carry_user_difficulty(client, server_mod):
+    """`/api/library/artists` (the classic tree view's `query_artists`) must
+    batch-attach `user_difficulty` the same way `query_page` does for the
+    grid — otherwise the tree view's difficulty badge silently never
+    renders (song.user_difficulty stays undefined for every row)."""
+    _put(server_mod, filename="rated.archive", title="Rated", artist="A",
+         arrangements=[{"index": 0, "name": "Lead", "notes": 1}])
+    _put(server_mod, filename="unrated.archive", title="Unrated", artist="A",
+         arrangements=[{"index": 0, "name": "Lead", "notes": 1}])
+    server_mod.meta_db.set_song_user_meta("rated.archive", user_difficulty=4)
+
+    data = client.get("/api/library/artists").json()
+    songs = data["artists"][0]["albums"][0]["songs"]
+    by_filename = {s["filename"]: s for s in songs}
+    assert by_filename["rated.archive"]["user_difficulty"] == 4
+    assert by_filename["unrated.archive"]["user_difficulty"] is None
+
+
 def test_tuning_sort_down_tuned_before_up_tuned_at_same_distance(client, server_mod):
     """Within an ABS(tuning_sort_key) tier, the down-tuned variant
     must come before the up-tuned one so the order matches the chart's

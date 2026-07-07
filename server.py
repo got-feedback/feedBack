@@ -4393,6 +4393,11 @@ class MetadataDB:
         from collections import OrderedDict
         estd = self._estd_set()
         favs = self.favorite_set()
+        # Personal difficulty rides along here too (feedBack#810 follow-up),
+        # same batched pattern as query_page — without this the tree view's
+        # difficulty badge silently never renders (song.user_difficulty was
+        # always undefined for every row).
+        udm = self.user_meta_map([r[0] for r in rows])
         artists = OrderedDict()
         for r in rows:
             artist = r[2] or "Unknown Artist"
@@ -4414,6 +4419,7 @@ class MetadataDB:
                 "tuning_name": r[12] or "",
                 "has_estd": r[0] in estd,
                 "favorite": r[0] in favs,
+                "user_difficulty": udm.get(r[0]),
             })
 
         # Pick most common name variant per artist/album

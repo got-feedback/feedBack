@@ -2079,7 +2079,7 @@ function renderGridCards(songs, containerId = 'lib-grid', mode = 'replace') {
                     ${(() => { const _nm = _getArrangementNamingMode(); return (song.arrangements || []).map(a => _arrangementBadgeHtml(a, _nm)).join(''); })()}
                     ${tuning ? `<span class="px-1.5 py-0.5 rounded ${tuning === 'E Standard' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'}">${esc(tuning)}</span>` : ''}
                     ${song.has_lyrics ? `<span class="px-1.5 py-0.5 bg-purple-900/30 rounded text-purple-300">Lyrics</span>` : ''}
-                    ${song.user_difficulty != null ? `<span class="px-1.5 py-0.5 bg-blue-900/30 rounded text-blue-300" title="Your difficulty rating">◆${song.user_difficulty}</span>` : ''}
+                    ${song.user_difficulty != null ? `<span class="px-1.5 py-0.5 bg-blue-900/30 rounded text-blue-300" title="Your difficulty rating">◆${esc(song.user_difficulty)}</span>` : ''}
                     ${duration ? `<span class="text-gray-600">${duration}</span>` : ''}
                 </div>
                 ${retuneBtn}
@@ -2280,7 +2280,7 @@ async function renderTreeInto(containerId, countId, stats, letter, q, favoritesO
                 if (song.has_lyrics)
                     html += `<span class="px-1.5 py-0.5 bg-purple-900/30 rounded text-purple-300">Lyrics</span>`;
                 if (song.user_difficulty != null)
-                    html += `<span class="px-1.5 py-0.5 bg-blue-900/30 rounded text-blue-300" title="Your difficulty rating">◆${song.user_difficulty}</span>`;
+                    html += `<span class="px-1.5 py-0.5 bg-blue-900/30 rounded text-blue-300" title="Your difficulty rating">◆${esc(song.user_difficulty)}</span>`;
                 if (duration)
                     html += `<span class="text-gray-600 w-10 text-right">${duration}</span>`;
                 if (stdRetune)

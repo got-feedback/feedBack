@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sort and filter the library by your personal difficulty rating — now visible at a glance, not just in the edit drawer.** `song_user_meta.user_difficulty` (the 1–5 planning rating, settable manually or seeded by a plugin like the community `difficulty_tagger`) already existed but was only readable by opening a song's per-song details drawer. The library API gains `sort=difficulty` / `sort=difficulty-desc` — a correlated subquery over `song_user_meta`, following the same unrated-rows-sort-to-the-bottom-in-both-directions pattern as the existing `mastery` sort — and library cards now show the rating as a `◆N` badge (v2 grid/tree views and the v3 grid alike), next to the tuning and lyrics badges. The classic tree view's `query_artists` batch-attaches `user_difficulty` the same way `query_page` already did for the grid, so the badge actually renders there too instead of staying dark. Tests: `tests/test_library_filters.py::test_difficulty_sort_pushes_unrated_to_bottom`, `tests/test_library_filters.py::test_tree_view_songs_carry_user_difficulty`.
 - **`lib/midi_import.py`: `convert_midi_tempo_map` — MIDI imports can finally carry
   their bars.** The keys/drums note converters always computed a tempo-aware
   tick→seconds map internally (to bake note times to absolute seconds) and then threw

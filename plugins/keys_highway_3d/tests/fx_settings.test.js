@@ -397,3 +397,156 @@ test('keys3dSetCamera: persists + dispatches valid ids, ignores unknown', () => 
     assert.equal(readCameraSetting(), 'overhead');
 });
 
+/* ── Flat-sharps / piano-shaped lanes (feat/keys3d-flat-lanes) ───────── */
+
+test('FX defaults: octave separators on, lanes off (minimal default look)', () => {
+    const { FX_DEFAULTS } = load().slopsmithViz_keys_highway_3d.__test;
+    assert.equal(FX_DEFAULTS.octaveGaps, true);   // octave separators ship on
+    assert.equal(FX_DEFAULTS.laneOpacity, 0.0);   // dark floor + guide lines by default
+    assert.equal(FX_DEFAULTS.octaveContrast, 0.5);
+    // Sharp LAYOUT is a string setting, not an FX bool.
+    assert.equal('flatSharps' in FX_DEFAULTS, false);
+    assert.equal('laneColors' in FX_DEFAULTS, false); // superseded by laneOpacity
+});
+
+test('keys3dSetFx: highway-layout controls persist (bool + sliders)', () => {
+    const store = {};
+    const win = load({
+        localStorage: {
+            getItem: (k) => (k in store ? store[k] : null),
+            setItem: (k, v) => { store[k] = v; },
+        },
+        dispatchEvent: () => true,
+        CustomEvent: class { constructor(t, o) { this.type = t; this.detail = o && o.detail; } },
+    });
+    win.keys3dSetFx('octaveGaps', true);
+    assert.equal(store.keys3d_bg_octaveGaps, '1');
+    // laneOpacity / octaveContrast are 0-1 numbers, persisted verbatim + clamped.
+    win.keys3dSetFx('laneOpacity', 0.35);
+    assert.equal(store.keys3d_bg_laneOpacity, '0.35');
+    win.keys3dSetFx('laneOpacity', 5); // clamps to the 0-1 range
+    assert.equal(store.keys3d_bg_laneOpacity, '1');
+    win.keys3dSetFx('octaveContrast', 0.8);
+    assert.equal(store.keys3d_bg_octaveContrast, '0.8');
+});
+
+test('sharpMode: realistic default, validated ids, persists + dispatches', () => {
+    const bare = load().slopsmithViz_keys_highway_3d.__test;
+    assert.deepEqual([...bare.SHARP_MODES], ['floating', 'flat', 'realistic']);
+    assert.equal(bare.readSharpModeSetting(), 'realistic'); // no localStorage → default
+    const store = {};
+    const events = [];
+    const win = load({
+        localStorage: {
+            getItem: (k) => (k in store ? store[k] : null),
+            setItem: (k, v) => { store[k] = v; },
+        },
+        dispatchEvent: (ev) => { events.push(ev); return true; },
+        CustomEvent: class { constructor(t, o) { this.type = t; this.detail = o && o.detail; } },
+    });
+    win.keys3dSetSharpMode('flat'); // a non-default id, to exercise persistence
+    assert.equal(store.keys3d_bg_sharpMode, 'flat');
+    assert.equal(events[0].detail.sharpMode, 'flat');
+    assert.equal(win.slopsmithViz_keys_highway_3d.__test.readSharpModeSetting(), 'flat');
+    // Unknown id ignored (no write, no event).
+    win.keys3dSetSharpMode('bogus');
+    assert.equal(store.keys3d_bg_sharpMode, 'flat');
+    assert.equal(events.length, 1);
+});
+
+test('laneSpanFlat (V5): lanes tile with zero overlap and even the naturals', () => {
+    const { laneSpanFlat, _isBlackPc } = load().slopsmithViz_keys_highway_3d.__test;
+    const sh = 2.2, shift = 2.2 / 3;
+    const dims = { whiteW: 12, sharpHalf: sh, shift, octGap: 0.9 }; // mirrors shipped LANE_DIMS_FLAT
+    // cx for one octave: whites on integer slots, blacks on half-slots — the
+    // same slot geometry keyLayout/keyX produce (cx = slot * whiteW=12).
+    const CX = {
+        60: 0, 61: 6, 62: 12, 63: 18, 64: 24, 65: 36, 66: 42,
+        67: 48, 68: 54, 69: 60, 70: 66, 71: 72, 72: 84,
+    };
+    const midis = [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72];
+    const spans = midis.map((m) => laneSpanFlat(m, _isBlackPc(m), CX[m], dims, false));
+    const wOf = (s) => s.right - s.left;
+    const w = (m) => wOf(spans[midis.indexOf(m)]);
+    // Zero-overlap tiling: every lane abuts the previous one (no gap, no overlap).
+    for (let i = 1; i < spans.length; i++) {
+        assert.ok(Math.abs(spans[i].left - spans[i - 1].right) < 1e-9, 'lane ' + midis[i] + ' abuts');
+    }
+    // Sharps are all the same width.
+    for (const m of [61, 63, 66, 68, 70]) {
+        assert.ok(Math.abs(w(m) - 2 * sh) < 1e-9, 'sharp ' + m + ' width');
+    }
+    // The lean evens the naturals: C, D, E, F, B all come out equal.
+    for (const m of [62, 64, 65, 71]) {
+        assert.ok(Math.abs(w(m) - w(60)) < 1e-9, 'natural ' + m + ' == C (evened)');
+    }
+    // G and A are the only slightly-smaller naturals (G# can't lean) — still
+    // clearly wider than a sharp, and MUCH closer to the rest than plain V2
+    // (which would leave D at 12−2·sh, far below C's 12−sh).
+    assert.ok(Math.abs(w(67) - w(69)) < 1e-9, 'G == A');
+    assert.ok(w(67) < w(60) && w(67) > 2 * sh, 'G/A a touch smaller, still wider than a sharp');
+    assert.ok(w(60) - w(67) < sh, 'natural spread is under one sharp-width');
+});
+
+test('laneSpanReal (V4): naturals uniform, sharps full-width and overlapping', () => {
+    const { laneSpanReal } = load().slopsmithViz_keys_highway_3d.__test;
+    const dims = { natHalf: 5.64, sharpHalf: 3.2, octGap: 0.9 }; // mirrors LANE_DIMS_REAL
+    const wOf = (s) => s.right - s.left;
+    // Every natural is the same full width, whatever its neighbours.
+    for (const [midi, slot] of [[60, 0], [62, 1], [64, 2], [67, 4], [71, 6]]) {
+        assert.ok(Math.abs(wOf(laneSpanReal(midi, false, slot * 12, dims, false)) - 2 * 5.64) < 1e-9,
+            'natural ' + midi + ' uniform');
+    }
+    // Sharps are the full (wider) black-key width and overlap their naturals.
+    const C = laneSpanReal(60, false, 0, dims, false);
+    const Cs = laneSpanReal(61, true, 6, dims, false);
+    assert.ok(Math.abs(wOf(Cs) - 2 * 3.2) < 1e-9, 'sharp full width');
+    assert.ok(Cs.left < C.right, 'sharp overlaps (tucks over) the natural');
+});
+
+test('laneSpanFlat (V5): octaveGaps widens B→C by octGap, sharps unaffected', () => {
+    const { laneSpanFlat } = load().slopsmithViz_keys_highway_3d.__test;
+    const dims = { whiteW: 12, sharpHalf: 2.2, shift: 2.2 / 3, octGap: 0.9 };
+    const gapOff = laneSpanFlat(72, false, 84, dims, false).left - laneSpanFlat(71, false, 72, dims, false).right;
+    const gapOn = laneSpanFlat(72, false, 84, dims, true).left - laneSpanFlat(71, false, 72, dims, true).right;
+    assert.ok(Math.abs((gapOn - gapOff) - dims.octGap) < 1e-9, 'B→C divider grows by octGap');
+    // Sharps are unaffected by the octave-gap option.
+    const s = laneSpanFlat(61, true, 6, dims, true);
+    assert.ok(Math.abs((s.right - s.left) - 2 * dims.sharpHalf) < 1e-9, 'sharp width unchanged by gaps');
+});
+
+test('laneSpanFlat (V5): active-range boundary key is NOT trimmed by an out-of-range neighbor sharp', () => {
+    const { laneSpanFlat } = load().slopsmithViz_keys_highway_3d.__test;
+    const dims = { whiteW: 12, sharpHalf: 2.2, shift: 2.2 / 3, octGap: 0.9 }; // mirrors LANE_DIMS_FLAT
+    // F (midi 65, cx 36): its upper neighbor F# (66) is a sharp. When F sits
+    // at range.activeHigh and F# is excluded from the active range, F# never
+    // gets a lane drawn (see the activeLow/activeHigh skip around the
+    // lane-strip loop) — trimming F's right edge for it would leave a dark,
+    // unfilled sliver. The edge should stay full instead.
+    const highBoundary = { activeLow: 60, activeHigh: 65 };
+    const fAtBoundary = laneSpanFlat(65, false, 36, dims, false, highBoundary);
+    assert.ok(Math.abs(fAtBoundary.right - (36 + dims.whiteW / 2)) < 1e-9,
+        'F right edge stays full when F# is out of the active range');
+    // Same key, but now F# IS in the active range: normal zero-overlap
+    // tiling applies — the trim matches the ungated (no-range) call exactly,
+    // so in-range geometry is unaffected by this fix.
+    const highIncluded = { activeLow: 60, activeHigh: 66 };
+    const fWithSharpInRange = laneSpanFlat(65, false, 36, dims, false, highIncluded);
+    const fUngated = laneSpanFlat(65, false, 36, dims, false);
+    assert.ok(Math.abs(fWithSharpInRange.right - fUngated.right) < 1e-9,
+        'F trims normally once F# is back in range');
+    assert.ok(fWithSharpInRange.right < fAtBoundary.right, 'in-range trim is narrower than the boundary full edge');
+
+    // Symmetric case on the low edge: D (midi 62, cx 12), lower neighbor C#
+    // (61) excluded when D sits at range.activeLow.
+    const lowBoundary = { activeLow: 62, activeHigh: 72 };
+    const dAtBoundary = laneSpanFlat(62, false, 12, dims, false, lowBoundary);
+    assert.ok(Math.abs(dAtBoundary.left - (12 - dims.whiteW / 2)) < 1e-9,
+        'D left edge stays full when C# is out of the active range');
+    const lowIncluded = { activeLow: 61, activeHigh: 72 };
+    const dWithSharpInRange = laneSpanFlat(62, false, 12, dims, false, lowIncluded);
+    const dUngated = laneSpanFlat(62, false, 12, dims, false);
+    assert.ok(Math.abs(dWithSharpInRange.left - dUngated.left) < 1e-9,
+        'D trims normally once C# is back in range');
+});
+

@@ -9,7 +9,7 @@
 //
 // Visual contract is the frame analysis on slopsmith#824 (RS+ reference):
 // 3D perspective highway to a vanishing point, notes landing on a real 3D
-// keyboard, per-key Synthesia-style PITCH-CLASS colours (hand is only a
+// keyboard, per-key Synthesia-style PITCH-CLASS colors (hand is only a
 // secondary brightness cue), active-range key highlighting with letters,
 // a glowing hit-line, bevelled cuboid notes sized by durSec, floating bar
 // numbers, and key-depress + flame feedback driven by the LIVE MIDI input
@@ -59,7 +59,7 @@
     // World scroll speed (units / second) — matches the sibling highways.
     const TS = 130 * K;
 
-    // Per-pitch-class colours (Synthesia convention observed in the RS+
+    // Per-pitch-class colors (Synthesia convention observed in the RS+
     // reference frames: C=red, D=yellow, E=blue, F=light blue-grey, …).
     // Index = midi % 12 (C, C#, D, …, B). Sharps take a dimmed blend of
     // their neighbours so black-key notes stay distinguishable.
@@ -79,11 +79,11 @@
     ];
 
     // Hand cue is SECONDARY (slopsmith#824 design call): right hand renders
-    // at full brightness, left hand slightly darkened — colour stays the
+    // at full brightness, left hand slightly darkened — color stays the
     // pitch class.
     const HAND_BRIGHTNESS = { rh: 1.0, lh: 0.72 };
 
-    // Selectable note-colour palettes. Index = midi % 12, same contract as
+    // Selectable note-color palettes. Index = midi % 12, same contract as
     // PITCH_CLASS_COLORS — which stays byte-identical as the 'classic'
     // entry, so anyone who never touches the setting sees the stock look.
     // Two palette families:
@@ -151,7 +151,7 @@
         ],
     };
 
-    // Octave-based colour scheme ('octaves'): every octave gets a distinct
+    // Octave-based color scheme ('octaves'): every octave gets a distinct
     // hue that steps like a rainbow (clear, uniform sections — NOT a smooth
     // blend — so each octave is uniquely identifiable, but neighbouring
     // octaves stay close so the change isn't jarring). Loops if a song runs
@@ -181,7 +181,80 @@
     function _isBlackPc(midi) {
         return [1, 3, 6, 8, 10].indexOf(((midi % 12) + 12) % 12) !== -1;
     }
-    // Colour (24-bit int) for a midi note under the octave scheme: hue by
+    // Which way a sharp leans to even out the naturals: toward the EDGE
+    // natural next to it. +1 = up (toward the higher natural), −1 = down, 0 =
+    // centred. C#/F# sit below an inner natural so they lean down to C/F;
+    // D#/A# lean up to E/B; G# has an inner natural on both sides, so it can't
+    // lean and stays put.
+    function _sharpLeanDir(pc) {
+        if (pc === 1 || pc === 6) return -1;   // C#, F#
+        if (pc === 3 || pc === 10) return 1;   // D#, A#
+        return 0;                              // G#
+    }
+    // Floor span [left,right] of a key's lane in the FLAT (piano-shaped)
+    // layout, in world units, given the key's centre x (`cx`). Pure/isolated
+    // on purpose — this ONE function defines the layout, so a variant is a
+    // one-function swap. Zero-overlap tiling: a white lane is trimmed by
+    // `sharpHalf` wherever it meets a sharp, and the sharp fills that gap. Each
+    // sharp is nudged `shift` toward the edge natural beside it (see
+    // _sharpLeanDir), which steals a sliver from that edge natural and widens
+    // the squeezed inner natural — at shift = sharpHalf/3 the C-D-E-F-B
+    // naturals come out equal. Lanes still tile edge-to-edge (no overlap, no
+    // gap). With `gaps`, each B→C octave boundary opens an extra `octGap`
+    // divider by shaving half of it off the B and the C (naturals only).
+    // `range`, when given, gates the trim to a neighbouring sharp that is
+    // itself inside `range.activeLow..range.activeHigh`. A white key at the
+    // active-range boundary (see the `midi < range.activeLow ||
+    // midi > range.activeHigh` skip around the lane-strip loop) may sit next
+    // to a sharp pitch-class that falls just outside the active range — that
+    // sharp's lane is never drawn, so trimming the white key's edge for it
+    // leaves a dark, unfilled sliver. Gating on range keeps that edge full
+    // while leaving the normal (fully in-range) zero-overlap tiling intact.
+    // Callers that don't pass `range` (e.g. the unit tests exercising raw
+    // tiling geometry) keep the unconditional trim.
+    function laneSpanFlat(midi, black, cx, dims, gaps, range) {
+        const { whiteW, sharpHalf, shift, octGap } = dims;
+        if (black) {
+            const c = cx + _sharpLeanDir(((midi % 12) + 12) % 12) * shift;
+            return { left: c - sharpHalf, right: c + sharpHalf };
+        }
+        const neighborActive = (m) => !range || (m >= range.activeLow && m <= range.activeHigh);
+        // White: each side that meets a sharp is trimmed to that (leaned) sharp's
+        // near edge; a side that meets another white keeps the half-slot edge.
+        let left = cx - whiteW / 2;
+        let right = cx + whiteW / 2;
+        if (_isBlackPc(midi - 1) && neighborActive(midi - 1)) {
+            const bc = (cx - whiteW / 2) + _sharpLeanDir(((midi - 1) % 12 + 12) % 12) * shift;
+            left = bc + sharpHalf;
+        }
+        if (_isBlackPc(midi + 1) && neighborActive(midi + 1)) {
+            const bc = (cx + whiteW / 2) + _sharpLeanDir(((midi + 1) % 12 + 12) % 12) * shift;
+            right = bc - sharpHalf;
+        }
+        const pc = ((midi % 12) + 12) % 12;
+        if (gaps) {
+            if (pc === 11) right -= octGap / 2; // B: gap on its right (→ C)
+            if (pc === 0) left += octGap / 2;   // C: gap on its left (← B)
+        }
+        return { left, right };
+    }
+    // 'realistic' layout span: every bar sized to the physical key it lands on.
+    // Naturals are the same full width (2·natHalf) centred on the key; sharps are
+    // the full black-key width (2·sharpHalf) at their standard half-slot, which
+    // makes them overlap — the caller draws sharps on top. A natural therefore
+    // always renders full and is only covered where a sharp note actually
+    // coincides in time. `gaps` widens the B→C divider (naturals only).
+    function laneSpanReal(midi, black, cx, dims, gaps) {
+        const half = black ? dims.sharpHalf : dims.natHalf;
+        let left = cx - half, right = cx + half;
+        if (gaps && !black) {
+            const pc = ((midi % 12) + 12) % 12;
+            if (pc === 11) right -= dims.octGap / 2;
+            if (pc === 0) left += dims.octGap / 2;
+        }
+        return { left, right };
+    }
+    // Color (24-bit int) for a midi note under the octave scheme: hue by
     // octave, darker for sharps. Pure (no THREE) so it is unit-testable.
     function octaveNoteColor(midi) {
         const oct = Math.floor(midi / 12) - 1;      // C1..B1 => 1
@@ -210,8 +283,8 @@
     // Gem vertical gradient (bottom shade → top highlight), baked per-vertex into
     // the note geometry so a block reads as a lit 3D gem instead of a flat fill —
     // same approach as the bundled guitar highway_3d (`gNoteGrad`). The ramp is
-    // greyscale so one geometry serves every pitch-class colour; the material
-    // multiplies its colour by it via vertexColors.
+    // greyscale so one geometry serves every pitch-class color; the material
+    // multiplies its color by it via vertexColors.
     const GEM_SHADE_BOT = 0.12, GEM_SHADE_TOP = 1.1; // strong gem gradient (top slightly blows toward a highlight)
 
     const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -1026,6 +1099,14 @@
         scoreFx: true,    // 2D overlay: +N pops, combo rings, streak-break wash
         bgIntensity: 0.5, // background-ambience density/strength
         bgReactive: true, // background reacts to the audio analyser
+        // Highway-layout options (apply on the next chart build via init()'s
+        // fx re-read). The sharp LAYOUT is a separate string setting
+        // (keys3d_bg_sharpMode); these two are the booleans.
+        octaveGaps: true,      // ON: wider divider gap at each B→C octave boundary
+        laneOpacity: 0.0,      // 0–1: lane-color strength. 0 (default) = dark floor +
+        //                        block guide lines (E→F, B→C); 1 = full colored lanes; crossfades.
+        octaveContrast: 0.5,   // 0–1: how strongly the B→C octave line stands out. It
+        //                        auto-darkens with lane opacity and brightens as it fades.
         // Camera base-rig fine-tune. These shift the BASE vantage point the
         // auto-pan/zoom follow-motion is built on (they multiply/offset the
         // active CAM_PRESET before the per-frame pan + dolly), so the camera
@@ -1223,7 +1304,7 @@
         } catch (_) { /* dispatch unavailable — persisted value applies next init */ }
     };
 
-    // Note-colour palette id — string-valued like the theme, so it gets its
+    // Note-color palette id — string-valued like the theme, so it gets its
     // own validated key + setter rather than an FX_DEFAULTS slot.
     const FX_LS_PALETTE = 'keys3d_bg_palette';
     function readPaletteSetting() {
@@ -1231,7 +1312,7 @@
             const id = localStorage.getItem(FX_LS_PALETTE);
             if (id && PALETTE_IDS.indexOf(id) !== -1) return id;
         } catch (_) {}
-        // Default: the octave scheme (each octave its own colour, darker
+        // Default: the octave scheme (each octave its own color, darker
         // sharps) — the plug-and-play piano look. Emerald/classic/etc. remain
         // selectable.
         return 'octaves';
@@ -1241,6 +1322,30 @@
         try { localStorage.setItem(FX_LS_PALETTE, id); } catch (_) {}
         try {
             window.dispatchEvent(new CustomEvent('keys3d:settings', { detail: { palette: id } }));
+        } catch (_) { /* dispatch unavailable — persisted value applies next init */ }
+    };
+
+    // Sharp-display layout id — string-valued (3-way), its own validated key +
+    // setter. 'floating' = the original raised-plane sharps with white-only
+    // lanes; 'flat' = every note on one plane with piano-shaped tiled lanes
+    // (sharps leaned to even the naturals); 'realistic'
+    // = one plane with note bars sized like the physical keys (full naturals,
+    // full sharps overlapping on top). Geometry-time — applied on the next chart
+    // build via init()'s re-read.
+    const FX_LS_SHARPMODE = 'keys3d_bg_sharpMode';
+    const SHARP_MODES = ['floating', 'flat', 'realistic'];
+    function readSharpModeSetting() {
+        try {
+            const id = localStorage.getItem(FX_LS_SHARPMODE);
+            if (id && SHARP_MODES.indexOf(id) !== -1) return id;
+        } catch (_) {}
+        return 'realistic'; // default layout: physical-key-sized bars on one plane
+    }
+    window.keys3dSetSharpMode = function (id) {
+        if (SHARP_MODES.indexOf(id) === -1) return;
+        try { localStorage.setItem(FX_LS_SHARPMODE, id); } catch (_) {}
+        try {
+            window.dispatchEvent(new CustomEvent('keys3d:settings', { detail: { sharpMode: id } }));
         } catch (_) { /* dispatch unavailable — persisted value applies next init */ }
     };
 
@@ -1561,6 +1666,7 @@
         // _applyTheme / _applyCinematic / the glow slider retune them live).
         let _theme = readThemeSetting();
         let _palette = readPaletteSetting();
+        let _sharpMode = readSharpModeSetting(); // 'floating' | 'flat' | 'realistic'
         let ambLight = null, dirLight = null;
         let _floorMat = null;
         const _railMats = [];      // lane-edge rail materials (theme laneDim)
@@ -1628,7 +1734,7 @@
             return (NOTE_PALETTES[_palette] || PITCH_CLASS_COLORS)[pc];
         }
 
-        // Base colour (24-bit int, no hand dimming) for a midi note under the
+        // Base color (24-bit int, no hand dimming) for a midi note under the
         // active palette — the octave scheme is procedural, every other
         // palette is a 12-entry pitch-class table.
         function _noteHex(midi) {
@@ -1664,6 +1770,41 @@
         const WHITE_W = 12 * K, WHITE_L = 46 * K, WHITE_H = 5 * K;
         const BLACK_W = 6.4 * K, BLACK_L = 28 * K, BLACK_H = 6.5 * K;
         const HIGHWAY_LEN = 1150 * K; // longer runway → ~8.8s of lookahead visible
+        // 'flat' piano-shaped-lane geometry (see laneSpanFlat). Zero-overlap tiling:
+        // white lanes are trimmed by FLAT_SHARP_HALF where they meet a sharp and
+        // the sharp fills the gap, so nothing overlaps. To keep the naturals
+        // even, each sharp is nudged FLAT_SHARP_SHIFT toward the EDGE natural
+        // beside it (C#→C, D#→E, F#→F, A#→B; G# stays centred, no edge to lean
+        // on) — that steals a sliver from the edge natural and hands it to the
+        // squeezed inner natural. At shift = sharpHalf/3 the C-D-E-F-B naturals
+        // come out exactly equal; G/A land a hair smaller (G# can't lean). The
+        // sharps ride the same flat plane (no lift — they never overlap a
+        // natural). OCT_GAP is the extra divider opened at each octave boundary
+        // when the octaveGaps option is on.
+        const FLAT_SHARP_HALF = 2.2 * K;                 // sharp half-width (4.4K wide)
+        const FLAT_SHARP_SHIFT = FLAT_SHARP_HALF / 3;    // sharp lean that evens the naturals
+        const OCT_GAP = 0.9 * K;
+        const LANE_DIMS_FLAT = {
+            whiteW: WHITE_W, sharpHalf: FLAT_SHARP_HALF, shift: FLAT_SHARP_SHIFT, octGap: OCT_GAP,
+        };
+        // 'realistic' layout (laneSpanReal): every note bar is the size of the
+        // physical key it lands on — naturals the full white-key width (always
+        // rendered full, only occluded where a sharp note actually overlaps in
+        // time) and sharps the full black-key width at their standard positions,
+        // drawn on top with a hair of REAL_SHARP_LIFT (anti z-fight).
+        const REAL_NAT_HALF = WHITE_W * 0.47;   // natural bar ≈ physical white key (~11.3K)
+        const REAL_SHARP_HALF = BLACK_W / 2;    // sharp bar = physical black key (6.4K)
+        const REAL_SHARP_LIFT = 0.3 * K;
+        const LANE_DIMS_REAL = { natHalf: REAL_NAT_HALF, sharpHalf: REAL_SHARP_HALF, octGap: OCT_GAP };
+        // Lane span for the active non-floating sharp mode. `range`
+        // (activeLow/activeHigh) is optional and only consulted by the flat
+        // layout, to gate the boundary-key edge trim (see laneSpanFlat).
+        const _flatMode = () => _sharpMode === 'flat' || _sharpMode === 'realistic';
+        function laneSpanFor(midi, black, cx, gaps, range) {
+            return _sharpMode === 'realistic'
+                ? laneSpanReal(midi, black, cx, LANE_DIMS_REAL, gaps)
+                : laneSpanFlat(midi, black, cx, LANE_DIMS_FLAT, gaps, range);
+        }
 
         // Camera — the default 'classic' preset is a low, near-telephoto rig
         // (RS+-style): a narrow FOV from low and back gives a deep receding
@@ -1708,7 +1849,7 @@
             _rigOut.lookZ = _camPreset.lookZ;
             return _rigOut;
         }
-        // Per-key approach glow: a key lights in its pitch-class colour ONLY while a
+        // Per-key approach glow: a key lights in its pitch-class color ONLY while a
         // note is heading for it, ramping up the closer that note gets to the hit-line.
         const KEY_GLOW_AHEAD = 2.0;      // seconds before the hit-line a key starts to light
         const KEY_GLOW_STRENGTH = 1.15;  // peak emissive intensity (note at the hit-line)
@@ -2297,9 +2438,9 @@
             });
             // Extrusion spans z ∈ [-bevel, depth + bevel]; centre it.
             geo.translate(0, 0, -depth / 2);
-            // Bake a vertical brightness ramp into vertex colours (bottom shade →
+            // Bake a vertical brightness ramp into vertex colors (bottom shade →
             // top highlight) so the gem reads 3D; the material multiplies its
-            // pitch-class colour by this (vertexColors).
+            // pitch-class color by this (vertexColors).
             geo.computeBoundingBox();
             const y0 = geo.boundingBox.min.y, yr = (geo.boundingBox.max.y - y0) || 1;
             const pos = geo.attributes.position;
@@ -2314,10 +2455,10 @@
             return geo;
         }
 
-        // Glossy note material, cached per resolved colour. Keying by the
-        // final colour int (hand brightness already baked in by noteColor)
+        // Glossy note material, cached per resolved color. Keying by the
+        // final color int (hand brightness already baked in by noteColor)
         // works for every palette — including 'octaves', where two notes of
-        // the same pitch class in different octaves are DIFFERENT colours and
+        // the same pitch class in different octaves are DIFFERENT colors and
         // must not share a material (a pitch-class key would collide them).
         function _noteMaterial(midi, hand) {
             const col = noteColor(midi, hand);
@@ -2333,7 +2474,7 @@
             // share one shader program.)
             mat = new T.MeshPhysicalMaterial({
                 color: col,
-                vertexColors: true,         // multiply colour by the baked gem ramp
+                vertexColors: true,         // multiply color by the baked gem ramp
                 emissive: col,
                 emissiveIntensity: NOTE_EMISSIVE_BASE * _glowMul(),
                 roughness: 0.32,
@@ -2355,7 +2496,10 @@
             return 0.72 + 0.22 * Math.min(1, Math.max(0, fx.vibrancy));
         }
         function _laneGuideOpacity() {
-            return 0.10 + 0.12 * Math.min(1, Math.max(0, fx.vibrancy));
+            // Vibrancy sets the ceiling (much brighter than the old subtle
+            // 0.10–0.22 range); the laneOpacity slider then scales 0 → ceiling.
+            const vib = 0.32 + 0.52 * Math.min(1, Math.max(0, fx.vibrancy)); // ~0.32..0.84
+            return vib * Math.min(1, Math.max(0, fx.laneOpacity));
         }
 
         // Live vibrancy slider: retint everything already built — the
@@ -2371,13 +2515,13 @@
             for (const m of _laneGuideMats) m.opacity = lop;
         }
 
-        // Live palette switch: recolour everything already built — cached
+        // Live palette switch: recolor everything already built — cached
         // note materials (future clones), per-note clones, key emissives
         // (incl. the wrong-flash restore state), lane guides — and drop the
         // pitch-class flame textures so the next spawn bakes the new hues.
         // Same no-rebuild approach as _applyVibrancy.
         function _applyPalette() {
-            // The base-material cache is keyed by resolved colour, so old
+            // The base-material cache is keyed by resolved color, so old
             // entries are simply stale under a new palette — drop them and let
             // the next build re-cache. The live per-note clones below are
             // retinted directly from each note's midi (palette-correct).
@@ -2441,10 +2585,10 @@
         }
 
         // Vertical flame texture for hit flares / held-key halos: white-hot
-        // base fading up into the note's colour, with a horizontal falloff.
-        // Cached per resolved colour (bounded — 12 for pitch-class palettes,
+        // base fading up into the note's color, with a horizontal falloff.
+        // Cached per resolved color (bounded — 12 for pitch-class palettes,
         // up to ~one-per-octave for 'octaves'), so a flare always matches the
-        // struck note's colour whatever the palette.
+        // struck note's color whatever the palette.
         function _flameTexture(midi) {
             const c = _noteHex(midi);
             let tex = _flameTexCache.get(c);
@@ -2624,9 +2768,9 @@
                 }
             }
 
-            // Lane guides: a faint colour strip running up the runway from each
-            // active key, in that key's pitch-class colour. A falling note shares
-            // its target key's colour, so the player can trace it straight down
+            // Lane guides: a faint color strip running up the runway from each
+            // active key, in that key's pitch-class color. A falling note shares
+            // its target key's color, so the player can trace it straight down
             // its lane to the right key even when it sits near the frame edge.
             //
             // The lanes sit at the NOTES' travel height (coplanar), not on the
@@ -2636,29 +2780,87 @@
             // lane, perfectly aligned with the lane and its key.
             const guideLen = HIGHWAY_LEN - WHITE_L;
             const laneY = WHITE_H + NOTE_H / 2 + 0.5 * K; // == white-note travel height
+            const gaps = fx.octaveGaps;
+            const floating = _sharpMode === 'floating';
+            const t = Math.min(1, Math.max(0, fx.laneOpacity));       // lane-color opacity
+            const octC = Math.min(1, Math.max(0, fx.octaveContrast)); // 0..1 line-contrast
+            const themeLaneDim = (() => { const c = _bgThemeColors(_theme); return c.laneDim != null ? c.laneDim : 0x2a2a3e; })();
+            // A vertical guide line running the full runway at world x (skips
+            // near-transparent lines so the crossfade never builds dead meshes).
+            const addLine = (x, color, opacity, wpx, trackTheme) => {
+                if (opacity < 0.02) return;
+                const m = new T.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+                if (trackTheme) _railMats.push(m); // theme retint tracks these; fixed guides stay put
+                const line = new T.Mesh(new T.PlaneGeometry(wpx, guideLen), m);
+                line.rotation.x = -Math.PI / 2;
+                line.position.set(x, laneY + 0.06 * K, hitZ - guideLen / 2);
+                keyboardGroup.add(line);
+            };
             for (const [midi, entry] of layout) {
                 if (midi < range.activeLow || midi > range.activeHigh) continue;
-                if (entry.black) continue; // one strip per semitone-slot lands on whites
-                const gmat = new T.MeshBasicMaterial({
-                    color: noteColor(midi, 'rh'), transparent: true,
-                    opacity: _laneGuideOpacity(), depthWrite: false,
-                });
-                gmat.userData.midi = midi; // palette retint needs the lane's pitch
-                _laneGuideMats.push(gmat);
-                const strip = new T.Mesh(new T.PlaneGeometry(WHITE_W * 0.84, guideLen), gmat);
-                strip.rotation.x = -Math.PI / 2;
-                strip.position.set(keyX(entry, whiteCount), laneY, hitZ - guideLen / 2);
-                keyboardGroup.add(strip);
-                // Thin brighter rails at the lane edges for crisp separation.
-                const railMat = new T.MeshBasicMaterial({
-                    color: (() => { const c = _bgThemeColors(_theme); return c.laneDim != null ? c.laneDim : 0x2a2a3e; })(),
-                    transparent: true, opacity: 0.5, depthWrite: false,
-                });
-                _railMats.push(railMat);
-                const rail = new T.Mesh(new T.PlaneGeometry(0.6 * K, guideLen), railMat);
-                rail.rotation.x = -Math.PI / 2;
-                rail.position.set(keyX(entry, whiteCount) - WHITE_W / 2, laneY + 0.05 * K, hitZ - guideLen / 2);
-                keyboardGroup.add(rail);
+                // Floating: white-only lanes (blacks float, lane-less). Flat/
+                // realistic: every key gets a piano-shaped lane.
+                if (entry.black && floating) continue;
+                // Lane footprint per mode.
+                let left, right, stripY = laneY;
+                if (floating) {
+                    const cx = keyX(entry, whiteCount);
+                    left = cx - WHITE_W / 2; right = cx + WHITE_W / 2;
+                    if (gaps) {
+                        const pc = ((midi % 12) + 12) % 12;
+                        if (pc === 11) right -= OCT_GAP / 2; // B → C boundary
+                        if (pc === 0) left += OCT_GAP / 2;
+                    }
+                } else {
+                    const span = laneSpanFor(midi, entry.black, keyX(entry, whiteCount), gaps, range);
+                    left = span.left; right = span.right;
+                    if (_sharpMode === 'realistic' && entry.black) stripY = laneY + REAL_SHARP_LIFT;
+                }
+                const center = (left + right) / 2;
+                // Colored lane strip + a subtle per-lane separator — fade in with
+                // lane opacity. (As lanes fade, the block/octave lines below take
+                // over as the guide.)
+                if (t > 0.02) {
+                    // Floating keeps the historical 0.84-wide white strip; the
+                    // piano-shaped lanes inset a touch for a dark separator.
+                    const stripW = floating ? (right - left) - WHITE_W * 0.16 : (right - left) * 0.9;
+                    const gmat = new T.MeshBasicMaterial({
+                        color: noteColor(midi, 'rh'), transparent: true,
+                        opacity: _laneGuideOpacity(), depthWrite: false, // includes lane opacity
+                    });
+                    gmat.userData.midi = midi; // palette retint needs the lane's pitch
+                    _laneGuideMats.push(gmat);
+                    const strip = new T.Mesh(new T.PlaneGeometry(stripW, guideLen), gmat);
+                    strip.rotation.x = -Math.PI / 2;
+                    strip.position.set(center, stripY, hitZ - guideLen / 2);
+                    keyboardGroup.add(strip);
+                    // Per-lane separator, fading with the strips. Skip realistic
+                    // sharps (they overlap the white columns).
+                    if (!(entry.black && _sharpMode === 'realistic')) {
+                        addLine(left, themeLaneDim, 0.5 * t, 0.6 * K, true);
+                    }
+                }
+            }
+            // Structural divider lines: ONE per "block" boundary — E→F and B→C —
+            // so each block of keys (C-D-E, F-G-A-B) is bounded, not every lane.
+            // They crossfade IN as the lanes fade OUT. The B→C octave line is a
+            // dark layer (reads over bright lanes, scales with lane opacity) plus
+            // a bright layer (reads over the dark floor, scales with the inverse),
+            // so it auto-shifts dark→bright as you fade lanes; octaveContrast
+            // scales the whole thing.
+            for (let midi = range.activeLow; midi <= range.activeHigh; midi++) {
+                const pc = ((midi % 12) + 12) % 12;
+                const isEF = pc === 4;   // E → F block boundary
+                const isBC = pc === 11;  // B → C octave boundary
+                if (!isEF && !isBC) continue;
+                const boundaryX = keyX(layout.get(midi), whiteCount) + WHITE_W / 2;
+                if (isBC) {
+                    addLine(boundaryX, 0x05060a, octC * 0.92 * t, 1.1 * K, false);              // dark, over lanes
+                    addLine(boundaryX, 0xd8dcec, (0.42 + octC * 0.5) * (1 - t), 1.1 * K, false); // bright, over floor
+                } else {
+                    // E→F block divider — a guide that appears as the lanes fade.
+                    addLine(boundaryX, 0x6a6a7a, 0.5 * (1 - t), 0.8 * K, false);
+                }
             }
 
             // Keys (whites first so blacks overlay). Geometries are shared
@@ -2678,7 +2880,7 @@
                 const inRange = midi >= range.activeLow && midi <= range.activeHigh;
                 const material = new T.MeshStandardMaterial({
                     color: black ? 0x070708 : 0xe8e8ee,
-                    // Pitch-class colour preset on emissive but OFF at rest — the key
+                    // Pitch-class color preset on emissive but OFF at rest — the key
                     // is neutral until a note approaches, when updateScene ramps the
                     // intensity up by proximity.
                     emissive: noteColor(midi, 'rh'),
@@ -2764,11 +2966,31 @@
                 const entry = layout.get(note.midi);
                 if (!entry) continue;
                 const len = Math.max(4 * K, note.durSec * TS);
-                const w = (entry.black ? BLACK_W : WHITE_W * 0.94) * 0.9;
+                // Non-floating layouts: notes ride the naturals' plane and take
+                // their piano-shaped lane's width/centre. Floating (default):
+                // original elevated sharps, key-centred bars.
+                let w, x, y;
+                if (_flatMode()) {
+                    const span = laneSpanFor(
+                        note.midi, entry.black, keyX(entry, whiteCount), fx.octaveGaps, range);
+                    // 'realistic' bars are full (physical-key size); 'flat' bars are
+                    // inset a touch for a dark separator in the tight tiling.
+                    const inset = _sharpMode === 'realistic' ? 1.0 : 0.9;
+                    w = (span.right - span.left) * inset;
+                    x = (span.left + span.right) / 2;
+                    // Coplanar; in 'realistic' the sharps ride a hair proud so they
+                    // draw over the naturals they overlap without z-fighting.
+                    const lift = (_sharpMode === 'realistic' && entry.black) ? REAL_SHARP_LIFT : 0;
+                    y = WHITE_H + NOTE_H / 2 + 0.5 * K + lift;
+                } else {
+                    w = (entry.black ? BLACK_W : WHITE_W * 0.94) * 0.9;
+                    x = keyX(entry, whiteCount);
+                    y = (entry.black ? BLACK_H + WHITE_H : WHITE_H) + NOTE_H / 2 + 0.5 * K;
+                }
                 // Clone per note so each can glow independently while being consumed.
                 const mesh = new T.Mesh(_noteGeometry(w, len), _noteMaterial(note.midi, note.hand).clone());
-                mesh.position.x = keyX(entry, whiteCount);
-                mesh.position.y = (entry.black ? BLACK_H + WHITE_H : WHITE_H) + NOTE_H / 2 + 0.5 * K;
+                mesh.position.x = x;
+                mesh.position.y = y;
                 mesh.visible = false;
                 notesGroup.add(mesh);
                 // Note-name label: a camera-facing sprite (readable at this low camera
@@ -3483,6 +3705,7 @@
                 // listening (e.g. changed on the Settings screen, where the live
                 // viz is torn down) must not come up stale on a later init().
                 _palette = readPaletteSetting();
+                _sharpMode = readSharpModeSetting();
                 _camPreset = CAM_PRESETS[readCameraSetting()] || CAM_PRESETS.classic;
                 _theme = readThemeSetting();
                 _bgStyle = readBgStyleSetting();
@@ -3532,6 +3755,10 @@
                         if (d && d.palette && PALETTE_IDS.indexOf(d.palette) !== -1) {
                             _palette = d.palette;
                             _applyPalette();
+                        }
+                        if (d && d.sharpMode && SHARP_MODES.indexOf(d.sharpMode) !== -1) {
+                            // Geometry-time — takes effect on the next chart build.
+                            _sharpMode = d.sharpMode;
                         }
                         if (d && d.camera && CAM_PRESETS[d.camera]) {
                             _camPreset = CAM_PRESETS[d.camera];
@@ -3749,6 +3976,8 @@
         readBgStyleSetting,
         readPaletteSetting,
         readCameraSetting,
+        readSharpModeSetting,
+        SHARP_MODES,
         _bgThemeColors,
         BG_THEMES,
         BG_STYLE_IDS,
@@ -3757,6 +3986,9 @@
         PALETTE_IDS,
         OCTAVE_HUES,
         octaveNoteColor,
+        _isBlackPc,
+        laneSpanFlat,
+        laneSpanReal,
         CAM_PRESETS,
         FX_DEFAULTS,
         FX_RANGES,

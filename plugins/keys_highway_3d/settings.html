@@ -12,11 +12,11 @@
     <div class="mt-3">
         <h4 class="text-xs font-medium text-gray-300 mb-2">Graphics</h4>
 
-        <label for="keysh3d-fx-palette" class="text-xs font-medium text-gray-400 mb-1 block">Note colours</label>
+        <label for="keysh3d-fx-palette" class="text-xs font-medium text-gray-400 mb-1 block">Note colors</label>
         <select id="keysh3d-fx-palette"
             onchange="window.keys3dSetPalette && window.keys3dSetPalette(this.value)"
             class="w-full bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 outline-none">
-            <option value="octaves" selected>Octaves (colour per octave, darker sharps)</option>
+            <option value="octaves" selected>Octaves (color per octave, darker sharps)</option>
             <option value="emerald">Emerald (green, darker sharps)</option>
             <option value="ice">Ice (blue, darker sharps)</option>
             <option value="classic">Rainbow (per-pitch)</option>
@@ -24,7 +24,7 @@
             <option value="pastel">Pastel (per-pitch, soft)</option>
         </select>
         <p class="text-xs text-gray-500 mt-1 mb-3">
-            Choose the colour scheme for the falling notes, key glow, lane
+            Choose the color scheme for the falling notes, key glow, lane
             guides and hit flames. Each option is described in its own label.
         </p>
 
@@ -46,8 +46,8 @@
         </select>
         <p class="text-xs text-gray-500 mt-1 mb-3">
             Background gradient, floor and lane rails — the same theme names
-            as the guitar highway. Note colours come from the
-            "Note colours" palette above.
+            as the guitar highway. Note colors come from the
+            "Note colors" palette above.
         </p>
 
         <label for="keysh3d-fx-camera" class="text-xs font-medium text-gray-400 mb-1 block">Camera angle</label>
@@ -99,6 +99,64 @@
         <p class="text-xs text-gray-500 mt-1 mb-3">
             Tilt the view up (+) or down (−) without moving the camera —
             aims higher up the runway or down toward the keys. 0 = neutral.
+        </p>
+
+        <h4 class="text-xs font-medium text-gray-300 mb-2 mt-4">Highway layout</h4>
+
+        <label for="keysh3d-fx-sharpmode" class="text-xs font-medium text-gray-400 mb-1 block">Sharps &amp; flats</label>
+        <select id="keysh3d-fx-sharpmode"
+            onchange="window.keys3dSetSharpMode && window.keys3dSetSharpMode(this.value)"
+            class="w-full bg-dark-700 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 outline-none">
+            <option value="floating">Floating</option>
+            <option value="flat">Non-floating</option>
+            <option value="realistic" selected>Realistic key sizes (default — best with no colored lanes)</option>
+        </select>
+        <p class="text-xs text-gray-500 mt-1 mb-3">
+            How sharps and flats are drawn. <em>Floating</em>: they ride a raised
+            plane above the naturals. <em>Non-floating</em>: everything on one
+            plane, each key its own even piano-shaped lane. <em>Realistic key
+            sizes</em>: one plane, bars sized like the real keys (full naturals,
+            full black keys on top). Applies next time you open a song.
+        </p>
+
+        <label for="keysh3d-fx-laneopacity" class="text-xs font-medium text-gray-400 mb-1 block">
+            Lane color opacity <span id="keysh3d-fx-laneopacity-val" class="text-gray-500 font-mono">0.00</span>
+        </label>
+        <input type="range" id="keysh3d-fx-laneopacity"
+            min="0" max="1" step="0.05" value="0"
+            oninput="window.keys3dSetFx && window.keys3dSetFx('laneOpacity', this.value); document.getElementById('keysh3d-fx-laneopacity-val').textContent = parseFloat(this.value).toFixed(2)"
+            class="w-full">
+        <p class="text-xs text-gray-500 mt-1 mb-3">
+            How strongly each lane is tinted its note color. 0.00 (default) is a
+            dark floor with plain guide lines only between the key blocks (at E–F
+            and each octave); the notes keep their colors and pop off the floor.
+            Raise toward 1.00 for full, vivid colored lanes. Applies next time you
+            open a song.
+        </p>
+
+        <label for="keysh3d-fx-octavegaps" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer mt-3">
+            <input type="checkbox" id="keysh3d-fx-octavegaps" checked
+                onchange="window.keys3dSetFx && window.keys3dSetFx('octaveGaps', this.checked)">
+            Octave separators
+        </label>
+        <p class="text-xs text-gray-500 mt-1 mb-3">
+            Widen the gap a little at each octave boundary (every B to the C
+            above it) so octaves are easier to read. Applies next time you open
+            a song.
+        </p>
+
+        <label for="keysh3d-fx-octavecontrast" class="text-xs font-medium text-gray-400 mb-1 mt-3 block">
+            Octave line contrast <span id="keysh3d-fx-octavecontrast-val" class="text-gray-500 font-mono">0.50</span>
+        </label>
+        <input type="range" id="keysh3d-fx-octavecontrast"
+            min="0" max="1" step="0.05" value="0.5"
+            oninput="window.keys3dSetFx && window.keys3dSetFx('octaveContrast', this.value); document.getElementById('keysh3d-fx-octavecontrast-val').textContent = parseFloat(this.value).toFixed(2)"
+            class="w-full">
+        <p class="text-xs text-gray-500 mt-1 mb-3">
+            How strongly the octave line (every B to C) stands out. It adapts to
+            the lane color opacity automatically — darkening the line against
+            bright lanes and brightening it as you fade them toward the dark
+            floor. Applies next time you open a song.
         </p>
 
         <label for="keysh3d-fx-cinematic" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
@@ -184,7 +242,7 @@
         <label for="keysh3d-fx-timing" class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer mt-3">
             <input type="checkbox" id="keysh3d-fx-timing" checked
                 onchange="window.keys3dSetFx && window.keys3dSetFx('timingFx', this.checked)">
-            Timing colours
+            Timing colors
         </label>
         <p class="text-xs text-gray-500 mt-1">
             Tint the sparks by timing — on-time green, early cyan, late
@@ -247,6 +305,9 @@
             hydrateFxBool('cinematic', 'keysh3d-fx-cinematic');
             hydrateFxBool('bgReactive', 'keysh3d-fx-bgreactive');
             hydrateFxBool('scoreFx', 'keysh3d-fx-scorefx');
+            // Highway-layout: octaveGaps defaults ON (bool); laneOpacity /
+            // octaveContrast are 0-1 sliders hydrated with hydrateFxRange below.
+            hydrateFxBool('octaveGaps', 'keysh3d-fx-octavegaps');
             const hydrateFxRange = (key, elId, valId) => {
                 const n = parseFloat(localStorage.getItem('keys3d_bg_' + key));
                 if (!Number.isFinite(n)) return;
@@ -258,6 +319,8 @@
             hydrateFxRange('vibrancy', 'keysh3d-fx-vibrancy', 'keysh3d-fx-vibrancy-val');
             hydrateFxRange('glow', 'keysh3d-fx-glow', 'keysh3d-fx-glow-val');
             hydrateFxRange('bgIntensity', 'keysh3d-fx-bgintensity', 'keysh3d-fx-bgintensity-val');
+            hydrateFxRange('laneOpacity', 'keysh3d-fx-laneopacity', 'keysh3d-fx-laneopacity-val');
+            hydrateFxRange('octaveContrast', 'keysh3d-fx-octavecontrast', 'keysh3d-fx-octavecontrast-val');
             // Camera fine-tune sliders live outside 0-1 — clamp to the
             // control's own min/max (mirrors screen.js FX_RANGES).
             const hydrateFxRangeIn = (key, elId, valId) => {
@@ -290,6 +353,11 @@
             const paletteSel = document.getElementById('keysh3d-fx-palette');
             if (storedPalette && Array.from(paletteSel.options).some(o => o.value === storedPalette)) {
                 paletteSel.value = storedPalette;
+            }
+            const storedSharp = localStorage.getItem('keys3d_bg_sharpMode');
+            const sharpSel = document.getElementById('keysh3d-fx-sharpmode');
+            if (storedSharp && Array.from(sharpSel.options).some(o => o.value === storedSharp)) {
+                sharpSel.value = storedSharp;
             }
         } catch (e) {
             console.warn('[Keys-Hwy3D settings] hydration failed:', e);

@@ -634,10 +634,12 @@ def convert_drum_track_from_midi(
 
     Callers can pass an empty dict as ``out_unmapped`` to receive a
     per-MIDI record of every channel-9 note_on that didn't resolve to a
-    piece-id (``{midi: {"count": int, "times": [float, ...]}}``, times
-    capped at 100 samples per note). The default path skips this
-    capture entirely so MIDIs heavy with cowbell/tambourine/etc. take
-    no extra work.
+    piece-id (``{midi: {"count": int, "times": [float, ...],
+    "velocities": [int, ...]}}``, times/velocities index-aligned and
+    capped at 100 samples per note — velocities carry the source notes'
+    real dynamics so a hand-mapping UI doesn't have to flatten them to a
+    default). The default path skips this capture entirely so MIDIs
+    heavy with cowbell/tambourine/etc. take no extra work.
     """
     offset = float(audio_offset)
     if not math.isfinite(offset):
@@ -675,10 +677,13 @@ def convert_drum_track_from_midi(
                     continue
                 t = tick_to_seconds(abs_tick) + offset
                 entry = out_unmapped.setdefault(
-                    midi_note, {"count": 0, "times": []})
+                    midi_note, {"count": 0, "times": [], "velocities": []})
                 entry["count"] += 1
                 if len(entry["times"]) < 100:
                     entry["times"].append(round(t, 3))
+                    # Index-aligned with times: the note's real dynamics,
+                    # so hand-mapping doesn't flatten everything to 100.
+                    entry["velocities"].append(int(msg.velocity))
                 continue
             # Mapped note: compute t once for the raw entry.
             t = tick_to_seconds(abs_tick) + offset

@@ -1836,9 +1836,10 @@ def convert_drum_track_to_drumtab(
     drum strings. Unknown percussion sounds (cowbell, tambourine etc.) are
     skipped — round-tripping them would require teaching `lib/drums.py` first.
     Callers can pass an empty dict as ``out_unmapped`` to receive a per-MIDI
-    record of every skipped note (``{midi: {"count": int, "times": [...]}}``,
-    times capped at 100 samples per note) so they can surface a warning or
-    offer a manual mapping UI.
+    record of every skipped note (``{midi: {"count": int, "times": [...],
+    "velocities": [...]}}``, times/velocities index-aligned and capped at
+    100 samples per note — velocities carry the source notes' real dynamics)
+    so they can surface a warning or offer a manual mapping UI.
 
     Honours GP repeat brackets and D.S./D.C./Coda/Fine jumps when
     ``expand_repeats`` is true — same `_build_playback_schedule` machinery
@@ -1894,18 +1895,29 @@ def convert_drum_track_to_drumtab(
                             # NB: do NOT shadow the outer `entry` loop
                             # variable from `for entry in schedule:`.
                             unmapped_rec = out_unmapped.setdefault(
-                                int(midi_note), {"count": 0, "times": []})
+                                int(midi_note),
+                                {"count": 0, "times": [], "velocities": []})
                             unmapped_rec["count"] += 1
                             if len(unmapped_rec["times"]) < 100:
                                 unmapped_rec["times"].append(round(t, 3))
+                                # Index-aligned with times: the note's real
+                                # dynamics (same 1-127 gate as mapped hits,
+                                # falling back to the 100 import default) so
+                                # a hand-mapping UI doesn't flatten them.
+                                _uv = int(getattr(note, "velocity", 0) or 0)
+                                unmapped_rec["velocities"].append(
+                                    _uv if 1 <= _uv <= 127 else 100)
                         continue
 
                     hit: dict = {"t": round(t, 3), "p": piece}
 
-                    # Velocity: GP stores 1-127 MIDI velocity directly; default
-                    # is 95 (Velocities.default). Pass through verbatim,
-                    # clamping defensively so a corrupt file can't poison the
-                    # wire format.
+                    # Velocity: GP stores 1-127 MIDI velocity directly. Note
+                    # this is GP's *authoring* default (95, Velocities.default)
+                    # — unrelated to the drumtab render default of 100
+                    # (DEFAULT_VELOCITY, lib/drums.py:179), which only applies
+                    # when `v` is omitted from a hit. Pass the GP value through
+                    # verbatim, clamping defensively so a corrupt file can't
+                    # poison the wire format.
                     vel = int(getattr(note, "velocity", 0) or 0)
                     if 1 <= vel <= 127:
                         hit["v"] = vel
@@ -1946,9 +1958,21 @@ def convert_drum_track_to_drumtab(
     # Times for unmapped notes were collected in beat-iteration order;
     # multi-voice measures can produce out-of-order beats, so sort each
     # entry's `times` list chronologically before returning to the caller.
+    # Velocities are index-aligned with times, so they must sort in
+    # LOCKSTEP — sorting times alone would silently reassign dynamics.
     if out_unmapped is not None:
         for _rec in out_unmapped.values():
-            _rec["times"].sort()
+            _vels = _rec.get("velocities")
+            if _vels and len(_vels) == len(_rec["times"]):
+                _pairs = sorted(zip(_rec["times"], _vels))
+                _rec["times"] = [p[0] for p in _pairs]
+                _rec["velocities"] = [p[1] for p in _pairs]
+            else:
+                # Belt-and-suspenders: times & velocities are always appended
+                # together under the same `len(times) < 100` guard above, so
+                # in practice the lengths can't diverge. Kept as a defensive
+                # fallback, not a real divergence case.
+                _rec["times"].sort()
 
     return {
         "version": drums_mod.SCHEMA_VERSION,

@@ -185,18 +185,18 @@ def test_unmapped_drum_note_skipped(tmp_path):
 
 def test_unmapped_drum_note_reported_via_out_unmapped(tmp_path):
     """Opting in via out_unmapped records the dropped MIDI notes (count +
-    times) so a caller can surface a warning / mapping UI."""
+    times + velocities) so a caller can surface a warning / mapping UI."""
     mid = mido.MidiFile(type=1, ticks_per_beat=480)
     track = mido.MidiTrack()
     mid.tracks.append(track)
     track.append(mido.MetaMessage("set_tempo", tempo=500000, time=0))
-    track.append(mido.Message("note_on",  channel=9, note=56, velocity=100, time=0))    # cowbell — drop
+    track.append(mido.Message("note_on",  channel=9, note=56, velocity=88,  time=0))    # cowbell — drop
     track.append(mido.Message("note_off", channel=9, note=56, velocity=0,   time=240))
     track.append(mido.Message("note_on",  channel=9, note=36, velocity=100, time=0))    # kick — keep
     track.append(mido.Message("note_off", channel=9, note=36, velocity=0,   time=240))
-    track.append(mido.Message("note_on",  channel=9, note=54, velocity=100, time=0))    # tambourine — drop
+    track.append(mido.Message("note_on",  channel=9, note=54, velocity=25,  time=0))    # tambourine — drop
     track.append(mido.Message("note_off", channel=9, note=54, velocity=0,   time=240))
-    track.append(mido.Message("note_on",  channel=9, note=56, velocity=100, time=0))    # cowbell again — drop
+    track.append(mido.Message("note_on",  channel=9, note=56, velocity=44,  time=0))    # cowbell again — drop
     track.append(mido.Message("note_off", channel=9, note=56, velocity=0,   time=240))
 
     unmapped: dict[int, dict] = {}
@@ -209,6 +209,10 @@ def test_unmapped_drum_note_reported_via_out_unmapped(tmp_path):
     # Each unmapped MIDI carries the times at which it fired (rounded 3 dp).
     assert all(isinstance(t, float) for t in unmapped[56]["times"])
     assert len(unmapped[56]["times"]) == 2
+    # Velocities ride index-aligned with times — the mapping UI can carry
+    # the source dynamics through instead of flattening to a default.
+    assert unmapped[56]["velocities"] == [88, 44]
+    assert unmapped[54]["velocities"] == [25]
 
 
 def test_non_channel9_events_ignored(tmp_path):

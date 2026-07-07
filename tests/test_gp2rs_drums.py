@@ -223,15 +223,15 @@ def test_unmapped_percussion_silently_skipped(monkeypatch):
 
 def test_unmapped_percussion_reported_via_out_unmapped(monkeypatch):
     """Opting in via out_unmapped records the dropped MIDI notes (count +
-    times) so a caller can surface a warning / mapping UI."""
+    times + velocities) so a caller can surface a warning / mapping UI."""
     _setup(monkeypatch)
     track = _fake_track(
         string_midis=[56, 36, 54],
         beats=[
-            (0.0, [_fake_note(string_idx=1)]),   # cowbell — drop
-            (1.0, [_fake_note(string_idx=2)]),   # kick — keep
-            (1.5, [_fake_note(string_idx=3)]),   # tambourine — drop
-            (2.0, [_fake_note(string_idx=1)]),   # cowbell again — drop
+            (0.0, [_fake_note(string_idx=1, velocity=88)]),  # cowbell — drop
+            (1.0, [_fake_note(string_idx=2)]),               # kick — keep
+            (1.5, [_fake_note(string_idx=3, velocity=25)]),  # tambourine — drop
+            (2.0, [_fake_note(string_idx=1, velocity=44)]),  # cowbell again — drop
         ],
     )
     song = SimpleNamespace(tracks=[track])
@@ -247,6 +247,44 @@ def test_unmapped_percussion_reported_via_out_unmapped(monkeypatch):
     # Times are captured (rounded to 3 dp).
     assert unmapped[56]["times"] == [0.0, 2.0]
     assert unmapped[54]["times"] == [1.5]
+    # Velocities ride index-aligned with times — the mapping UI can carry
+    # the source dynamics through instead of flattening to a default.
+    assert unmapped[56]["velocities"] == [88, 44]
+    assert unmapped[54]["velocities"] == [25]
+
+
+def test_unmapped_velocities_sort_in_lockstep_with_times(monkeypatch):
+    """Multi-voice measures can capture times out of order; the final sort
+    must reorder velocities WITH their times, not leave them behind."""
+    _setup(monkeypatch)
+    track = _fake_track(
+        string_midis=[56],
+        beats=[
+            # Deliberately reversed chronology within the measure.
+            (2.0, [_fake_note(string_idx=1, velocity=44)]),
+            (0.0, [_fake_note(string_idx=1, velocity=88)]),
+        ],
+    )
+    song = SimpleNamespace(tracks=[track])
+    unmapped: dict[int, dict] = {}
+    gp2rs.convert_drum_track_to_drumtab(song, 0, out_unmapped=unmapped)
+    assert unmapped[56]["times"] == [0.0, 2.0]
+    assert unmapped[56]["velocities"] == [88, 44], \
+        "velocity must follow its time through the sort"
+
+
+def test_unmapped_out_of_range_velocity_falls_back_to_default(monkeypatch):
+    """A corrupt/zero GP velocity records the 100 import default rather
+    than poisoning the aligned list."""
+    _setup(monkeypatch)
+    track = _fake_track(
+        string_midis=[56],
+        beats=[(0.0, [_fake_note(string_idx=1, velocity=0)])],
+    )
+    song = SimpleNamespace(tracks=[track])
+    unmapped: dict[int, dict] = {}
+    gp2rs.convert_drum_track_to_drumtab(song, 0, out_unmapped=unmapped)
+    assert unmapped[56]["velocities"] == [100]
 
 
 def test_zero_velocity_omitted_from_wire(monkeypatch):

@@ -1,0 +1,181 @@
+name: OpenCodeReview PR Review
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  code-review:
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       (startsWith(github.event.comment.body, '/open-code-review') ||
+        startsWith(github.event.comment.body, '@open-code-review')))
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install OpenCodeReview
+        run: npm install -g @alibaba-group/open-code-review
+
+      - name: Configure OCR
+        run: |
+          ocr config set llm.url "http://coordinator:8080/v1"
+          ocr config set llm.auth_token "${{ secrets.OCR_COORDINATOR_SECRET }}"
+          ocr config set llm.model "${{ secrets.OCR_LLM_MODEL || 'qwen3-30b-a3b' }}"
+          ocr config set llm.use_anthropic false
+          ocr config set llm.extra_body '{"thinking": {"type": "disabled"}}'
+          ocr config set language English
+
+      - name: Run OpenCodeReview
+        id: review
+        run: |
+          ocr review \
+            --from "origin/${{ github.base_ref }}" \
+            --to "origin/${{ github.head_ref }}" \
+            --format json \
+            --audience agent \
+            > /tmp/ocr-result.json 2>/tmp/ocr-stderr.log || true
+
+      - name: Post review comments to PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = '/tmp/ocr-result.json';
+
+            // Read OCR output
+            let result;
+            let raw = '';
+            try {
+              raw = fs.readFileSync(path, 'utf8').trim();
+              if (!raw) {
+                throw new Error('OCR output file is empty');
+              }
+              // OCR may prefix a status line before JSON; try whole file first, then skip first line
+              try {
+                result = JSON.parse(raw);
+              } catch {
+                const jsonContent = raw.substring(raw.indexOf('\n') + 1);
+                result = JSON.parse(jsonContent);
+              }
+            } catch (e) {
+              console.log('Failed to parse OCR output:', e.message);
+              console.log('Raw OCR output (first 2000 chars):', raw.substring(0, 2000));
+              const stderr = fs.readFileSync('/tmp/ocr-stderr.log', 'utf8').trim();
+              if (stderr) {
+                console.log('OCR stderr:', stderr.substring(0, 2000));
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `⚠️ **OpenCodeReview** encountered an error:\n\`\`\`\n${stderr}\n\`\`\``
+                });
+              } else if (raw) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `⚠️ **OpenCodeReview** encountered an error. Raw output:\n\`\`\`\n${raw.substring(0, 2000)}\n\`\`\``
+                });
+              }
+              return;
+            }
+
+            const comments = result.comments || [];
+
+            if (comments.length === 0) {
+              const message = result.message || 'No comments generated. Looks good to me.';
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `✅ **OpenCodeReview**: ${message}`
+              });
+              return;
+            }
+
+            // Prepare PR review with inline comments
+            const prNumber = context.issue.number;
+            const commitSha = context.payload.pull_request.head.sha;
+
+            const reviewComments = [];
+            const commentsWithoutLine = [];
+
+            for (const comment of comments) {
+              const body = comment.content || '';
+              const hasValidLine = (comment.start_line >= 1) || (comment.end_line >= 1);
+
+              if (!hasValidLine) {
+                commentsWithoutLine.push(comment);
+                continue;
+              }
+
+              const reviewComment = { path: comment.path, body };
+
+              if (comment.start_line >= 1 && comment.end_line >= 1 && comment.start_line !== comment.end_line) {
+                reviewComment.start_line = comment.start_line;
+                reviewComment.line = comment.end_line;
+                reviewComment.start_side = 'RIGHT';
+                reviewComment.side = 'RIGHT';
+              } else if (comment.end_line >= 1) {
+                reviewComment.line = comment.end_line;
+                reviewComment.side = 'RIGHT';
+              } else if (comment.start_line >= 1) {
+                reviewComment.line = comment.start_line;
+                reviewComment.side = 'RIGHT';
+              }
+
+              reviewComments.push(reviewComment);
+            }
+
+            // Build summary
+            const totalCount = comments.length;
+            const inlineCount = reviewComments.length;
+            const summaryCount = commentsWithoutLine.length;
+            let summaryBody = `🔍 **OpenCodeReview** found **${totalCount}** issue(s) in this PR.`;
+            summaryBody += `\n- ✅ ${inlineCount} posted as inline comment(s)`;
+            summaryBody += `\n- 📝 ${summaryCount} posted in summary`;
+
+            // Add non-inline comments to summary
+            for (const comment of commentsWithoutLine) {
+              summaryBody += `\n\n---\n\n### 📄 \`${comment.path}\`\n\n${comment.content || ''}`;
+            }
+
+            try {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                commit_id: commitSha,
+                body: summaryBody,
+                event: 'COMMENT',
+                comments: reviewComments
+              });
+            } catch (e) {
+              console.log('Failed to post review:', e.message);
+              // Fallback: post summary comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: summaryBody + `\n\n⚠️ Could not post inline comments: ${e.message}`
+              });
+            }

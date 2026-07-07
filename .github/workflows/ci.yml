@@ -123,3 +123,24 @@ jobs:
               sys.exit(1)
           print(f"Validated {len(manifests)} manifest(s) — OK")
           EOF
+
+  lint:
+    # Maintainer/CI-only size + module-hygiene gate (constitution Principle I:
+    # dev tooling, never on the serve/Docker path — same category as
+    # scripts/build-tailwind.sh). max-lines WARNS (the 1,500-line size ratchet;
+    # non-blocking), while import-x/no-unresolved + no-cycle HARD-ERROR on the
+    # ES-module graphs the refactor produces. Exemptions: docs/size-exemptions.md.
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint (size norm + module hygiene)
+        run: npm run lint

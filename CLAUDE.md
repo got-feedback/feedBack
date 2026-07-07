@@ -117,6 +117,8 @@ Notes:
 
 **Frontend scripts** — `screen.js` runs in the global scope via a `<script>` tag. It can access `window.playSong`, `window.showScreen`, `window.createHighway`, the `<audio>` element, and the `window.feedBack` event emitter.
 
+**ES-module plugins (`scriptType:"module"`)** — a plugin may instead ship a native ES-module graph with **no build step**: set `"scriptType": "module"` in `plugin.json`, make `screen.js` a one-line `import './src/main.js'`, and put the module tree under `src/` (served by the sandboxed `/api/plugins/<id>/src/{path}` route). The host injects it as `<script type="module">`, whose `onload` fires only after the whole static-import graph evaluates — so the loader's completion-by-`onload` + `_loadingPluginId` + `playSong` wrapper-chain ordering all hold. Resolve your own asset URLs (worklets, WASM) with `import.meta.url` — `document.currentScript` is `null` in a module. Module top-level code does **not** re-run when the user re-enters the screen at the same version (the host loads screen.js once and `showScreen` re-injects nothing), so keep per-visit re-init in a `screen:changed` handler, exactly as classic plugins do. Classic global-scope `screen.js` remains fully supported. See `docs/plugin-modules.md`.
+
 **The playSong wrapper chain** — Plugins commonly wrap `window.playSong` to hook into song playback. Plugins load alphabetically, so the last-loaded (alphabetically later) wrapper runs first, while the alphabetically first plugin runs closest to the original. Be aware that `await` calls in inner wrappers yield to the event loop — WebSocket messages can arrive before outer wrappers finish setup.
 
 ## Plugin Best Practices

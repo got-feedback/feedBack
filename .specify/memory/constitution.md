@@ -48,11 +48,30 @@ output is committed, so Docker / desktop / end users never build. New
 features extend `app.js` and the existing globals (`window.playSong`,
 `window.showScreen`, `window.createHighway`, `window.feedBack`).
 
+Native ES modules are a first-class, build-free extension mechanism.
+Because `<script type="module">` and `import` are browser features — not
+a bundler — a large source file MAY be split into an `import`-ed module
+graph of plain source files, with **no build step and no framework**. A
+plugin opts in with `"scriptType": "module"` in `plugin.json`: its
+`screen.js` becomes a one-line `import './src/main.js'`, and the host
+serves the `src/` subtree from the sandboxed `/api/plugins/<id>/src/…`
+route and injects the entry as `<script type="module">`. The classic
+global-scope `screen.js` path remains fully supported; both coexist, and
+module scripts are still source-served — the no-bundler, no-transpiler,
+build-free-at-serve rule is unchanged. Core's own `static/` tree may
+migrate to the same module-graph shape (`static/js/…`) over time under
+this rule.
+
 **Non-negotiable rules**
 
 - Do not introduce a frontend framework, JSX, or a JS build pipeline in
   core. Plugins MAY ship their own bundled assets but core MUST remain
   source-served.
+- ES-module plugins remain source-served: no bundler or transpiler, and
+  their own asset URLs (worklets, WASM, images) resolve via
+  `import.meta.url` — never `document.currentScript`, which is `null`
+  inside a module. `scriptType:"module"` and the optional `minHost`
+  version floor are the only new `plugin.json` keys the module path adds.
 - Because the core Tailwind stylesheet is prebuilt, it contains only the
   classes present in core source at build time. Core's committed
   `static/tailwind.min.css` MUST stay in sync with source — CI enforces
@@ -214,6 +233,15 @@ no `..`, no absolute paths).
   runs first). Plugins MUST tolerate dependent globals being absent
   at load time and check at runtime
   (`typeof window.X === 'function'`).
+- **Module load contract**: a `scriptType:"module"` plugin is injected
+  as `<script type="module">`, whose load event fires only after its
+  whole static-import graph fetches and evaluates — so the loader's
+  completion-by-`onload` guarantee (and the `playSong` wrapper-chain
+  order above) is preserved exactly. The host loads `screen.js` once per
+  version and `showScreen` re-injects nothing, so a plugin's per-visit
+  re-initialization comes from its `screen:changed` handler, not from
+  screen.js re-running; ES-module plugins inherit this unchanged (module
+  top-level code does not re-execute on same-version re-mount).
 
 ## Development Workflow
 
@@ -256,4 +284,4 @@ no `..`, no absolute paths).
   higher-numbered principle's escape hatch is to live in a plugin
   with its own bundled assets.
 
-**Version**: 1.1.0 | **Ratified**: 2026-05-09 | **Last Amended**: 2026-06-01
+**Version**: 1.2.0 | **Ratified**: 2026-05-09 | **Last Amended**: 2026-07-08

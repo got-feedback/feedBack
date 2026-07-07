@@ -352,7 +352,14 @@ def _build_tick_to_seconds(midi: mido.MidiFile, track_index: int) -> Callable[[i
       - type 1: parallel tracks share the timeline; merge tempo events.
       - type 2: independent timelines; tempo only from the chosen track.
     """
-    ticks_per_beat = midi.ticks_per_beat
+    # A metrical header carries positive ticks-per-beat. mido reads the SMF
+    # division as a signed short, so an SMPTE-division file surfaces as a
+    # negative value and a malformed header as 0 — both make the two division
+    # sites below divide by a non-positive number (ZeroDivisionError, or
+    # negative seconds that send the bar walk off the rails). Fall back to the
+    # SMF default here, the single place every caller routes ticks through, so
+    # each caller's own fallback is real rather than cosmetic.
+    ticks_per_beat = midi.ticks_per_beat if midi.ticks_per_beat > 0 else 480
     raw_events: list[tuple[int, int]] = [(0, 500000)]  # default 120 BPM
     midi_type = getattr(midi, "type", 1)
     tempo_source = (
@@ -426,17 +433,23 @@ def convert_midi_tempo_map(midi_path: str, track_index: int = 0) -> dict:
     length. An SMF with no note events yields empty ``beats``.
     """
     midi = mido.MidiFile(midi_path)
-    ticks_per_beat = midi.ticks_per_beat or 480
+    # Positive for metrical files; 0 (malformed) or negative (SMPTE division,
+    # read as a signed short) otherwise — fall back so beat_ticks below stays
+    # sane, mirroring the guard inside _build_tick_to_seconds.
+    ticks_per_beat = midi.ticks_per_beat if midi.ticks_per_beat > 0 else 480
     midi_type = getattr(midi, "type", 1)
-    meta_source = (
+    # Same scope both converters use: type 2 reads only the chosen track
+    # (independent timelines); type 0/1 merge all tracks (shared timeline).
+    source_tracks = (
         [midi.tracks[track_index]] if midi_type == 2 else midi.tracks
     )
     tick_to_seconds = _build_tick_to_seconds(midi, track_index)
 
-    # ── collect meta + the end of musical content ────────────────────────
+    # ── collect meta + the end of musical content in one pass ────────────
     sig_events: list[tuple[int, int, int]] = []
     tempo_events: list[tuple[int, int]] = []
-    for tr in meta_source:
+    end_tick = 0
+    for tr in source_tracks:
         abs_tick = 0
         for msg in tr:
             abs_tick += msg.time
@@ -447,15 +460,7 @@ def convert_midi_tempo_map(midi_path: str, track_index: int = 0) -> dict:
                     sig_events.append((abs_tick, num, den))
             elif msg.type == "set_tempo":
                 tempo_events.append((abs_tick, int(msg.tempo)))
-    end_tick = 0
-    note_source = (
-        [midi.tracks[track_index]] if midi_type == 2 else midi.tracks
-    )
-    for tr in note_source:
-        abs_tick = 0
-        for msg in tr:
-            abs_tick += msg.time
-            if msg.type in ("note_on", "note_off"):
+            elif msg.type in ("note_on", "note_off"):
                 end_tick = max(end_tick, abs_tick)
 
     # Dedupe at equal ticks (last wins), matching the tempo-table rule.
@@ -470,17 +475,22 @@ def convert_midi_tempo_map(midi_path: str, track_index: int = 0) -> dict:
         sigs.insert(0, (0, 4, 4))
 
     tempo_events.sort(key=lambda e: e[0])
-    tempos_out: list[dict] = []
     seen_tempo_ticks: dict[int, int] = {}
     for ev_tick, ev_tempo in tempo_events:
         seen_tempo_ticks[ev_tick] = ev_tempo
-    for ev_tick in sorted(seen_tempo_ticks):
+    sorted_tempo_ticks = sorted(seen_tempo_ticks)
+    tempos_out: list[dict] = []
+    # Seed the MIDI default (120 BPM) at time 0 when the first tempo event
+    # lands after the start (or there are none). The beat grid already runs
+    # at 120 for the head of the song, so the sidecar must say so too —
+    # symmetric with the (0, 4, 4) default seeded into the signatures above.
+    if not sorted_tempo_ticks or sorted_tempo_ticks[0] > 0:
+        tempos_out.append({"time": 0.0, "bpm": 120.0})
+    for ev_tick in sorted_tempo_ticks:
         tempos_out.append({
             "time": round(tick_to_seconds(ev_tick), 3),
             "bpm": round(60_000_000.0 / seen_tempo_ticks[ev_tick], 3),
         })
-    if not tempos_out:
-        tempos_out.append({"time": 0.0, "bpm": 120.0})
 
     time_signatures_out = [
         {"time": round(tick_to_seconds(t), 3), "ts": [num, den]}

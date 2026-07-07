@@ -18,7 +18,7 @@ Run: pytest tests/test_midi_tempo_map.py -v
 import mido
 import pytest
 
-from midi_import import convert_midi_tempo_map
+from midi_import import _TEMPO_MAP_MAX_BARS, convert_midi_tempo_map
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -130,7 +130,8 @@ def test_mid_bar_signature_applies_at_the_next_boundary(tmp_path):
     dbs = _downbeats(res)
     # Bar 1 stays 4/4 (2.0 s); bar 2 onward is 3/4.
     assert dbs[0]["time"] == 0.0 and dbs[0]["den"] == 4
-    assert dbs[1]["time"] == 2.0 and dbs[1]["den"] == 4 or dbs[1]["den"] == 3
+    # Bar 2 is the 3/4 bar, but its denominator is still 4 (3 quarter notes).
+    assert dbs[1]["time"] == 2.0 and dbs[1]["den"] == 4
     assert dbs[2]["time"] - dbs[1]["time"] == pytest.approx(1.5, abs=0.002)
 
 def test_duplicate_signature_ticks_last_wins(tmp_path):
@@ -183,3 +184,68 @@ def test_grid_covers_all_notes_and_stops_after_them(tmp_path):
     assert dbs[-1]["measure"] == 2
     assert all(b["time"] <= 3.0 + 1e-9 for b in res["beats"]), \
         "no beats past the end of musical content"
+
+
+@pytest.mark.parametrize("division", [0, -1, -25600])
+def test_non_positive_division_header_does_not_crash(tmp_path, division):
+    # A malformed header reloads with ticks_per_beat == 0; a true SMPTE-division
+    # file reloads negative (mido reads the division as a signed short). Either
+    # way the tick→seconds closure would divide by a non-positive number —
+    # raising ZeroDivisionError (0) or walking off into negative times
+    # (negative) — without the header fallback. The grid must still come out on
+    # a sane, bounded 4/4 / 120-BPM default.
+    mid = mido.MidiFile(ticks_per_beat=division)
+    tr = mido.MidiTrack(); mid.tracks.append(tr)
+    _note_pair(tr, at=0, dur=480 * 8)
+    assert mido.MidiFile(_save(mid, tmp_path)).ticks_per_beat == division  # precondition
+    res = convert_midi_tempo_map(_save(mid, tmp_path))
+    assert res["tempos"] == [{"time": 0.0, "bpm": 120.0}]
+    assert res["time_signatures"] == [{"time": 0.0, "ts": [4, 4]}]
+    dbs = _downbeats(res)
+    assert [d["measure"] for d in dbs] == [1, 2]
+    assert all(isinstance(b["time"], float) and b["time"] >= 0.0
+               for b in res["beats"])
+
+
+def test_first_tempo_after_start_seeds_default_120_at_zero(tmp_path):
+    # First (and only) set_tempo lands at bar 2. The head of the song already
+    # played at the MIDI default of 120 BPM, so the tempos sidecar must open
+    # with a 120-BPM row at time 0 — symmetric with the 4/4 signature default.
+    mid = mido.MidiFile(ticks_per_beat=480)
+    meta = mido.MidiTrack(); mid.tracks.append(meta)
+    meta.append(mido.MetaMessage("set_tempo", tempo=250000, time=480 * 4))   # 240 at bar 2
+    notes = mido.MidiTrack(); mid.tracks.append(notes)
+    _note_pair(notes, at=0, dur=480 * 8)
+    res = convert_midi_tempo_map(_save(mid, tmp_path))
+    assert res["tempos"][0] == {"time": 0.0, "bpm": 120.0}
+    assert res["tempos"][1] == {"time": 2.0, "bpm": 240.0}
+    # The seeded default actually matches the grid the head of the song used.
+    assert _downbeats(res)[0]["time"] == 0.0
+
+
+def test_type0_single_track_carries_tempo_timesig_and_notes(tmp_path):
+    # Explicit SMF format 0: one track holds tempo + signature + notes.
+    mid = mido.MidiFile(ticks_per_beat=480, type=0)
+    tr = mido.MidiTrack(); mid.tracks.append(tr)
+    tr.append(mido.MetaMessage("set_tempo", tempo=500000, time=0))            # 120
+    tr.append(mido.MetaMessage("time_signature", numerator=3, denominator=4, time=0))
+    _note_pair(tr, at=0, dur=480 * 6)          # two 3/4 bars
+    res = convert_midi_tempo_map(_save(mid, tmp_path))
+    assert mido.MidiFile(_save(mid, tmp_path)).type == 0  # precondition
+    assert res["tempos"] == [{"time": 0.0, "bpm": 120.0}]
+    assert res["time_signatures"] == [{"time": 0.0, "ts": [3, 4]}]
+    dbs = _downbeats(res)
+    assert [d["measure"] for d in dbs] == [1, 2]
+    assert [d["time"] for d in dbs] == [0.0, 1.5]     # 3/4 bar = 1.5 s at 120
+    assert all(d["den"] == 4 for d in dbs)
+
+
+def test_max_bars_safety_valve_caps_the_walk(tmp_path):
+    # A note one bar past the cap must not blow the walk past its ceiling.
+    mid = mido.MidiFile(ticks_per_beat=480)
+    tr = mido.MidiTrack(); mid.tracks.append(tr)
+    _note_pair(tr, at=0, dur=480 * 4 * (_TEMPO_MAP_MAX_BARS + 1))
+    res = convert_midi_tempo_map(_save(mid, tmp_path))
+    dbs = _downbeats(res)
+    assert len(dbs) == _TEMPO_MAP_MAX_BARS
+    assert dbs[-1]["measure"] == _TEMPO_MAP_MAX_BARS

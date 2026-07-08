@@ -13,7 +13,7 @@
 // clearly labelled — run those against an environment with real songs.
 
 import { createRequire } from 'module';
-const require = createRequire(new URL('../', import.meta.url));
+const require = createRequire(import.meta.url);
 const { chromium } = require('@playwright/test');
 
 const args = new Map();

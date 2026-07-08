@@ -16,16 +16,11 @@ registers a fake ready plugin directly (save/restore that global) and drives
 `register_plugin_api` on a fresh FastAPI app — no full server import needed.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-import plugins  # noqa: E402
+import plugins
 
 
 PLUGIN_ID = "srctest"

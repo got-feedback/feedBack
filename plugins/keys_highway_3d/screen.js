@@ -813,20 +813,36 @@
         _writeStore(STORE_KEYS.midiPick, JSON.stringify({ id: id || '', name: name || '', key: key || '' }));
     }
 
-    function _midiAutoConnect(allowFallback) {
-        // Recovery (sources-changed after unplug) passes false: never switch to a
-        // fallback input, because _midiConnect persists the pick and that would
-        // overwrite the user's saved device on a transient multi-device unplug
-        // (the original returns on replug and reconnects then).
-        if (allowFallback === undefined) allowFallback = true;
-        const inputs = _midiSources();
-        if (!inputs.length) return;
-        const saved = _readSavedPick();
-        // Explicit "None" opt-out.
-        if (saved && saved.id === '' && saved.name === '') return;
-        // Prefer the globally-unique logicalSourceKey, then the legacy bare
-        // sourceId, then case-insensitive name (Chrome on Linux regenerates ids
-        // per page load), then first non-loopback.
+    // Pure decision logic (exported via __test): pick which device to
+    // auto-connect to from the current source list, the domain-wide selection
+    // (`globalKey`, from Settings → Input Setup), and this plugin's own legacy
+    // saved pick. Returns null for "connect to nothing" (explicit None opt-out,
+    // or the configured device currently absent during hotplug recovery).
+    //
+    // The domain-wide selection is the SOURCE OF TRUTH (checked first): a device
+    // configured globally must never be overridden by a stale plugin-local pick
+    // or an arbitrary first-device fallback — that override was the bug. The
+    // local pick is retained only as a fallback BELOW the global (and for
+    // name-recovery when the global's logicalSourceKey went stale, e.g. a
+    // browser that regenerates MIDI port ids across reloads). Auto-connect no
+    // longer writes the local pick, so it only ever holds a value an explicit
+    // selection put there (or a stale one from a pre-fix build — the global
+    // still wins over it).
+    function _pickMidiTarget(inputs, saved, globalKey, allowFallback) {
+        if (!inputs.length) return null;
+        const notBlocked = (i) => !!i && !_MIDI_BLOCKLIST_RE.test(i.name || '');
+        // Explicit "None" opt-out (set only via the device-select API).
+        if (saved && saved.id === '' && saved.name === '') return null;
+
+        // 1. Domain-wide selection (Settings → Input Setup) — source of truth.
+        if (globalKey) {
+            const g = inputs.find(i => i.key === globalKey);
+            if (notBlocked(g)) return g;
+        }
+
+        // 2. Legacy plugin-local pick, as a fallback below the global. Prefer the
+        // globally-unique logicalSourceKey, then the legacy bare sourceId, then
+        // case-insensitive name (Chrome on Linux regenerates ids per page load).
         let target = null;
         if (saved && saved.key) target = inputs.find(i => i.key === saved.key) || null;
         if (!target && saved && saved.id) target = inputs.find(i => i.id === saved.id) || null;
@@ -834,23 +850,50 @@
             const n = saved.name.toLowerCase();
             target = inputs.find(i => (i.name || '').toLowerCase() === n) || null;
         }
-        // Never honour a saved pick that's a loopback / "Midi Through" port — it
-        // carries no device input, so a stale pick silently eats every note. The
-        // saved-pick lookups above bypass the block-list; re-apply it here.
-        if (target && _MIDI_BLOCKLIST_RE.test(target.name || '')) target = null;
-        if (!target) {
-            // Skip the substitute ONLY when a saved pick exists but is currently
-            // absent (recovery: preserve it, don't clobber on a transient unplug).
-            // With no saved pick at all, a fallback is the intended first-hotplug
-            // auto-connect — allow it even in recovery.
-            const hasSavedPick = !!(saved && (saved.key || saved.id || saved.name));
-            if (!allowFallback && hasSavedPick) return;
-            target = inputs.find(i => !_MIDI_BLOCKLIST_RE.test(i.name || '')) || inputs[0];
-        }
+        // Never honour a saved pick that resolves to a loopback / "Midi Through"
+        // port — it carries no device input, so it silently eats every note.
+        if (target && !notBlocked(target)) target = null;
+        if (target) return target;
+
+        // 3. Nothing configured resolved to a present device. In recovery
+        // (allowFallback=false) with a configured preference — a global pick or a
+        // saved pick — that's currently absent, preserve it rather than switching
+        // to an arbitrary device on a transient multi-device unplug. With no
+        // preference at all, a first-device grab is the intended first-hotplug
+        // auto-connect, allowed even in recovery.
+        const hasPreference = !!(globalKey || (saved && (saved.key || saved.id || saved.name)));
+        if (!allowFallback && hasPreference) return null;
+        // Connect to nothing rather than a loopback: if every present device is
+        // blocklisted, a first-device grab would attach to a "Midi Through"/IAC
+        // port that carries no input and silently eats every note.
+        return inputs.find(notBlocked) || null;
+    }
+
+    function _midiAutoConnect(allowFallback) {
+        // Recovery (sources-changed after unplug) passes false: never switch to a
+        // fallback input on a transient multi-device unplug (the configured
+        // device returns on replug and reconnects then). Auto-connect is
+        // non-persisting (persist omitted → false): it opens the resolved device
+        // for this session WITHOUT writing the plugin-local pick or the shared
+        // domain selection, so opening this highway can't clobber the user's
+        // globally-configured device.
+        if (allowFallback === undefined) allowFallback = true;
+        const inputs = _midiSources();
+        const saved = _readSavedPick();
+        const mi = _mi();
+        const globalKey = mi && typeof mi.getSelected === 'function' ? mi.getSelected() : null;
+        const target = _pickMidiTarget(inputs, saved, globalKey, allowFallback);
+        if (!target) return;
         _midiConnect(target.id, target.name, target.key);
     }
 
-    async function _midiConnect(id, name, key) {
+    // `persist` gates the two preference writes. Only an EXPLICIT device
+    // selection (the device-select API) persists: it writes the plugin-local
+    // pick AND the shared domain selection (`mi.select`, so the user's choice
+    // becomes the global default). Auto-connect and programmatic opens pass
+    // falsy — they open the resolved device for this session only, never
+    // touching either store, so they can't clobber a globally-configured device.
+    async function _midiConnect(id, name, key, persist) {
         // Capture our generation AFTER _midiDetach()'s own bump, so a later
         // detach (device removal / new connect / opt-out) reliably supersedes us.
         _midiDetach();
@@ -861,7 +904,7 @@
         for (const inst of _instances) {
             if (inst && typeof inst._releaseAllHeld === 'function') inst._releaseAllHeld();
         }
-        _writeSavedPick(id || '', name || '', key || '');
+        if (persist) _writeSavedPick(id || '', name || '', key || '');
         const mi = _mi();
         if ((id || key) && mi) {
             // Prefer the globally-unique logicalSourceKey so two providers that
@@ -874,13 +917,19 @@
                 const lkey = src.key || ('web-midi::' + src.id);
                 _midiInput = { id: src.id, name: src.name, key: lkey };
                 _midiJustConnected = true;
+                // Only an explicit selection writes the shared global default;
+                // open takes the logicalSourceKey directly, so select() is not
+                // needed to open — it exists purely to set the global. Persist it
+                // BEFORE the no-instance early return so a settings-panel pick with
+                // no live renderer still updates the shared default (best-effort:
+                // a select hiccup must not abort the connect).
+                if (persist) { try { await mi.select(lkey); } catch (_) { /* best-effort */ } }
                 // No live renderer to consume OR release a session — don't hold one
                 // open (settings-only ensure-init, or the last instance was torn
-                // down during async discovery). The pick is saved; a later renderer
-                // mount re-runs auto-connect and opens for real, releasing on destroy.
+                // down during async discovery). A later renderer mount re-runs
+                // auto-connect and opens for real, releasing on destroy.
                 if (_instances.size === 0) { _midiNotifyDeviceListChanged(); return; }
                 try {
-                    await mi.select(lkey);
                     const res = await mi.open({ requester: PLUGIN_ID, logicalSourceKey: lkey });
                     // A newer _midiConnect (device switch / None / replug) ran while
                     // we awaited open — discard this stale session so we don't wire a
@@ -1039,10 +1088,11 @@
     window.keysH3dGetMidiInputId = function () { return _midiInput ? _midiInput.id : ''; };
     window.keysH3dSetMidiInput = function (id) {
         // `id` may be a logicalSourceKey (new host calls) or a legacy sourceId.
+        // Explicit user selection → persist (local pick + shared global default).
         const src = id
             ? (_midiSources().find(s => s.key === id) || _midiSources().find(s => s.id === id))
             : null;
-        _midiConnect(src ? src.id : (id || ''), src ? src.name : '', src ? src.key : '');
+        _midiConnect(src ? src.id : (id || ''), src ? src.name : '', src ? src.key : '', true);
         return true;
     };
     window.keysH3dGetMidiChannel = function () { return _cfg.midiChannel; };
@@ -1547,6 +1597,8 @@
 
     function _aiOpen(req) {
         // Opening a MIDI source connects the corresponding Web MIDI input.
+        // Programmatic open (audio-input source.open) — non-persisting: it must
+        // not rewrite the user's saved pick or the shared global default.
         const idx = _aiIndexFor(req && (req.sourceId || req.logicalSourceKey));
         const inputs = _midiSources();   // carries .key (logicalSourceKey), unlike _midiListInputs()
         if (idx == null || idx >= inputs.length) {
@@ -3993,6 +4045,7 @@
         FX_DEFAULTS,
         FX_RANGES,
         _classifyTiming,
+        _pickMidiTarget,
     };
 
     // Headless verification hook: lets Playwright drive synthetic note-ons

@@ -2651,6 +2651,55 @@
             cam.lookAt(0, 0, -AHEAD * TS * 0.45);
         }
 
+        // Camera Director bridge resolver. Prefers THIS panel's per-panel camera
+        // under splitscreen (window.__h3dCamCtlPanels[panelIndex]) and falls back
+        // to the single global (window.__h3dCamCtl); null when Camera Director is
+        // absent → 100% stock framing. Defensive on the splitscreen global name
+        // (rename in flight: feedBackSplitscreen vs slopsmithSplitscreen).
+        function _freeCamFor(canvas) {
+            const map = window.__h3dCamCtlPanels;
+            if (map) {
+                const ss = window.feedBackSplitscreen || window.slopsmithSplitscreen;
+                if (ss && typeof ss.panelIndexFor === 'function') {
+                    try {
+                        const i = ss.panelIndexFor(canvas);
+                        if (i != null && map[i]) return map[i];
+                    } catch (e) { /* ignore */ }
+                }
+            }
+            return window.__h3dCamCtl || null;
+        }
+
+        // Per-frame camera write: static base pose (positionCamera) + kick-pulse Y
+        // dip, then layer Camera Director free-cam offsets (dolly/height/orbit on
+        // the camera-from-target vector; pan/pitch on the look target). Runs every
+        // frame so a live free-cam drag is smooth; allocation-free; NaN-safe; a
+        // null/disabled bridge reproduces the stock static+pulse pose exactly.
+        function applyCamera() {
+            if (_camBaseH == null) return;               // before first positionCamera()
+            const _dip = (_kickPulse > 0.001) ? (0.8 * K * _kickPulse * fx.hitFx) : 0;
+            let _cx = 0, _cy = _camBaseH - _dip, _cz = _camBaseD;
+            let _lx = 0, _ly = 0, _lz = -AHEAD * TS * 0.45;
+            const _fc = _freeCamFor(highwayCanvas);
+            if (_fc && _fc.enabled) {
+                const _dm = Number.isFinite(_fc.distMul) ? _fc.distMul : 1;
+                const _hm = Number.isFinite(_fc.heightMul) ? _fc.heightMul : 1;
+                const _yaw = Number.isFinite(_fc.yaw) ? _fc.yaw : 0;
+                let _vx = _cx - _lx, _vy = _cy - _ly, _vz = _cz - _lz;
+                _vx *= _dm; _vy *= _dm; _vz *= _dm;   // dolly (zoom)
+                _vy *= _hm;                            // height
+                const _cyw = Math.cos(_yaw), _syw = Math.sin(_yaw);
+                const _rx = _vx * _cyw - _vz * _syw, _rz = _vx * _syw + _vz * _cyw; // orbit around Y
+                _cx = _lx + _rx; _cy = _ly + _vy; _cz = _lz + _rz;
+                const _px = Number.isFinite(_fc.panX) ? _fc.panX : 0;
+                const _py = Number.isFinite(_fc.panY) ? _fc.panY : 0;
+                const _pt = Number.isFinite(_fc.pitch) ? _fc.pitch : 0;
+                _lx += _px * K; _ly += (_pt + _py) * K;
+            }
+            cam.position.set(_cx, _cy, _cz);
+            cam.lookAt(_lx, _ly, _lz);
+        }
+
         function buildLanes(_floorW, floorD) {
             laneGroup = new T.Group();
             laneStripeMats = [];
@@ -3431,15 +3480,18 @@
                             BG_STYLES[_bgState._style].update(_bgState.s, bands, fdt, nowMs / 1000);
                         } catch (_) { /* visual-only */ }
                     }
+                    // Kick pulse decays each frame; it drives the floor flash and,
+                    // via applyCamera(), the camera Y dip.
                     if (_kickPulse > 0.001) {
                         _kickPulse *= Math.exp(-fdt * 7);
-                        cam.position.y = _camBaseH - 0.8 * K * _kickPulse * fx.hitFx;
                         if (_floorFlash) _floorFlash.material.opacity = 0.25 * _kickPulse * fx.hitFx;
                     } else if (_kickPulse !== 0) {
                         _kickPulse = 0;
-                        cam.position.y = _camBaseH;
                         if (_floorFlash) _floorFlash.material.opacity = 0;
                     }
+                    // Write the camera every frame: static base pose + kick dip +
+                    // Camera Director free-cam offsets (per-panel-aware).
+                    applyCamera();
                 }
                 // Approach highlight: raise each lane stripe toward its next
                 // note (accumulated by the rebuildNotes walk above).

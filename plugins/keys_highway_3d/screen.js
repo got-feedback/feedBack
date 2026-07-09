@@ -1849,6 +1849,25 @@
             _rigOut.lookZ = _camPreset.lookZ;
             return _rigOut;
         }
+
+        // Camera Director bridge resolver. Prefers THIS panel's per-panel camera
+        // under splitscreen (window.__h3dCamCtlPanels[panelIndex]) and falls back
+        // to the single global (window.__h3dCamCtl); null when Camera Director is
+        // absent → 100% stock framing. Defensive on the splitscreen global name
+        // (rename in flight: feedBackSplitscreen vs slopsmithSplitscreen).
+        function _freeCamFor(canvas) {
+            const map = window.__h3dCamCtlPanels;
+            if (map) {
+                const ss = window.feedBackSplitscreen || window.slopsmithSplitscreen;
+                if (ss && typeof ss.panelIndexFor === 'function') {
+                    try {
+                        const i = ss.panelIndexFor(canvas);
+                        if (i != null && map[i]) return map[i];
+                    } catch (e) { /* ignore */ }
+                }
+            }
+            return window.__h3dCamCtl || null;
+        }
         // Per-key approach glow: a key lights in its pitch-class color ONLY while a
         // note is heading for it, ramping up the closer that note gets to the hit-line.
         const KEY_GLOW_AHEAD = 2.0;      // seconds before the hit-line a key starts to light
@@ -3259,7 +3278,33 @@
             }
             _camX += (_camTargetX - _camX) * CAM_PAN_LERP;
             _camZoom += (_camTargetZoom - _camZoom) * CAM_ZOOM_LERP;
-            { const r = _rig(); cam.position.set(_camX, r.y * K * _camZoom, r.z * K * _camZoom); cam.lookAt(_camX, r.lookY * K * _camZoom, r.lookZ * K * _camZoom); }
+            {
+                const r = _rig();
+                let _cx = _camX, _cy = r.y * K * _camZoom, _cz = r.z * K * _camZoom;
+                let _lx = _camX, _ly = r.lookY * K * _camZoom, _lz = r.lookZ * K * _camZoom;
+                // Camera Director free-cam offsets (per-panel-aware), layered on top
+                // of the auto-framing so pan/zoom-follow still works. Dolly/height/
+                // orbit act on the camera-from-target vector; pan/pitch shift the
+                // look target. NaN-safe; null/disabled bridge → stock.
+                const _fc = _freeCamFor(highwayCanvas);
+                if (_fc && _fc.enabled) {
+                    const _dm = Number.isFinite(_fc.distMul) ? _fc.distMul : 1;
+                    const _hm = Number.isFinite(_fc.heightMul) ? _fc.heightMul : 1;
+                    const _yaw = Number.isFinite(_fc.yaw) ? _fc.yaw : 0;
+                    let _vx = _cx - _lx, _vy = _cy - _ly, _vz = _cz - _lz;
+                    _vx *= _dm; _vy *= _dm; _vz *= _dm;   // dolly (zoom)
+                    _vy *= _hm;                            // height
+                    const _cyw = Math.cos(_yaw), _syw = Math.sin(_yaw);
+                    const _rx = _vx * _cyw - _vz * _syw, _rz = _vx * _syw + _vz * _cyw; // orbit around Y
+                    _cx = _lx + _rx; _cy = _ly + _vy; _cz = _lz + _rz;
+                    const _px = Number.isFinite(_fc.panX) ? _fc.panX : 0;
+                    const _py = Number.isFinite(_fc.panY) ? _fc.panY : 0;
+                    const _pt = Number.isFinite(_fc.pitch) ? _fc.pitch : 0;
+                    _lx += _px * K; _ly += (_pt + _py) * K;
+                }
+                cam.position.set(_cx, _cy, _cz);
+                cam.lookAt(_lx, _ly, _lz);
+            }
 
             for (const km of keyMeshes.values()) km.userData.glow = 0;
             for (const { mesh, note, len, label } of noteMeshes) {

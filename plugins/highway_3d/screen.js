@@ -2600,6 +2600,26 @@
         const idx = (ss && typeof ss.panelIndexFor === 'function') ? ss.panelIndexFor(canvas) : null;
         return (idx == null) ? 'main' : 'panel' + idx;
     }
+
+    // Camera Director bridge resolver. Prefers THIS panel's per-panel camera
+    // under splitscreen (window.__h3dCamCtlPanels[panelIndex]) and falls back to
+    // the single global (window.__h3dCamCtl); returns null when Camera Director
+    // is absent → 100% stock framing. Defensive on the splitscreen global name
+    // (rename in flight: feedBackSplitscreen vs slopsmithSplitscreen). Mirrors
+    // the panel resolution in _bgPanelKey.
+    function _freeCamFor(canvas) {
+        const map = window.__h3dCamCtlPanels;
+        if (map) {
+            const ss = window.feedBackSplitscreen || window.slopsmithSplitscreen;
+            if (ss && typeof ss.panelIndexFor === 'function') {
+                try {
+                    const i = ss.panelIndexFor(canvas);
+                    if (i != null && map[i]) return map[i];
+                } catch (e) { /* ignore */ }
+            }
+        }
+        return window.__h3dCamCtl || null;
+    }
     // In-memory fallback for when localStorage is blocked (private mode,
     // sandboxed iframes, some test runners). _bgWriteGlobal stages the
     // value here unconditionally, so it always reflects the most recent
@@ -14664,7 +14684,10 @@
             // suppressed while the Camera Director owns the view (it wins).
             const _startAspect = (_tune && Number.isFinite(_tune.startAspect) && _tune.startAspect > 0)
                 ? _tune.startAspect : HORPLUS_START_ASPECT;
-            const _dirActive = !!(window.__h3dCamCtl && window.__h3dCamCtl.enabled);
+            // Resolve the Camera Director bridge once (per-panel under splitscreen,
+            // else global). Used both for the wide-pane gate and the transforms below.
+            const _freeCam = _freeCamFor(highwayCanvas);
+            const _dirActive = !!(_freeCam && _freeCam.enabled);
             const _wide = !!(_tune && _paneAspect > _startAspect) && !_dirActive;
             const _poseHMul = (_wide && Number.isFinite(_tune.heightMul)) ? _tune.heightMul : 1;
             const _poseDMul = (_wide && Number.isFinite(_tune.distMul)) ? _tune.distMul : 1;
@@ -14697,7 +14720,7 @@
             // position and the look-at transforms; every field is coerced to a
             // finite number before use so a malformed object can never feed NaN
             // into cam.position / cam.lookAt.
-            const _freeCam = window.__h3dCamCtl;
+            // _freeCam resolved above (per-panel-aware Camera Director bridge).
             const _lookAtZ = -FOCUS_D * 0.35 * _poseLookZMul;
             if (_freeCam && _freeCam.enabled) {
                 const _distMul = Number.isFinite(_freeCam.distMul) ? _freeCam.distMul : 1;

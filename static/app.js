@@ -5264,6 +5264,209 @@ window.jucePlayer = jucePlayer;
     }, 350);
 })();
 
+// Renderer-audio bus feeder (desktop Phase 2): when the engine holds the
+// output endpoint in an exclusive-style mode, Chromium cannot reach the
+// device, so any song audio still played by the renderer goes silent. The
+// Phase 1 watcher above already migrates what a single-file transport can
+// carry (loose /audio/ songs, feedpak full-mixes) onto the native backing
+// transport. This feeder covers the rest — the stems plugin's multi-stem
+// WebAudio graph, plus <audio>-element songs the native transport could not
+// take (e.g. a codec loadBackingTrack rejected).
+//
+// Mechanism: capture the renderer-side master with an AudioWorklet tap,
+// re-point the owning AudioContext at a null sink so it keeps rendering
+// without a device, and push ~10 ms chunks over IPC into the engine's
+// renderer bus, where they are mixed into the exclusive output like a
+// backing track (~10-20 ms added latency on song audio only; the guitar
+// monitoring path is untouched). Validated by the fix12 tester spike:
+// null-sink rendering works, clocks hold (drift → 0), no overflow.
+//
+// Docker sphere: window.feedBackDesktop is undefined → this whole block is
+// inert. Shared-mode desktop: the bus stays disabled (no double audio) and
+// captured contexts keep/regain their default sink.
+(function _installRendererBusFeeder() {
+    const api = window.feedBackDesktop?.audio;
+    if (!api || typeof api.setRendererBus !== 'function'
+             || typeof api.pushRendererAudio !== 'function') return;
+
+    const TAP_WORKLET = `
+        class FeedbackBusTap extends AudioWorkletProcessor {
+            process(inputs) {
+                const inp = inputs[0];
+                if (inp && inp[0]) {
+                    const L = inp[0], R = inp[1] || inp[0];
+                    const out = new Float32Array(L.length * 2);
+                    for (let i = 0; i < L.length; i++) { out[i*2] = L[i]; out[i*2+1] = R[i]; }
+                    this.port.postMessage(out, [out.buffer]);
+                }
+                return true;
+            }
+        }
+        registerProcessor('feedback-bus-tap', FeedbackBusTap);
+    `;
+    const _tapModuleUrl = URL.createObjectURL(new Blob([TAP_WORKLET], { type: 'application/javascript' }));
+    const _tapModuleLoaded = new WeakSet();   // AudioContexts with the module added
+
+    // One tap per captured graph. `active` gates the push (the worklet keeps
+    // running when inactive — it's silent bookkeeping, not audio).
+    function _makeTap(ctx) {
+        const state = { node: null, active: false, batch: [], batchFrames: 0 };
+        state.attach = async (sourceNode) => {
+            if (!_tapModuleLoaded.has(ctx)) {
+                await ctx.audioWorklet.addModule(_tapModuleUrl);
+                _tapModuleLoaded.add(ctx);
+            }
+            if (!state.node) {
+                state.node = new AudioWorkletNode(ctx, 'feedback-bus-tap', { numberOfInputs: 1, channelCount: 2 });
+                const BATCH = Math.round(ctx.sampleRate / 100);   // ~10 ms
+                state.node.port.onmessage = (e) => {
+                    if (!state.active) { state.batch = []; state.batchFrames = 0; return; }
+                    state.batch.push(e.data);
+                    state.batchFrames += e.data.length / 2;
+                    if (state.batchFrames >= BATCH) {
+                        const merged = new Float32Array(state.batchFrames * 2);
+                        let o = 0;
+                        for (const c of state.batch) { merged.set(c, o); o += c.length; }
+                        api.pushRendererAudio(merged, ctx.sampleRate);
+                        state.batch = []; state.batchFrames = 0;
+                    }
+                };
+            }
+            sourceNode.connect(state.node);
+            // No onward connection: the tap is a sink-side observer; audibility
+            // in shared mode comes from the graph's own destination path.
+        };
+        state.detach = (sourceNode) => {
+            state.active = false;
+            state.batch = []; state.batchFrames = 0;
+            if (state.node && sourceNode) {
+                try { sourceNode.disconnect(state.node); } catch (_) { /* already gone */ }
+            }
+        };
+        return state;
+    }
+
+    // ── Core <audio> element capture ─────────────────────────────────────────
+    // createMediaElementSource permanently reroutes the element into its
+    // context, so it is created lazily — only the first time an exclusive
+    // device actually needs it — and never torn down. From then on the element
+    // always plays through _elCtx; sink toggling routes it to the speakers
+    // (shared mode) or the null sink + bus (exclusive mode).
+    let _elCtx = null, _elSource = null, _elTap = null;
+    async function _ensureElementCapture() {
+        if (_elCtx) return;
+        const el = document.getElementById('audio');
+        if (!el) throw new Error('no core audio element');
+        _elCtx = new AudioContext();
+        _elSource = _elCtx.createMediaElementSource(el);
+        _elSource.connect(_elCtx.destination);
+        _elTap = _makeTap(_elCtx);
+        await _elTap.attach(_elSource);
+    }
+
+    // ── Engagement state machine ─────────────────────────────────────────────
+    // 'off' | 'element' | 'stems'
+    let _mode = 'off';
+    let _stemsGraph = null;   // { context, masterNode } snapshot while engaged
+    let _stemsTap = null;
+    const _stemsTaps = new WeakMap();  // context → tap (stems ctx is reused across songs)
+    let _busy = false;
+
+    async function _setSink(ctx, exclusive) {
+        if (typeof ctx.setSinkId !== 'function') throw new Error('setSinkId unsupported');
+        await ctx.setSinkId(exclusive ? { type: 'none' } : '');
+        if (ctx.state !== 'running') await ctx.resume().catch(() => {});
+    }
+
+    async function _disengage() {
+        if (_mode === 'off') return;
+        const prev = _mode;
+        _mode = 'off';
+        try { await api.setRendererBus(false, 0); } catch (_) { /* engine gone */ }
+        if (prev === 'element' && _elCtx) {
+            _elTap.active = false;
+            await _setSink(_elCtx, false).catch(() => {});
+        } else if (prev === 'stems' && _stemsGraph) {
+            if (_stemsTap) _stemsTap.detach(_stemsGraph.masterNode);
+            await _setSink(_stemsGraph.context, false).catch(() => {});
+            _stemsGraph = null; _stemsTap = null;
+        }
+        console.log('[renderer-bus] disengaged (' + prev + ')');
+    }
+
+    async function _engageStems(graph) {
+        await _setSink(graph.context, true);
+        let tap = _stemsTaps.get(graph.context);
+        if (!tap) { tap = _makeTap(graph.context); _stemsTaps.set(graph.context, tap); }
+        await tap.attach(graph.masterNode);
+        await api.setRendererBus(true, 1.0);
+        tap.active = true;
+        _stemsGraph = graph; _stemsTap = tap;
+        _mode = 'stems';
+        console.log('[renderer-bus] engaged: stems graph → engine bus');
+    }
+
+    async function _engageElement() {
+        await _ensureElementCapture();
+        await _setSink(_elCtx, true);
+        await api.setRendererBus(true, 1.0);
+        _elTap.active = true;
+        _mode = 'element';
+        console.log('[renderer-bus] engaged: <audio> element → engine bus');
+    }
+
+    async function _reevaluate() {
+        if (_busy) return;
+        _busy = true;
+        try {
+            let running = false, exclusive = false;
+            try {
+                running = await api.isAudioRunning();
+            } catch (_) { /* engine unreachable → treat as not running */ }
+            if (running) {
+                // Reuse the Phase 1 predicate installed by the routing watcher
+                // (getCurrentDevice + exclusive-type check with change-logged
+                // diagnostics). Fail closed if it is somehow absent.
+                exclusive = !!(await window._juceOutputIsExclusive?.());
+            }
+
+            // The stems plugin publishes its live graph while a multi-stem
+            // song is loaded (and removes it on teardown).
+            const stems = (window.feedBack || window.slopsmith)?.stems?.audioGraph || null;
+            // Element songs: a song is loaded, it is NOT riding the native
+            // transport (Phase 1 owns those), and the stems graph is not the
+            // player. Covers native-transport rejects (codec) in exclusive
+            // mode — without this they would be silent.
+            const songAudio = window._currentSongAudio;
+            const elementSong = !!songAudio && !window._juceMode && !stems;
+
+            let want = 'off';
+            if (running && exclusive) {
+                if (stems) want = 'stems';
+                else if (elementSong) want = 'element';
+            }
+
+            const stemsGraphChanged = _mode === 'stems' && stems !== _stemsGraph;
+            if (want !== _mode || stemsGraphChanged) {
+                await _disengage();
+                if (want === 'stems') await _engageStems(stems);
+                else if (want === 'element') await _engageElement();
+            }
+        } catch (e) {
+            console.warn('[renderer-bus] reevaluate failed (will retry):', e);
+            _mode = 'off';
+        } finally {
+            _busy = false;
+        }
+    }
+
+    // Same cadence/rationale as the routing watcher above. Also re-check on
+    // visibility return so a device switch made while hidden is reconciled.
+    setInterval(() => { if (!document.hidden) void _reevaluate(); }, 500);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) void _reevaluate(); });
+    window._reevaluateRendererBus = _reevaluate;
+})();
+
 // Desktop JUCE backing uses an empty <audio> element; plugins such as Section Map
 // still seek via audio.currentTime / pause / play. Mirror those onto jucePlayer
 // while _juceMode is active. Same-tick pause+seek coalesce into a single seek

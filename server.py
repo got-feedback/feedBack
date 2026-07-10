@@ -66,6 +66,9 @@ from metadata_db import (
 # The audio-effect routing index. Same shape as metadata_db: the class lives in
 # its own module, the `audio_effect_mappings` singleton below stays here.
 from audio_effects_db import AudioEffectsMappingDB
+# The router seam. Imported as a module (never `from appstate import ...`) so
+# `appstate.configure(...)` below publishes into the same namespace routers read.
+import appstate
 import sloppak as sloppak_mod
 import drums as drums_mod
 import notation as notation_mod
@@ -352,6 +355,15 @@ _TUNING_GROUP_KEY_SQL = _tuning_group_key_sql("songs")
 
 meta_db = MetadataDB(CONFIG_DIR)
 audio_effect_mappings = AudioEffectsMappingDB(CONFIG_DIR)
+
+# Publish the singletons to the router seam. server.py stays their owner — a
+# `sys.modules.pop("server")` + re-import must keep rebuilding them under a
+# patched CONFIG_DIR — and `routers/` read them back as `appstate.<name>` at
+# call time. See appstate.py for why the reads must be late-bound.
+appstate.configure(
+    meta_db=meta_db,
+    audio_effect_mappings=audio_effect_mappings,
+)
 
 
 class LocalLibraryProvider:

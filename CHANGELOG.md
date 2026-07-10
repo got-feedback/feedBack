@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`appstate.py` — the router seam (R3).** Route modules moving out of `server.py`
+  need `meta_db` and friends but must not `import server`, or the import graph goes
+  circular the moment `server` imports them back. So `server.py` keeps *constructing*
+  its singletons and now **injects** them once — `appstate.configure(meta_db=…,
+  audio_effect_mappings=…)` — and a router reads them back as module attributes at call
+  time (`import appstate; appstate.meta_db.…`). This is the Python analogue of the
+  frontend refactor's injected `configureX({…})` seams and of the plugin
+  `setup(app, context)` contract: dependencies flow one way, `server → routers →
+  appstate`. Two properties are load-bearing and pinned by `tests/test_appstate.py`:
+  (1) `import appstate` constructs nothing and touches no disk, so the ~49 test fixtures
+  that `sys.modules.pop("server")` + re-import (to rebuild `meta_db` under a patched
+  `CONFIG_DIR`) keep working untouched — a singleton *owned* by `appstate` would survive
+  that pop and go stale; (2) reads must be late-bound (`appstate.meta_db`, never
+  `from appstate import meta_db`), since a `from` import freezes the binding and defeats
+  both a later `configure()` and `monkeypatch.setattr` — the same read-only-binding trap
+  as ES `import`. `configure()` rejects an unknown slot rather than silently creating a
+  global nothing reads, and the suite asserts `server` actually calls it (a seam whose
+  wiring can no-op undetected is worse than no seam). Ships in the image via
+  `Dockerfile` `COPY appstate.py /app/` plus a `.dockerignore` allowlist entry — that
+  file opens with a blanket `*` exclusion, so root-level Python must be re-allowed
+  explicitly or the build fails.
+
 ### Changed
 - **`AudioEffectsMappingDB` moved out of `server.py` into `lib/audio_effects_db.py`
   (R3, move-only).** The core-owned song/tone → provider routing index follows

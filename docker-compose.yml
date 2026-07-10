@@ -11,6 +11,7 @@ services:
       # Mount source for live reload during development
       - ./static:/app/static
       - ./server.py:/app/server.py
+      - ./appstate.py:/app/appstate.py
       - ./VERSION:/app/VERSION
       - ./ug_browser.py:/app/ug_browser.py
       - ./lib:/app/lib

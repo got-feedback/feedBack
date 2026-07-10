@@ -5,6 +5,10 @@
 !dockerfile
 !requirements.txt
 !server.py
+# The router seam server.py injects its singletons into (R3). Root-level Python
+# that ships in the image must be re-allowed explicitly — this file starts with
+# a blanket `*` exclusion. `routers/` needs the same treatment when it lands.
+!appstate.py
 !main.py
 !VERSION
 !tailwind.config.js

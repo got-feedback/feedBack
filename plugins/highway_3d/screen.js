@@ -548,9 +548,20 @@
             ctrl.ownsActx = !(fogAudio && fogAudio.ctx);
             ctrl.actx = (fogAudio && fogAudio.ctx) || new Ctx();
             if (ctrl.actx.state === 'suspended' && ctrl.actx.resume) ctrl.actx.resume().catch(() => {});
+            // Seed the DRAWING BUFFER (canvas.width/height) to the device-pixel
+            // render size and report that SAME size to Butterchurn. Its on-screen
+            // pass viewports to the reported size but never sizes the output canvas
+            // itself — leaving the buffer at the 300x150 default blits the whole
+            // visualizer into a corner that CSS then stretches across the highway.
+            // pixelRatio:1 because DPR is now folded into the reported size, so
+            // buffer == viewport == internal texsize (no double-counting).
+            const _bcRatio0 = Math.min(window.devicePixelRatio || 1, 1.5);
+            const _bcW0 = Math.max(1, Math.round((sz.w || 1280) * _bcRatio0));
+            const _bcH0 = Math.max(1, Math.round((sz.h || 720) * _bcRatio0));
+            canvas.width = _bcW0; canvas.height = _bcH0;
             ctrl.viz = bc.createVisualizer(ctrl.actx, canvas, {
-                width: sz.w || 1280, height: sz.h || 720,
-                pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5), textureRatio: 1,
+                width: _bcW0, height: _bcH0,
+                pixelRatio: 1, textureRatio: 1,
             });
             if (_bcIsDesktop()) {
                 try {
@@ -584,6 +595,27 @@
             ctrl.actx = null; ctrl.viz = null; ctrl.dead = true;
             _bcControllers.delete(ctrl);
         });
+        // Size the Butterchurn output: set the canvas DRAWING BUFFER to the
+        // device-pixel render size AND report that same size, so buffer ==
+        // on-screen viewport == full fill. Butterchurn never sizes the output
+        // canvas itself; the previous code set only CSS size, leaving the buffer
+        // at the 300x150 default -> the viz showed a stretched lower-left corner
+        // (worse the larger the panel). Ratio reuses the highway's DPR budget.
+        function _bcApplySize(cssW, cssH) {
+            if (!(cssW > 0 && cssH > 0)) return;
+            ctrl.lastW = cssW; ctrl.lastH = cssH;
+            const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+            const bw = Math.max(1, Math.round(cssW * ratio)), bh = Math.max(1, Math.round(cssH * ratio));
+            if (canvas.width !== bw) canvas.width = bw;
+            if (canvas.height !== bh) canvas.height = bh;
+            const wpx = cssW + 'px', hpx = cssH + 'px';
+            // Confine ALL layers to exactly the highway-canvas rect so the opaque
+            // backdrop can't bleed over the transport bar above the highway.
+            [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => {
+                if (el) { el.style.width = wpx; el.style.height = hpx; el.style.right = 'auto'; el.style.bottom = 'auto'; }
+            });
+            if (ctrl.viz && ctrl.viz.setRendererSize) { try { ctrl.viz.setRendererSize(bw, bh); } catch (e) {} }
+        }
         return {
             applySettings() { ctrl.applySettings(); },
             dead() { return ctrl.dead; },
@@ -612,18 +644,11 @@
                 if (!ctrl.viz || !s.enabled) return; // skip GPU work when the bg is off
                 const sz = sizeProvider && sizeProvider();
                 if (sz && sz.w > 0 && sz.h > 0 && (sz.w !== ctrl.lastW || sz.h !== ctrl.lastH)) {
-                    ctrl.lastW = sz.w; ctrl.lastH = sz.h;
-                    const wpx = sz.w + 'px', hpx = sz.h + 'px';
-                    // Confine ALL layers to exactly the highway-canvas rect so the opaque
-                    // backdrop can't bleed over the transport bar above the highway.
-                    [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => {
-                        if (el) { el.style.width = wpx; el.style.height = hpx; el.style.right = 'auto'; el.style.bottom = 'auto'; }
-                    });
-                    try { ctrl.viz.setRendererSize(sz.w, sz.h); } catch (e) {}
+                    _bcApplySize(sz.w, sz.h);
                 }
                 try { ctrl.viz.render(); } catch (e) {}
             },
-            resize(w, h) { if (ctrl.viz && ctrl.viz.setRendererSize) { try { ctrl.viz.setRendererSize(w, h); } catch (e) {} ctrl.lastW = w; ctrl.lastH = h; } },
+            resize(w, h) { _bcApplySize(w, h); },
             destroy() {
                 ctrl.dead = true;
                 _bcControllers.delete(ctrl);
@@ -2595,10 +2620,51 @@
     }
     const FRET_NUMBER_GHOST_SCOPE_IDS = ['chords', 'all'];
 
+    /**
+     * localStorage panel key for per-panel background settings ('main' or
+     * 'panel<index>'). Defensive on the splitscreen global-name rename in flight,
+     * and throw-safe on panelIndexFor — same as _freeCamFor — so a misbehaving
+     * splitscreen build can't take down background-settings resolution. Only a
+     * non-negative integer index yields a 'panel<N>' key; anything else (null,
+     * NaN, negative, non-integer) falls back to 'main' so a bad index can never
+     * mint a bogus "panelNaN"-style key.
+     * @param {HTMLCanvasElement} canvas this renderer's highway canvas
+     * @returns {string} 'main' or 'panel<index>'
+     */
     function _bgPanelKey(canvas) {
-        const ss = window.feedBackSplitscreen;
-        const idx = (ss && typeof ss.panelIndexFor === 'function') ? ss.panelIndexFor(canvas) : null;
-        return (idx == null) ? 'main' : 'panel' + idx;
+        const ss = window.feedBackSplitscreen || window.slopsmithSplitscreen;
+        let idx = null;
+        if (ss && typeof ss.panelIndexFor === 'function') {
+            try { idx = ss.panelIndexFor(canvas); } catch (e) { idx = null; }
+        }
+        return (Number.isInteger(idx) && idx >= 0) ? 'panel' + idx : 'main';
+    }
+
+    /**
+     * Camera Director bridge resolver. Prefers THIS panel's per-panel camera under
+     * splitscreen (window.__h3dCamCtlPanels[panelIndex]) and falls back to the
+     * single global (window.__h3dCamCtl); returns null when Camera Director is
+     * absent → 100% stock framing. Defensive on the splitscreen global-name rename
+     * in flight (feedBackSplitscreen vs slopsmithSplitscreen); throw-safe on
+     * panelIndexFor. Mirrors the panel resolution in _bgPanelKey.
+     * @param {HTMLCanvasElement} canvas this renderer's highway canvas
+     * @returns {object|null} the resolved free-camera bridge, or null
+     */
+    function _freeCamFor(canvas) {
+        const map = window.__h3dCamCtlPanels;
+        if (map) {
+            const ss = window.feedBackSplitscreen || window.slopsmithSplitscreen;
+            if (ss && typeof ss.panelIndexFor === 'function') {
+                try {
+                    const i = ss.panelIndexFor(canvas);
+                    // Only a non-negative integer indexes the map (same hardening
+                    // as _bgPanelKey) — a non-int / negative / string index must not
+                    // resolve an unintended/inherited property; fall through then.
+                    if (Number.isInteger(i) && i >= 0 && map[i]) return map[i];
+                } catch (e) { /* ignore */ }
+            }
+        }
+        return window.__h3dCamCtl || null;
     }
     // In-memory fallback for when localStorage is blocked (private mode,
     // sandboxed iframes, some test runners). _bgWriteGlobal stages the
@@ -14664,7 +14730,10 @@
             // suppressed while the Camera Director owns the view (it wins).
             const _startAspect = (_tune && Number.isFinite(_tune.startAspect) && _tune.startAspect > 0)
                 ? _tune.startAspect : HORPLUS_START_ASPECT;
-            const _dirActive = !!(window.__h3dCamCtl && window.__h3dCamCtl.enabled);
+            // Resolve the Camera Director bridge once (per-panel under splitscreen,
+            // else global). Used both for the wide-pane gate and the transforms below.
+            const _freeCam = _freeCamFor(highwayCanvas);
+            const _dirActive = !!(_freeCam && _freeCam.enabled);
             const _wide = !!(_tune && _paneAspect > _startAspect) && !_dirActive;
             const _poseHMul = (_wide && Number.isFinite(_tune.heightMul)) ? _tune.heightMul : 1;
             const _poseDMul = (_wide && Number.isFinite(_tune.distMul)) ? _tune.distMul : 1;
@@ -14691,13 +14760,16 @@
             if (_poseHMul !== 1) _camY *= _poseHMul;
             if (_poseDMul !== 1) _camZ *= _poseDMul;
             // ── Free-camera user tweaks (orbit / height / zoom / pan) ──
-            // Driven by the Camera Director plugin via window.__h3dCamCtl.
+            // Driven by the Camera Director plugin via the camera bridge:
+            // window.__h3dCamCtlPanels[panelIndexFor(canvas)] when split (this
+            // panel's own camera), falling back to the global window.__h3dCamCtl.
             // Layered ON TOP of the auto-framing so note tracking still works.
             // The bridge is read once into _freeCam and reused for both the
             // position and the look-at transforms; every field is coerced to a
             // finite number before use so a malformed object can never feed NaN
             // into cam.position / cam.lookAt.
-            const _freeCam = window.__h3dCamCtl;
+            // _freeCam resolved above via _freeCamFor(highwayCanvas): the
+            // per-panel __h3dCamCtlPanels entry, else global __h3dCamCtl, else null.
             const _lookAtZ = -FOCUS_D * 0.35 * _poseLookZMul;
             if (_freeCam && _freeCam.enabled) {
                 const _distMul = Number.isFinite(_freeCam.distMul) ? _freeCam.distMul : 1;

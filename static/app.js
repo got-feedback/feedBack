@@ -5488,6 +5488,7 @@ window.jucePlayer = jucePlayer;
                 }
             }
 
+
             const stemsGraphChanged = _mode === 'stems' && stems !== _stemsGraph;
             if (want !== _mode || stemsGraphChanged) {
                 await _disengage();

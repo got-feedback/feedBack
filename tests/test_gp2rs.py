@@ -121,7 +121,10 @@ def _converter_ebeats(converter, numerator, denominator, tempo_changes=None):
 def _assert_ebeats(converter, numerator, denominator, expected_times, tempo_changes=None):
     ebeats = _converter_ebeats(converter, numerator, denominator, tempo_changes)
 
-    assert [ebeat.get("time") for ebeat in ebeats] == expected_times
+    # Compare by value, not string: beat times are written at 6-decimal
+    # (microsecond) precision so the derived per-bar tempo matches the authored
+    # GP value, but these tests only care about the spacing, not the format.
+    assert [float(ebeat.get("time")) for ebeat in ebeats] == [float(t) for t in expected_times]
     assert [ebeat.get("measure") for ebeat in ebeats] == [
         "1",
         *["-1"] * (len(expected_times) - 1),

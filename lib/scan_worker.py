@@ -3,7 +3,7 @@
 This module is deliberately kept apart from ``server.py`` so that
 ``ProcessPoolExecutor`` workers can import and unpickle ``_scan_one``
 without dragging in ``server.py``'s import-time side effects
-(``configure_logging()``, ``meta_db = MetadataDB()`` opening/migrating
+(``configure_logging()``, ``meta_db = MetadataDB(CONFIG_DIR)`` opening/migrating
 SQLite, and ``register_plugin_api(app)`` registering routes).
 
 The background scan spawns its pool with the ``spawn`` start method (see

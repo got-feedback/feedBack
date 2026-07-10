@@ -249,3 +249,30 @@ def test_flat_string_count_patch_resets_incompatible_named_tuning():
     patched = apply_flat_instrument_patch_to_profiles(settings, {"string_count": 7})
     assert patched["string_count"] == 7
     assert patched["tuning"] == "Standard"
+
+
+# ── freqs_to_midis (the /api/tunings tuningMidis inverse) ────────────────────
+
+def test_freqs_to_midis_round_trips_every_builtin_at_440():
+    from tunings import freqs_to_midis
+    for key, presets in TUNING_PRESET_MIDIS.items():
+        for name, midis in presets.items():
+            assert freqs_to_midis(open_midis_to_freqs(midis)) == midis, f"{key}/{name}"
+
+
+def test_freqs_to_midis_round_trips_at_nonstandard_reference():
+    # The consumer footgun this exists to kill: frequencies served at a 432/450
+    # reference must recover the SAME integer midis when inverted at that
+    # reference (client-side log2-at-440 reconstruction drifts here).
+    from tunings import freqs_to_midis
+    for ref in (430.0, 432.0, 444.0, 450.0):
+        for midis in (TUNING_PRESET_MIDIS["guitar-8"]["Standard"], TUNING_PRESET_MIDIS["bass-5"]["Standard"]):
+            freqs = open_midis_to_freqs(midis, ref)
+            assert freqs_to_midis(freqs, ref) == midis, f"ref={ref}"
+
+
+def test_freqs_to_midis_rejects_garbage():
+    from tunings import freqs_to_midis
+    assert freqs_to_midis([82.41, 0]) is None          # non-positive
+    assert freqs_to_midis([82.41, "x"]) is None        # non-numeric
+    assert freqs_to_midis([]) == []                    # vacuously fine

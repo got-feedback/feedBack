@@ -40,20 +40,20 @@ test('2D palette arrays are mutable (let) with frozen DEFAULT_* originals', () =
     assert.match(src, /const\s+DEFAULT_STRING_COLORS\s*=/, 'DEFAULT_STRING_COLORS must exist for reset');
     assert.match(src, /const\s+DEFAULT_STRING_DIM\s*=/, 'DEFAULT_STRING_DIM must exist for reset');
     assert.match(src, /const\s+DEFAULT_STRING_BRIGHT\s*=/, 'DEFAULT_STRING_BRIGHT must exist for reset');
-    assert.match(src, /let\s+STRING_COLORS\s*=\s*DEFAULT_STRING_COLORS\.slice\(\)/, 'STRING_COLORS must be a mutable copy of the defaults');
-    assert.match(src, /let\s+STRING_DIM\s*=\s*DEFAULT_STRING_DIM\.slice\(\)/, 'STRING_DIM must be a mutable copy of the defaults');
-    assert.match(src, /let\s+STRING_BRIGHT\s*=\s*DEFAULT_STRING_BRIGHT\.slice\(\)/, 'STRING_BRIGHT must be a mutable copy of the defaults');
+    assert.match(src, /hwState\.STRING_COLORS\s*=\s*DEFAULT_STRING_COLORS\.slice\(\)/, 'STRING_COLORS must be a mutable copy of the defaults');
+    assert.match(src, /hwState\.STRING_DIM\s*=\s*DEFAULT_STRING_DIM\.slice\(\)/, 'STRING_DIM must be a mutable copy of the defaults');
+    assert.match(src, /hwState\.STRING_BRIGHT\s*=\s*DEFAULT_STRING_BRIGHT\.slice\(\)/, 'STRING_BRIGHT must be a mutable copy of the defaults');
 });
 
 test('2D public API exposes getStringColors / setStringColors', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
-    assert.match(src, /getStringColors\s*\(\s*\)\s*\{\s*return\s+STRING_COLORS\.slice\(\)/, 'getStringColors must return a copy');
+    assert.match(src, /getStringColors\s*\(\s*\)\s*\{\s*return\s+hwState\.STRING_COLORS\.slice\(\)/, 'getStringColors must return a copy');
     const fn = extractBlock(src, 'setStringColors(arr)');
     // Each provided index sets base + derived dim/bright; missing → default.
-    assert.match(fn, /STRING_COLORS\[i\]\s*=\s*base/, 'setStringColors must set the base color');
-    assert.match(fn, /STRING_DIM\[i\]\s*=\s*_darken\(/, 'setStringColors must derive the dim variant');
-    assert.match(fn, /STRING_BRIGHT\[i\]\s*=\s*_lighten\(/, 'setStringColors must derive the bright variant');
-    assert.match(fn, /STRING_COLORS\[i\]\s*=\s*DEFAULT_STRING_COLORS\[i\]/, 'setStringColors must restore defaults for missing/invalid indices');
+    assert.match(fn, /hwState\.STRING_COLORS\[i\]\s*=\s*base/, 'setStringColors must set the base color');
+    assert.match(fn, /hwState\.STRING_DIM\[i\]\s*=\s*_darken\(/, 'setStringColors must derive the dim variant');
+    assert.match(fn, /hwState\.STRING_BRIGHT\[i\]\s*=\s*_lighten\(/, 'setStringColors must derive the bright variant');
+    assert.match(fn, /hwState\.STRING_COLORS\[i\]\s*=\s*DEFAULT_STRING_COLORS\[i\]/, 'setStringColors must restore defaults for missing/invalid indices');
 });
 
 // ── 3D highway (plugins/highway_3d/screen.js) ─────────────────────────────

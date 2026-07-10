@@ -23,7 +23,7 @@ test('getFilteredNotes falls through to notes when _filteredNotes is null', () =
     const src = fs.readFileSync(highwayJs, 'utf8');
     assert.match(
         src,
-        /getFilteredNotes\s*\(\s*\)\s*\{[^}]*_filteredNotes[^}]*:\s*notes/,
+        /getFilteredNotes\s*\(\s*\)\s*\{[^}]*_filteredNotes[^}]*:\s*hwState\.notes/,
         'getFilteredNotes must return notes as fallback',
     );
 });
@@ -41,7 +41,7 @@ test('getFilteredChords falls through to chords when _filteredChords is null', (
     const src = fs.readFileSync(highwayJs, 'utf8');
     assert.match(
         src,
-        /getFilteredChords\s*\(\s*\)\s*\{[^}]*_filteredChords[^}]*:\s*chords/,
+        /getFilteredChords\s*\(\s*\)\s*\{[^}]*_filteredChords[^}]*:\s*hwState\.chords/,
         'getFilteredChords must return chords as fallback',
     );
 });

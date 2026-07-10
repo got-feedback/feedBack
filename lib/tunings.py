@@ -98,6 +98,22 @@ def open_midis_to_freqs(midis: list[int], reference_pitch: float = DEFAULT_REFER
     return [round(midi_to_freq(m, reference_pitch), 2) for m in midis]
 
 
+def freqs_to_midis(freqs: list[float], reference_pitch: float = DEFAULT_REFERENCE_PITCH) -> list[int] | None:
+    """Return absolute open-string MIDI notes for frequencies at the supplied
+    A4 reference — the inverse of open_midis_to_freqs. None if any entry is
+    non-numeric or non-positive (a provider could hand us anything)."""
+    out: list[int] = []
+    for f in freqs:
+        try:
+            f = float(f)
+        except (TypeError, ValueError):
+            return None
+        if f <= 0:
+            return None
+        out.append(int(round(69 + 12 * math.log2(f / reference_pitch))))
+    return out
+
+
 def tuning_offsets_from_midis(instrument_key: str, midis: list[int]) -> list[int] | None:
     """Return semitone offsets from the instrument's standard open strings."""
     standard = STANDARD_OPEN_MIDIS.get(instrument_key)

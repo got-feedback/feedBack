@@ -54,8 +54,12 @@ without a *signed* exemption" is unenforceable.
 
 ## Planned, NOT exempt (owned by split plans — listed so nothing falls between states)
 
-core `static/app.js` (11,821) · `static/highway.js` (4,154, whole file) · `server.py`
-(13,948) · `static/v3/songs.js` (4,134) · `static/capabilities/audio-session.js`
+core `static/app.js` (11,852) · `static/highway.js` (4,168, whole file) · `server.py`
+(7,798 — was 14,037; ratcheted by the R3 `MetadataDB` + `AudioEffectsMappingDB`
+extractions and nine `routers/` modules) ·
+`lib/metadata_db.py` (4,373 — new in R3; the `MetadataDB` class alone is 4,018 lines
+and is a monolith in its own right, to be split per-table once the router train
+lands) · `static/v3/songs.js` (4,134) · `static/capabilities/audio-session.js`
 (2,974) · `plugins/highway_3d/screen.js` (15,656) · `plugins/keys_highway_3d/screen.js`
 (3,780) · `plugins/drum_highway_3d/screen.js` (3,597) — and every monolith with a PR
 train in the refactor plan. Test files (e.g. `tests/test_plugins.py`) are out of scope

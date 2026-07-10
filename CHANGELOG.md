@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The packaged desktop app could not start (`ModuleNotFoundError: No module named
+  'appstate'`).** feedback-desktop's `scripts/bundle-slopsmith.sh` copies a *hardcoded
+  list* of core files into the app bundle — `server.py`, `VERSION`, `lib/`, `data/`,
+  `static/`, `plugins/__init__.py`. The root-level `appstate.py` and `routers/` added in
+  R3 shipped correctly in Docker and passed every test, and were then silently dropped
+  from the packaged app, which died at startup. Both now live under **`lib/`** — the one
+  core directory the Dockerfile (`COPY lib/`), `docker-compose.yml`, and the desktop
+  bundler (`cp -r lib`) all copy wholesale, and that all three put on `sys.path` (on
+  Windows via the embeddable-Python `._pth`, where `PYTHONPATH` is ignored). This needs no
+  change in feedback-desktop and no new release to take effect. Placing them there is also
+  correct under Principle V: with the injection seam, `appstate.py` constructs nothing and
+  does no import-time IO, and a route module only builds an `APIRouter`. The
+  `Dockerfile` / `.dockerignore` / `docker-compose.yml` entries added for the root layout
+  are reverted. New `tests/test_packaging.py` walks `server.py`'s module-level imports and
+  fails if any first-party module resolves outside a directory the packagers copy, so the
+  next root-level module can't ship broken.
+
+### Added
+- **Perf harness now measures 2D-highway frame time (R3c gate).** `scripts/perf-baseline.mjs` gains a `--song` mode that reports per-frame draw-cost p50/p95/p99 (draw-tagged via `highway.addDrawHook`), the metric that gates the `highway.js` split. Maintainer/CI-only; baseline recorded in `docs/perf-baseline.md`.
+- **`routers/` — extracting `server.py`'s route layer, cheapest-first (R3).** Each PR moves a cohesive route group into a `fastapi.APIRouter` under `lib/routers/`, mounted with `app.include_router(...)` at its original site (FastAPI matches in registration order; the full route table stays byte-identical). Bodies are verbatim — only the decorator receiver (`@app` → `@router`) and singleton reads (`meta_db` → `appstate.meta_db`, resolved at call time) change. So far: `audio_effects` (5), `artist_aliases` (5), `loops` (3), `playlists` (12 + covers), `ws_highway` (the 902-line highway chart WebSocket), `chart` (split/unsplit/work/fileinfo — unblocked by the DLC-path substrate). The DLC library-path resolution (`_get_dlc_dir`, pure `_resolve_dlc_path`) moved to `lib/dlc_paths.py`, reading paths through the seam; `config_dir`/`dlc_dir`/`dlc_dir_env` now ride the `appstate` seam (env-derived, so the pop-and-reimport fixtures reconfigure it for free), and the shared request-field sanitizer `_clean_str` moved to `lib/reqfields.py`. The next cut is picked by a dependency-closure scan that ranks groups by how many `monkeypatch.setattr(server, …)` targets they'd drag along.
+- **`routers/` — the first extracted route module (R3).** The five audio-effects mapping
+  endpoints move out of `server.py` into `lib/routers/audio_effects.py` as a
+  `fastapi.APIRouter`, mounted with `app.include_router(...)` **at the point in the file
+  where they used to be defined** — FastAPI matches routes in registration order, so the
+  mount site preserves it. Verified: the full 143-route table (paths, methods, *and*
+  order) is byte-for-byte identical to `main`. Bodies are verbatim; the only edits are
+  the decorator receiver (`@app.get` → `@router.get`) and the singleton read
+  (`audio_effect_mappings` → `appstate.audio_effect_mappings`, a module attribute
+  resolved at call time). This proves the seam from #833 under a real consumer, including
+  the second slot. The `_demo_mode_guard` middleware still blocks all four moved write
+  routes with 403, and `Query(...)` validation still 422s — both checked against a running
+  server. `server.py`: **9,445 → 9,386 lines**.
+- **`appstate.py` — the router seam (R3).** Route modules moving out of `server.py`
+  need `meta_db` and friends but must not `import server`, or the import graph goes
+  circular the moment `server` imports them back. So `server.py` keeps *constructing*
+  its singletons and now **injects** them once — `appstate.configure(meta_db=…,
+  audio_effect_mappings=…)` — and a router reads them back as module attributes at call
+  time (`import appstate; appstate.meta_db.…`). This is the Python analogue of the
+  frontend refactor's injected `configureX({…})` seams and of the plugin
+  `setup(app, context)` contract: dependencies flow one way, `server → routers →
+  appstate`. Two properties are load-bearing and pinned by `tests/test_appstate.py`:
+  (1) `import appstate` constructs nothing and touches no disk, so the ~49 test fixtures
+  that `sys.modules.pop("server")` + re-import (to rebuild `meta_db` under a patched
+  `CONFIG_DIR`) keep working untouched — a singleton *owned* by `appstate` would survive
+  that pop and go stale; (2) reads must be late-bound (`appstate.meta_db`, never
+  `from appstate import meta_db`), since a `from` import freezes the binding and defeats
+  both a later `configure()` and `monkeypatch.setattr` — the same read-only-binding trap
+  as ES `import`. `configure()` rejects an unknown slot rather than silently creating a
+  global nothing reads, and the suite asserts `server` actually calls it (a seam whose
+  wiring can no-op undetected is worse than no seam). Lives at `lib/appstate.py`.
+
+### Changed
+- **`AudioEffectsMappingDB` moved out of `server.py` into `lib/audio_effects_db.py`
+  (R3, move-only).** The core-owned song/tone → provider routing index follows
+  `MetadataDB` out of the host file, byte-identical apart from the same constructor
+  seam (`__init__` takes `config_dir`; `audio_effect_mappings = AudioEffectsMappingDB(CONFIG_DIR)`),
+  so the module does no IO at import. The singleton stays in `server.py`; no route,
+  no test and no `monkeypatch.setattr(server, …)` target moves. `server.py`:
+  **9,705 → 9,433 lines**.
+- **`MetadataDB` moved out of `server.py` into `lib/metadata_db.py` (R3, move-only).**
+  The library metadata cache — the `MetadataDB` class (4,018 lines) plus the query
+  helpers it owns (keyset paging cursors, the tuning grouping key, smart-arrangement
+  naming, tag normalisation, the startup DB-restore swap) — now lives in its own flat
+  `lib/` module. `server.py` drops from **14,037 → 9,705 lines** and keeps the
+  `meta_db` singleton, so `server.meta_db` and `server.app` resolve exactly as before
+  and every route is untouched. The only non-verbatim change is the seam that lets the
+  class leave `server.py`: `MetadataDB.__init__` now takes `config_dir` explicitly
+  (`meta_db = MetadataDB(CONFIG_DIR)`) instead of reading the module-level `CONFIG_DIR`,
+  which also means `lib/metadata_db.py` performs no IO at import (Principle V). Logging
+  still goes through the `feedBack.server` logger, so existing log filters and `caplog`
+  assertions resolve to the same logger object. `tests/test_settings_export_library_db.py`
+  now imports `_apply_pending_db_restore` from `metadata_db` (the test moved with its
+  subject); no other test changed. Every moved block is byte-identical to its
+  `server.py` original.
+
 ### Added
 - **Plugins can ship an ES-module `src/` tree (module-migration rails, R0).** The host gains three things so a plugin can move off a single global-scope `screen.js` IIFE onto native ES modules with **no build step**: (1) a new sandboxed `GET /api/plugins/{id}/src/{path}` route that serves a plugin's `src/` source subtree, containment-checked by the same `safe_join` guard as `assets/` (traversal/absolute/NUL → 404); (2) the live-edit cache contract — `Cache-Control: no-cache` + a weak mtime/size `ETag` + `If-None-Match`→`304` — applied to `src/`, `screen.js`, and `assets/` (previously `screen.js` sent no cache headers and `assets/` emitted an ETag but never revalidated), so an edited module reloads on refresh while unchanged ones `304`; and (3) `scriptType`/`minHost` passthrough from `plugin.json` to `/api/plugins`, with the loader injecting a plugin that declares `"scriptType":"module"` as `<script type="module">` (its screen.js becomes `import './src/main.js'`). A `<script type=module>` fires its load event only after its whole static-import graph evaluates, preserving the loader's completion-by-`onload` + `_loadingPluginId` contract. Classic plugins are unaffected; `minHost` is passthrough-only for now (enforcement deferred). Tests: `tests/test_plugin_src_route.py` (serve/media-type/traversal/304/no-stale-304/screen.js+assets conditional), `tests/js/plugin_loader_script_type.test.js` (guarded module injection).
 - **Module-migration governance & rails (R0).** Constitution amended to **v1.2.0**: Principle II now names native ES modules as a first-class, *build-free* extension mechanism (the `scriptType:"module"` load path, both plugins and — over time — core's `static/js/`), keeping the no-bundler/no-transpiler/source-served rule intact; Operating Constraints gains a "Module load contract" clause (a `<script type=module>` load event awaits the whole static-import graph, so completion-by-`onload` is preserved; per-visit re-init comes from the `screen:changed` event, not screen.js re-execution). Mirrored into `CLAUDE.md`. New `docs/plugin-modules.md` (the migration playbook — layering, import-time purity, `import.meta.url` assets, the ETag live-edit loop) and `docs/size-exemptions.md` (the signed 1,500-line size-norm register; Byron signs core/bundled rows, Christian the authored virtuoso row). Adds a **maintainer/CI-only** ESLint gate (`eslint.config.js` + a `lint` CI job): `max-lines` warns at 1,500 as a non-blocking ratchet (ceilings for exempt files mirror the register), and `import-x/no-unresolved` + `import-x/no-cycle` hard-error on ES-module graphs — dormant until module code lands, never on the serve/Docker path.

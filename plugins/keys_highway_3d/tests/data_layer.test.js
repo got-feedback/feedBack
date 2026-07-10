@@ -188,3 +188,99 @@ test('measureMarkers extracts idx/t pairs', () => {
         [{ idx: 1, t: 0 }, { idx: 2, t: 2.5 }],
     );
 });
+
+test('_pickMidiTarget: no plugin-local pick defers to the domain-wide selection, not "first device"', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [
+        { id: 'a', name: 'Device A', key: 'web-midi::a' },
+        { id: 'b', name: 'Device B', key: 'web-midi::b' },
+    ];
+    // Fresh install / never picked here — must use the Input Setup global,
+    // NOT fall through to inputs[0].
+    const target = _pickMidiTarget(inputs, null, 'web-midi::b', true);
+    assert.equal(target.id, 'b');
+});
+
+test('_pickMidiTarget: the domain-wide selection is the source of truth — it wins over a stale plugin-local pick', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [
+        { id: 'a', name: 'Device A', key: 'web-midi::a' },
+        { id: 'b', name: 'Device B', key: 'web-midi::b' },
+    ];
+    // A stale local pick (e.g. left by a pre-fix build's auto-connect) must
+    // NOT override the device the user configured in Settings → Input Setup.
+    const target = _pickMidiTarget(inputs, { id: 'a', name: 'Device A', key: 'web-midi::a' }, 'web-midi::b', true);
+    assert.equal(target.id, 'b');
+});
+
+test('_pickMidiTarget: local pick is used as a fallback when no global is configured', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [
+        { id: 'a', name: 'Device A', key: 'web-midi::a' },
+        { id: 'b', name: 'Device B', key: 'web-midi::b' },
+    ];
+    const target = _pickMidiTarget(inputs, { id: 'a', name: 'Device A', key: 'web-midi::a' }, null, true);
+    assert.equal(target.id, 'a');
+});
+
+test('_pickMidiTarget: local pick name-recovers when its logicalSourceKey went stale (id regeneration)', () => {
+    const { _pickMidiTarget } = load();
+    // Same physical device, new id/key across a reload; the saved key/id miss
+    // but the name still matches.
+    const inputs = [{ id: 'a2', name: 'Device A', key: 'web-midi::a2' }];
+    const target = _pickMidiTarget(inputs, { id: 'a1', name: 'Device A', key: 'web-midi::a1' }, null, true);
+    assert.equal(target.id, 'a2');
+});
+
+test('_pickMidiTarget: domain-wide selection is ignored if it names a blocklisted loopback port', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [
+        { id: 'thru', name: 'IAC Driver Bus 1', key: 'web-midi::thru' },
+        { id: 'b', name: 'Device B', key: 'web-midi::b' },
+    ];
+    const target = _pickMidiTarget(inputs, null, 'web-midi::thru', true);
+    assert.equal(target.id, 'b'); // falls through to the first non-loopback device
+});
+
+test('_pickMidiTarget: when every present device is a loopback, connect to nothing (never a dead port)', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [
+        { id: 'thru', name: 'MIDI Through Port-0', key: 'web-midi::thru' },
+        { id: 'iac', name: 'IAC Driver Bus 1', key: 'web-midi::iac' },
+    ];
+    // No non-loopback device exists — must NOT fall back to inputs[0] (a port
+    // that carries no input and would silently eat every note).
+    const target = _pickMidiTarget(inputs, null, null, true);
+    assert.equal(target, null);
+});
+
+test('_pickMidiTarget: explicit "None" opt-out still wins over any global default', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [{ id: 'a', name: 'Device A', key: 'web-midi::a' }];
+    const target = _pickMidiTarget(inputs, { id: '', name: '' }, 'web-midi::a', true);
+    assert.equal(target, null);
+});
+
+test('_pickMidiTarget: a present global wins even during hotplug recovery', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [{ id: 'b', name: 'Device B', key: 'web-midi::b' }];
+    // The configured global device is present — reconnect to it, don't bail.
+    const target = _pickMidiTarget(inputs, null, 'web-midi::b', false);
+    assert.equal(target.id, 'b');
+});
+
+test('_pickMidiTarget: recovery (allowFallback=false) preserves an absent configured device instead of grabbing a random one', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [{ id: 'b', name: 'Device B', key: 'web-midi::b' }];
+    // The configured device ('x', global) is currently unplugged; a transient
+    // recovery must NOT switch to the unrelated device that is present.
+    const target = _pickMidiTarget(inputs, null, 'web-midi::x', false);
+    assert.equal(target, null);
+});
+
+test('_pickMidiTarget: recovery with no preference at all still allows a first-hotplug grab', () => {
+    const { _pickMidiTarget } = load();
+    const inputs = [{ id: 'b', name: 'Device B', key: 'web-midi::b' }];
+    const target = _pickMidiTarget(inputs, null, null, false);
+    assert.equal(target.id, 'b');
+});

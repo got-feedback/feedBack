@@ -1362,6 +1362,41 @@
     };
 
     /* ======================================================================
+     *  Camera Director bridge resolver (pure — exported via createFactory.__test)
+     * ====================================================================== */
+
+    /**
+     * The active splitscreen API, defensive on the global-name rename in flight
+     * (feedBackSplitscreen is canonical; slopsmithSplitscreen is the legacy alias).
+     * @returns {object|null} the splitscreen API, or null when not present
+     */
+    function _ssApi() { return window.feedBackSplitscreen || window.slopsmithSplitscreen || null; }
+
+    /**
+     * Resolve the Camera Director camera for a canvas: this panel's camera under
+     * splitscreen, else the global, else null (Camera Director absent → stock
+     * framing). Throw-safe on panelIndexFor so a misbehaving splitscreen build
+     * can't break framing.
+     * @param {HTMLCanvasElement} canvas this renderer's highway canvas
+     * @param {object|null} ss the splitscreen API (see _ssApi)
+     * @param {object|null} panelsMap window.__h3dCamCtlPanels (per-panel cameras by index)
+     * @param {object|null} globalCam window.__h3dCamCtl (single global camera)
+     * @returns {object|null} the resolved free-camera bridge, or null
+     */
+    function _resolveFreeCam(canvas, ss, panelsMap, globalCam) {
+        if (panelsMap && ss && typeof ss.panelIndexFor === 'function') {
+            try {
+                const i = ss.panelIndexFor(canvas);
+                // Only a non-negative integer indexes the panel map — a non-int /
+                // negative / string index (or a prototype key) must not resolve an
+                // unintended/inherited property; fall through to the global then.
+                if (Number.isInteger(i) && i >= 0 && panelsMap[i]) return panelsMap[i];
+            } catch (e) { /* ignore */ }
+        }
+        return globalCam || null;
+    }
+
+    /* ======================================================================
      *  Renderer factory
      * ====================================================================== */
 
@@ -1414,7 +1449,7 @@
         let _sparkPts = null, _sparkPos = null, _sparkCol = null, _sparkVel = null, _sparkLife = null;
         let _fxLastWall = 0;          // wall clock for FX integration (sparks, pulse decay)
         let _kickPulse = 0;           // kick-hit camera-dip + floor-wash envelope
-        let _camBaseH = 0, _camBaseD = 0;  // positionCamera's unpulsed pose
+        let _camBaseH = null, _camBaseD = null;  // positionCamera's unpulsed pose (null until it first runs; applyCamera's guard depends on this)
         let _gaussTex = null;         // shared soft-falloff texture for flash quads
         let _laneFlashQuads = [];     // pooled additive quad per hand lane (z=0)
         let _kickFlashQuad = null;    // full-width flash quad for the kick bar
@@ -2651,6 +2686,48 @@
             cam.lookAt(0, 0, -AHEAD * TS * 0.45);
         }
 
+        /**
+         * Camera Director bridge for THIS panel — delegates to the pure, unit-
+         * tested _resolveFreeCam / _ssApi (resolver block above the factory).
+         * Reads the live globals: per-panel map __h3dCamCtlPanels → this panel's
+         * camera, else the global __h3dCamCtl, else null (stock framing).
+         * @param {HTMLCanvasElement} canvas this panel's highway canvas
+         * @returns {object|null} the resolved free-camera bridge, or null
+         */
+        function _freeCamFor(canvas) {
+            return _resolveFreeCam(canvas, _ssApi(), window.__h3dCamCtlPanels, window.__h3dCamCtl);
+        }
+
+        // Per-frame camera write: static base pose (positionCamera) + kick-pulse Y
+        // dip, then layer Camera Director free-cam offsets (dolly/height/orbit on
+        // the camera-from-target vector; pan/pitch on the look target). Runs every
+        // frame so a live free-cam drag is smooth; allocation-free; NaN-safe; a
+        // null/disabled bridge reproduces the stock static+pulse pose exactly.
+        function applyCamera() {
+            if (_camBaseH == null) return;               // before first positionCamera()
+            const _dip = (_kickPulse > 0.001) ? (0.8 * K * _kickPulse * fx.hitFx) : 0;
+            let _cx = 0, _cy = _camBaseH - _dip, _cz = _camBaseD;
+            let _lx = 0, _ly = 0, _lz = -AHEAD * TS * 0.45;
+            const _fc = _freeCamFor(highwayCanvas);
+            if (_fc && _fc.enabled) {
+                const _dm = Number.isFinite(_fc.distMul) ? _fc.distMul : 1;
+                const _hm = Number.isFinite(_fc.heightMul) ? _fc.heightMul : 1;
+                const _yaw = Number.isFinite(_fc.yaw) ? _fc.yaw : 0;
+                let _vx = _cx - _lx, _vy = _cy - _ly, _vz = _cz - _lz;
+                _vx *= _dm; _vy *= _dm; _vz *= _dm;   // dolly (zoom)
+                _vy *= _hm;                            // height
+                const _cyw = Math.cos(_yaw), _syw = Math.sin(_yaw);
+                const _rx = _vx * _cyw - _vz * _syw, _rz = _vx * _syw + _vz * _cyw; // orbit around Y
+                _cx = _lx + _rx; _cy = _ly + _vy; _cz = _lz + _rz;
+                const _px = Number.isFinite(_fc.panX) ? _fc.panX : 0;
+                const _py = Number.isFinite(_fc.panY) ? _fc.panY : 0;
+                const _pt = Number.isFinite(_fc.pitch) ? _fc.pitch : 0;
+                _lx += _px * K; _ly += (_pt + _py) * K;
+            }
+            cam.position.set(_cx, _cy, _cz);
+            cam.lookAt(_lx, _ly, _lz);
+        }
+
         function buildLanes(_floorW, floorD) {
             laneGroup = new T.Group();
             laneStripeMats = [];
@@ -3431,15 +3508,18 @@
                             BG_STYLES[_bgState._style].update(_bgState.s, bands, fdt, nowMs / 1000);
                         } catch (_) { /* visual-only */ }
                     }
+                    // Kick pulse decays each frame; it drives the floor flash and,
+                    // via applyCamera(), the camera Y dip.
                     if (_kickPulse > 0.001) {
                         _kickPulse *= Math.exp(-fdt * 7);
-                        cam.position.y = _camBaseH - 0.8 * K * _kickPulse * fx.hitFx;
                         if (_floorFlash) _floorFlash.material.opacity = 0.25 * _kickPulse * fx.hitFx;
                     } else if (_kickPulse !== 0) {
                         _kickPulse = 0;
-                        cam.position.y = _camBaseH;
                         if (_floorFlash) _floorFlash.material.opacity = 0;
                     }
+                    // Write the camera every frame: static base pose + kick dip +
+                    // Camera Director free-cam offsets (per-panel-aware).
+                    applyCamera();
                 }
                 // Approach highlight: raise each lane stripe toward its next
                 // note (accumulated by the rebuildNotes walk above).
@@ -3565,6 +3645,8 @@
     // vm-loaded with no DOM/WebGL; everything here must stay side-effect
     // free to call).
     window.slopsmithViz_drum_highway_3d.__test = {
+        _resolveFreeCam,
+        _ssApi,
         _variantForHit,
         _classifyTiming,
         readFxSettings,

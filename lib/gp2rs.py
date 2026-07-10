@@ -1114,7 +1114,7 @@ def _build_xml(
     ET.SubElement(root, "arrangement").text = arrangement
     ET.SubElement(root, "offset").text = f"{audio_offset:.3f}"
     ET.SubElement(root, "songLength").text = f"{song_length:.3f}"
-    ET.SubElement(root, "startBeat").text = f"{beats[0].time:.3f}" if beats else "0.000"
+    ET.SubElement(root, "startBeat").text = f"{beats[0].time:.6f}" if beats else "0.000000"
     ET.SubElement(root, "averageTempo").text = str(tempo)
     ET.SubElement(root, "artistName").text = artist
     ET.SubElement(root, "albumName").text = album
@@ -1139,10 +1139,17 @@ def _build_xml(
         tuning_el.set(f"string{i}", str(tuning[i] if i < len(tuning) else 0))
     ET.SubElement(root, "capo").text = "0"
 
-    # Ebeats
+    # Ebeats — write beat times at MICROSECOND (6-decimal) precision, not
+    # millisecond (3-decimal). The editor/timeline DERIVES per-bar BPM from beat
+    # spans (bpm = beats·60/span), which amplifies any rounding: at 3 decimals a
+    # constant-tempo GP (e.g. 140) shows a spurious ±0.05–0.7 BPM per-bar drift
+    # (worse for fast/odd meters) because most bar lengths don't land on a ms
+    # boundary. gp2rs computes these times exactly from the GP tempo map, so the
+    # only loss is this format string — 6 decimals makes the derived tempo match
+    # GP's authored value. (Everything else stays at :.3f; only beats drive tempo.)
     ebeats = ET.SubElement(root, "ebeats", count=str(len(beats)))
     for b in beats:
-        ET.SubElement(ebeats, "ebeat", time=f"{b.time:.3f}", measure=str(b.measure))
+        ET.SubElement(ebeats, "ebeat", time=f"{b.time:.6f}", measure=str(b.measure))
 
     # Sections
     sections_el = ET.SubElement(root, "sections", count=str(len(sections)))

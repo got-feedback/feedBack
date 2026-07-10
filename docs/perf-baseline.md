@@ -37,6 +37,31 @@ the hooks, they just need real songs in `DLC_DIR`.
 
 ## Results
 
+### R3c pre-lift baseline — 2026-07-10 (2D highway draw cost)
+
+The gate for the `highway.js` split. Captured on a seeded library (the 33 MB
+Arcturus feedpak) with the new `--song` mode, which measures **per-frame draw
+cost** — rAF callbacks are tagged via `highway.addDrawHook`, so only frames the
+highway actually painted count (the other ~half are cheap no-op loops that would
+otherwise mask a regression). Any `highway.js` change must re-run this on the
+same machine and stay within noise of these numbers.
+
+```bash
+node scripts/perf-baseline.mjs --base http://127.0.0.1:8300 \
+    --song "Arcturus - The Sham Mirrors - Kinetic.feedpak"
+```
+
+| run | draw frames | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|
+| 1 | 53/106 | 2.2 | 3.2 | 3.6 | 3.6 |
+| 2 | 50/100 | 2.2 | 2.9 | 3.2 | 3.2 |
+| 3 | 53/106 | 2.1 | 2.7 | 3.5 | 3.5 |
+
+**p50 ≈ 2.2 ms · p95 spread 2.7–3.2 ms** (3 runs × 10 s playback, headless
+chromium on the dev box). The `H`-container lift changes each closure-slot read
+to a `H.<slot>` property load; this is the number that proves it doesn't cost the
+hot loop.
+
 ### R0 baseline — 2026-07-08 (branch `feat/r0-plugin-module-rails`)
 
 > ⚠️ A quick capture (`--n 50 --soak 8`) against an **empty** library (no charts

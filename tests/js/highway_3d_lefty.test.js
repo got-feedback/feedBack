@@ -20,7 +20,7 @@ function src(file) {
 test('highway renderer bundles surface the core lefty flag', () => {
     assert.match(
         src(HIGHWAY_JS),
-        /lefty\s*[:=]\s*_lefty/,
+        /lefty\s*[:=]\s*hwState\._lefty/,
         'custom renderer bundles must include lefty: _lefty',
     );
 });

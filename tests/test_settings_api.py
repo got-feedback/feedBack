@@ -50,7 +50,7 @@ def client(tmp_path, monkeypatch):
     # Point CONFIG_DIR at a per-test temp path BEFORE server's
     # import-time side effects run. server.py reads CONFIG_DIR from the
     # environment at module load (line 35) and immediately constructs
-    # `meta_db = MetadataDB()` at module level, which calls
+    # `meta_db = MetadataDB(CONFIG_DIR)` at module level, which calls
     # CONFIG_DIR.mkdir(...) and opens a sqlite file — a plain
     # post-import monkeypatch on server.CONFIG_DIR wouldn't catch those
     # side effects, and the real user config dir would get written to.

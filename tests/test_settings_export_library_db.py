@@ -22,6 +22,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+# The startup DB swap lives with the DB layer it guards, not with server.py.
+# metadata_db reads no environment at import, so a plain module import is safe
+# alongside the env-patched `server_mod` fixture below.
+from metadata_db import _apply_pending_db_restore
+
 
 @pytest.fixture()
 def server_mod(tmp_path, monkeypatch):
@@ -219,7 +224,7 @@ def test_apply_pending_db_restore_swaps_and_clears_sidecars(server_mod, tmp_path
     (tmp_path / "web_library.db-shm").write_bytes(b"OLD-SHM")
     (tmp_path / "web_library.db.restore").write_bytes(new_db)
 
-    server_mod._apply_pending_db_restore(tmp_path)
+    _apply_pending_db_restore(tmp_path)
 
     assert main.read_bytes() == new_db                  # swapped in
     assert not (tmp_path / "web_library.db.restore").exists()
@@ -234,7 +239,7 @@ def test_apply_pending_db_restore_discards_corrupt_keeps_live(server_mod, tmp_pa
     main.write_bytes(b"LIVE-GOOD-DB")
     (tmp_path / "web_library.db.restore").write_bytes(b"SQLite format 3\x00" + b"\xff" * 64)
 
-    server_mod._apply_pending_db_restore(tmp_path)
+    _apply_pending_db_restore(tmp_path)
 
     assert main.read_bytes() == b"LIVE-GOOD-DB"          # live DB preserved
     assert not (tmp_path / "web_library.db.restore").exists()  # bad restore dropped
@@ -242,7 +247,7 @@ def test_apply_pending_db_restore_discards_corrupt_keeps_live(server_mod, tmp_pa
 
 def test_apply_pending_db_restore_noop_without_staging(server_mod, tmp_path):
     (tmp_path / "web_library.db").write_bytes(b"LIVE")
-    server_mod._apply_pending_db_restore(tmp_path)        # nothing staged
+    _apply_pending_db_restore(tmp_path)        # nothing staged
     assert (tmp_path / "web_library.db").read_bytes() == b"LIVE"
 
 
@@ -266,7 +271,7 @@ def test_full_db_backup_restore_round_trip(client, server_mod, tmp_path):
     # Simulate a restart: close the live conn, apply the staged restore,
     # reopen — the song is back.
     server_mod.meta_db.conn.close()
-    server_mod._apply_pending_db_restore(tmp_path)
+    _apply_pending_db_restore(tmp_path)
     conn = sqlite3.connect(str(tmp_path / "web_library.db"))
     try:
         rows = conn.execute(

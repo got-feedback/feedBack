@@ -548,9 +548,20 @@
             ctrl.ownsActx = !(fogAudio && fogAudio.ctx);
             ctrl.actx = (fogAudio && fogAudio.ctx) || new Ctx();
             if (ctrl.actx.state === 'suspended' && ctrl.actx.resume) ctrl.actx.resume().catch(() => {});
+            // Seed the DRAWING BUFFER (canvas.width/height) to the device-pixel
+            // render size and report that SAME size to Butterchurn. Its on-screen
+            // pass viewports to the reported size but never sizes the output canvas
+            // itself — leaving the buffer at the 300x150 default blits the whole
+            // visualizer into a corner that CSS then stretches across the highway.
+            // pixelRatio:1 because DPR is now folded into the reported size, so
+            // buffer == viewport == internal texsize (no double-counting).
+            const _bcRatio0 = Math.min(window.devicePixelRatio || 1, 1.5);
+            const _bcW0 = Math.max(1, Math.round((sz.w || 1280) * _bcRatio0));
+            const _bcH0 = Math.max(1, Math.round((sz.h || 720) * _bcRatio0));
+            canvas.width = _bcW0; canvas.height = _bcH0;
             ctrl.viz = bc.createVisualizer(ctrl.actx, canvas, {
-                width: sz.w || 1280, height: sz.h || 720,
-                pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5), textureRatio: 1,
+                width: _bcW0, height: _bcH0,
+                pixelRatio: 1, textureRatio: 1,
             });
             if (_bcIsDesktop()) {
                 try {
@@ -584,6 +595,27 @@
             ctrl.actx = null; ctrl.viz = null; ctrl.dead = true;
             _bcControllers.delete(ctrl);
         });
+        // Size the Butterchurn output: set the canvas DRAWING BUFFER to the
+        // device-pixel render size AND report that same size, so buffer ==
+        // on-screen viewport == full fill. Butterchurn never sizes the output
+        // canvas itself; the previous code set only CSS size, leaving the buffer
+        // at the 300x150 default -> the viz showed a stretched lower-left corner
+        // (worse the larger the panel). Ratio reuses the highway's DPR budget.
+        function _bcApplySize(cssW, cssH) {
+            if (!(cssW > 0 && cssH > 0)) return;
+            ctrl.lastW = cssW; ctrl.lastH = cssH;
+            const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+            const bw = Math.max(1, Math.round(cssW * ratio)), bh = Math.max(1, Math.round(cssH * ratio));
+            if (canvas.width !== bw) canvas.width = bw;
+            if (canvas.height !== bh) canvas.height = bh;
+            const wpx = cssW + 'px', hpx = cssH + 'px';
+            // Confine ALL layers to exactly the highway-canvas rect so the opaque
+            // backdrop can't bleed over the transport bar above the highway.
+            [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => {
+                if (el) { el.style.width = wpx; el.style.height = hpx; el.style.right = 'auto'; el.style.bottom = 'auto'; }
+            });
+            if (ctrl.viz && ctrl.viz.setRendererSize) { try { ctrl.viz.setRendererSize(bw, bh); } catch (e) {} }
+        }
         return {
             applySettings() { ctrl.applySettings(); },
             dead() { return ctrl.dead; },
@@ -612,18 +644,11 @@
                 if (!ctrl.viz || !s.enabled) return; // skip GPU work when the bg is off
                 const sz = sizeProvider && sizeProvider();
                 if (sz && sz.w > 0 && sz.h > 0 && (sz.w !== ctrl.lastW || sz.h !== ctrl.lastH)) {
-                    ctrl.lastW = sz.w; ctrl.lastH = sz.h;
-                    const wpx = sz.w + 'px', hpx = sz.h + 'px';
-                    // Confine ALL layers to exactly the highway-canvas rect so the opaque
-                    // backdrop can't bleed over the transport bar above the highway.
-                    [ctrl.canvas, ctrl.backdrop, ctrl.scrim, ctrl.tint].forEach((el) => {
-                        if (el) { el.style.width = wpx; el.style.height = hpx; el.style.right = 'auto'; el.style.bottom = 'auto'; }
-                    });
-                    try { ctrl.viz.setRendererSize(sz.w, sz.h); } catch (e) {}
+                    _bcApplySize(sz.w, sz.h);
                 }
                 try { ctrl.viz.render(); } catch (e) {}
             },
-            resize(w, h) { if (ctrl.viz && ctrl.viz.setRendererSize) { try { ctrl.viz.setRendererSize(w, h); } catch (e) {} ctrl.lastW = w; ctrl.lastH = h; } },
+            resize(w, h) { _bcApplySize(w, h); },
             destroy() {
                 ctrl.dead = true;
                 _bcControllers.delete(ctrl);

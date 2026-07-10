@@ -6813,6 +6813,14 @@ async function changeArrangement(index) {
         // the timer, the song:play listener, and the overlay node.
         hideSongCreditsOverlay();
         window.feedBack.emit('song:arrangement-changed', { filename: currentFilename, arrangement: index });
+        // A manual arrangement switch (the only caller of changeArrangement)
+        // is a strong signal of which chart the user wants — pin it the same
+        // way the ☆ button does so the next song opens on the same part
+        // instead of falling back to the most-notes heuristic (feedBack
+        // resetbug). Fire-and-forget: don't block the arrangement switch on
+        // the settings POST, and swallow network errors since this is a
+        // best-effort persist, not the primary action.
+        pinCurrentArrangementDefault().catch(() => {});
         const wasPlaying = isPlaying;
         const time = _audioTime();
         if (isPlaying) {

@@ -34,9 +34,9 @@ test('_ensureChordRenderCache keys off src, _inverted, AND chordTemplates', () =
     const neqEither = (a, b) => new RegExp(
         `\\b${a}\\b\\s*!==\\s*\\b${b}\\b|\\b${b}\\b\\s*!==\\s*\\b${a}\\b`
     );
-    assert.match(src, eqEither('_chordRenderCacheSrc', 'src'), 'cache must key on src');
-    assert.match(src, eqEither('_chordRenderCacheInverted', '_inverted'), 'cache must key on _inverted');
-    assert.match(src, neqEither('_chordRenderCacheTemplates', 'chordTemplates'),
+    assert.match(src, eqEither('hwState\\._chordRenderCacheSrc', 'src'), 'cache must key on src');
+    assert.match(src, eqEither('hwState\\._chordRenderCacheInverted', 'hwState\\._inverted'), 'cache must key on _inverted');
+    assert.match(src, neqEither('hwState\\._chordRenderCacheTemplates', 'hwState\\.chordTemplates'),
         'cache must key on chordTemplates (detected via !== for change-flag)');
 });
 
@@ -50,9 +50,9 @@ test('chordTemplates change resets fretline preview and frame-mismatch warner', 
     // block inside the `if (templatesChanged) { … }` branch (e.g. an
     // inner conditional reset) doesn't break the match by introducing
     // a `}` before the symbol we're checking for.
-    assert.match(src, /if\s*\(\s*templatesChanged\s*\)\s*\{[\s\S]*?_chordFretLineNotes\s*=\s*\[\][\s\S]*?\}/,
+    assert.match(src, /if\s*\(\s*templatesChanged\s*\)\s*\{[\s\S]*?hwState\._chordFretLineNotes\s*=\s*\[\][\s\S]*?\}/,
         'templatesChanged branch must reset _chordFretLineNotes');
-    assert.match(src, /if\s*\(\s*templatesChanged\s*\)\s*\{[\s\S]*?_lastChordOnFretLine\s*=\s*null[\s\S]*?\}/,
+    assert.match(src, /if\s*\(\s*templatesChanged\s*\)\s*\{[\s\S]*?hwState\._lastChordOnFretLine\s*=\s*null[\s\S]*?\}/,
         'templatesChanged branch must null _lastChordOnFretLine');
     assert.match(src, /if\s*\(\s*templatesChanged\s*\)\s*\{[\s\S]*?_frameMismatchWarned\.clear\(\)[\s\S]*?\}/,
         'templatesChanged branch must clear _frameMismatchWarned');

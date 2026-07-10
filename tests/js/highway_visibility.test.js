@@ -32,14 +32,14 @@ function extractBlock(src, signature) {
 
 test('highway declares visibility state (_visibleOverride + _lastVisible)', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
-    assert.match(src, /let\s+_visibleOverride\s*=\s*null/, 'missing _visibleOverride (override sentinel)');
-    assert.match(src, /let\s+_lastVisible\s*=\s*null/, 'missing _lastVisible (last-emitted state)');
+    assert.match(src, /hwState\._visibleOverride\s*=\s*null/, 'missing _visibleOverride (override sentinel)');
+    assert.match(src, /hwState\._lastVisible\s*=\s*null/, 'missing _lastVisible (last-emitted state)');
 });
 
 test('_isHighwayVisible respects _visibleOverride and falls back to offsetParent', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     const fn = extractBlock(src, 'function _isHighwayVisible()');
-    assert.match(fn, /_visibleOverride\s*!==\s*null/, 'must check the override before the DOM');
+    assert.match(fn, /hwState\._visibleOverride\s*!==\s*null/, 'must check the override before the DOM');
     assert.match(fn, /canvas\.offsetParent\s*!==\s*null/, 'DOM fallback must use offsetParent !== null');
 });
 
@@ -47,9 +47,9 @@ test('_emitVisibilityIfChanged is transition-only (no per-frame spam)', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     const fn = extractBlock(src, 'function _emitVisibilityIfChanged()');
     // Must short-circuit when the current state equals the cached one.
-    assert.match(fn, /v\s*===\s*_lastVisible/, 'must compare current vs _lastVisible and bail when equal');
+    assert.match(fn, /v\s*===\s*hwState\._lastVisible/, 'must compare current vs _lastVisible and bail when equal');
     // Must update the cache and emit the event with the documented payload shape.
-    assert.match(fn, /_lastVisible\s*=\s*v/, 'must update _lastVisible after a transition');
+    assert.match(fn, /hwState\._lastVisible\s*=\s*v/, 'must update _lastVisible after a transition');
     assert.match(
         fn,
         /window\.feedBack\.emit\(\s*['"]highway:visibility['"][\s\S]*?visible:\s*v[\s\S]*?canvas/,
@@ -66,7 +66,7 @@ test('rAF draw() loop calls _emitVisibilityIfChanged and skips when hidden', () 
     // transitions during loading/reconnect windows still propagate.
     const emitIdx = fn.search(/_emitVisibilityIfChanged\(\)/);
     const skipIdx = fn.search(/if\s*\(\s*!_rendering\s*\)\s*return/);
-    const readyIdx = fn.search(/if\s*\(\s*!ready\s*\)\s*return/);
+    const readyIdx = fn.search(/if\s*\(\s*!hwState\.ready\s*\)\s*return/);
     const drawIdx = fn.search(/_renderer\.draw\(/);
     assert.ok(emitIdx !== -1 && skipIdx !== -1 && readyIdx !== -1 && drawIdx !== -1, 'all four landmarks must be present');
     assert.ok(emitIdx < readyIdx, 'emit must run BEFORE the !ready gate (transitions during loading must still fire)');
@@ -84,19 +84,19 @@ test('draw() keeps an active custom renderer painting through an override-hide (
     const src = fs.readFileSync(highwayJs, 'utf8');
     const fn = extractBlock(src, 'function draw()');
     // Single render decision drives both the perf-HUD reset and the gate.
-    assert.match(fn, /let\s+_rendering\s*=\s*_lastVisible/, 'must derive a single _rendering decision from _lastVisible');
+    assert.match(fn, /let\s+_rendering\s*=\s*hwState\._lastVisible/, 'must derive a single _rendering decision from _lastVisible');
     // Assert the exact boolean RELATIONSHIP, not just the tokens (CodeRabbit):
     // the exemption must AND together override-hide, an active custom renderer,
     // and the canvas still in layout. A weakened guard (e.g. `||`, or a dropped
     // offsetParent clause) must fail this — that's the regression being fixed.
     assert.match(
         fn,
-        /!_rendering\s*&&\s*_visibleOverride\s*===\s*false\s*&&\s*_renderer\s*!==\s*_defaultRenderer\s*&&\s*canvas\s*&&\s*canvas\.offsetParent\s*!==\s*null/,
+        /!_rendering\s*&&\s*hwState\._visibleOverride\s*===\s*false\s*&&\s*hwState\._renderer\s*!==\s*_defaultRenderer\s*&&\s*hwState\.canvas\s*&&\s*hwState\.canvas\.offsetParent\s*!==\s*null/,
         'exemption must AND override-hide + active custom renderer + canvas-in-layout (genuine off-screen still pauses, #246)',
     );
     // Both the HUD reset and the gate key off _rendering, not _lastVisible,
     // so the HUD doesn\'t churn while the custom renderer is actually drawing.
-    assert.match(fn, /_perfHud\s*&&\s*\(\s*!_rendering/, 'perf-HUD reset must key off _rendering, not _lastVisible');
+    assert.match(fn, /hwState\._perfHud\s*&&\s*\(\s*!_rendering/, 'perf-HUD reset must key off _rendering, not _lastVisible');
     assert.match(fn, /if\s*\(\s*!_rendering\s*\)\s*return/, 'the draw gate must bail on !_rendering');
 });
 

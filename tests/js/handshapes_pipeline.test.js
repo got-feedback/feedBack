@@ -33,7 +33,7 @@ test('handshapes WS case accumulates incoming chunks into handShapes', () => {
     const block = getCaseBlock(src, 'handshapes');
     assert.match(
         block,
-        /handShapes\s*=\s*handShapes\.concat\(\s*msg\.data\s*\)/,
+        /hwState\.handShapes\s*=\s*hwState\.handShapes\.concat\(\s*msg\.data\s*\)/,
         'handshapes case must concat msg.data into the handShapes accumulator',
     );
 });
@@ -62,7 +62,7 @@ test('bundle exposes handShapes to renderers with flat-list fallback', () => {
     const src = fs.readFileSync(HIGHWAY_JS, 'utf8');
     assert.match(
         src,
-        /\bhandShapes\s*[:=]\s*\([^)]*_filteredHandShapes[^)]*\)\s*\?\s*_filteredHandShapes\s*:\s*handShapes\b/,
+        /\bhandShapes\s*[:=]\s*\([^)]*hwState\._filteredHandShapes[^)]*\)\s*\?\s*hwState\._filteredHandShapes\s*:\s*hwState\.handShapes\b/,
         'bundle must expose handShapes with the _filteredHandShapes-vs-handShapes ternary fallback',
     );
 });

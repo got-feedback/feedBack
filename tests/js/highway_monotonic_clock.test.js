@@ -35,7 +35,10 @@ function extractBlock(src, signature) {
 // + getTime methods so behavioral tests can exercise the real
 // implementation in isolation.
 function buildClockSandbox(perfNowImpl) {
-    const sandbox = {
+    // The lifted per-instance state now lives on `hwState` (the R3c H lift);
+    // the extracted setTime/getTime bodies reference hwState.<slot>. The const
+    // _CHART_MAX_INTERP_MS was NOT lifted, so it stays a top-level global here.
+    const hwState = {
         chartTime: 0,
         currentTime: 0,
         avOffsetSec: 0,
@@ -50,6 +53,9 @@ function buildClockSandbox(perfNowImpl) {
         _chartAnchorPerfNow: NaN,
         _chartLastAdvanceAt: 0,
         _chartObservedRate: 1,
+    };
+    const sandbox = {
+        hwState,
         _CHART_MAX_INTERP_MS: 100,
         performance: { now: perfNowImpl },
     };
@@ -72,10 +78,10 @@ test('highway declares chart anchor + stall-detect + rate state', () => {
     // particular MUST start as NaN, not 0, otherwise setTime(0) on the
     // very first 60 Hz tick fails the `t !== _chartAnchorAudioT` check
     // and never re-anchors, leaving the clock uninitialized.
-    assert.match(src, /let\s+_chartAnchorAudioT\s*=\s*NaN/, 'missing _chartAnchorAudioT (NaN sentinel)');
-    assert.match(src, /let\s+_chartAnchorPerfNow\s*=\s*NaN/, 'missing _chartAnchorPerfNow (NaN sentinel)');
-    assert.match(src, /let\s+_chartLastAdvanceAt\s*=\s*0/, 'missing _chartLastAdvanceAt (pause detection)');
-    assert.match(src, /let\s+_chartObservedRate\s*=\s*1/, 'missing _chartObservedRate (playback rate awareness)');
+    assert.match(src, /hwState\._chartAnchorAudioT\s*=\s*NaN/, 'missing _chartAnchorAudioT (NaN sentinel)');
+    assert.match(src, /hwState\._chartAnchorPerfNow\s*=\s*NaN/, 'missing _chartAnchorPerfNow (NaN sentinel)');
+    assert.match(src, /hwState\._chartLastAdvanceAt\s*=\s*0/, 'missing _chartLastAdvanceAt (pause detection)');
+    assert.match(src, /hwState\._chartObservedRate\s*=\s*1/, 'missing _chartObservedRate (playback rate awareness)');
     assert.match(src, /const\s+_CHART_MAX_INTERP_MS\s*=\s*100/, 'missing _CHART_MAX_INTERP_MS cap');
 });
 
@@ -86,7 +92,7 @@ test('getTime scales interpolation by _chartObservedRate (speed-slider safe)', (
     const slice = m[0];
     assert.match(
         slice,
-        /_chartObservedRate\s*\*\s*elapsedMs/,
+        /hwState\._chartObservedRate\s*\*\s*elapsedMs/,
         'getTime must scale interpolation by observed rate so audio.playbackRate != 1 stays accurate',
     );
 });
@@ -100,12 +106,12 @@ test('setTime re-anchors and updates _chartLastAdvanceAt only when t actually ch
     // The implementation may capture performance.now() into a local
     // (e.g. newPerfNow) and assign that to both fields; accept either
     // direct or via-local writes.
-    const m = src.match(/if\s*\(\s*t\s*!==\s*_chartAnchorAudioT\s*\)\s*\{[\s\S]+?\}\s*\},/);
+    const m = src.match(/if\s*\(\s*t\s*!==\s*hwState\._chartAnchorAudioT\s*\)\s*\{[\s\S]+?\}\s*\},/);
     assert.ok(m, 'if (t !== _chartAnchorAudioT) block not found inside setTime');
     const block = m[0];
-    assert.match(block, /_chartAnchorAudioT\s*=\s*t/, 'must assign _chartAnchorAudioT = t');
-    assert.match(block, /_chartAnchorPerfNow\s*=/, 'must assign _chartAnchorPerfNow');
-    assert.match(block, /_chartLastAdvanceAt\s*=/, 'must assign _chartLastAdvanceAt');
+    assert.match(block, /hwState\._chartAnchorAudioT\s*=\s*t/, 'must assign _chartAnchorAudioT = t');
+    assert.match(block, /hwState\._chartAnchorPerfNow\s*=/, 'must assign _chartAnchorPerfNow');
+    assert.match(block, /hwState\._chartLastAdvanceAt\s*=/, 'must assign _chartLastAdvanceAt');
 });
 
 test('getTime falls back to chartTime when audio has stalled (paused)', () => {
@@ -119,7 +125,7 @@ test('getTime falls back to chartTime when audio has stalled (paused)', () => {
     // Must check stall-since-last-advance against the cap.
     assert.match(
         slice,
-        /nowP\s*-\s*_chartLastAdvanceAt\s*>\s*_CHART_MAX_INTERP_MS/,
+        /nowP\s*-\s*hwState\._chartLastAdvanceAt\s*>\s*_CHART_MAX_INTERP_MS/,
         'getTime must short-circuit when audio has stalled past the cap',
     );
     // Must interpolate when active.
@@ -127,7 +133,7 @@ test('getTime falls back to chartTime when audio has stalled (paused)', () => {
     // Rate-scaled formula: _chartAnchorAudioT + (_chartObservedRate * elapsedMs) / 1000
     assert.match(
         slice,
-        /_chartAnchorAudioT\s*\+\s*\(\s*_chartObservedRate\s*\*\s*elapsedMs\s*\)\s*\/\s*1000/,
+        /_chartAnchorAudioT\s*\+\s*\(\s*hwState\._chartObservedRate\s*\*\s*elapsedMs\s*\)\s*\/\s*1000/,
         'getTime must compute anchor + rate-scaled elapsed during play',
     );
 });
@@ -138,10 +144,10 @@ test('api.stop() clears the chart anchor state so re-init starts fresh', () => {
     // the actual stop() body — a fixed-size slice would falsely match
     // resets that landed in an adjacent method.
     const stopBlock = extractBlock(src, 'stop() {');
-    assert.match(stopBlock, /_chartAnchorAudioT\s*=\s*NaN/, 'stop() must reset _chartAnchorAudioT to the NaN sentinel');
-    assert.match(stopBlock, /_chartAnchorPerfNow\s*=\s*NaN/, 'stop() must reset _chartAnchorPerfNow to the NaN sentinel');
-    assert.match(stopBlock, /_chartLastAdvanceAt\s*=\s*0/, 'stop() must reset _chartLastAdvanceAt');
-    assert.match(stopBlock, /_chartObservedRate\s*=\s*1/, 'stop() must reset _chartObservedRate to 1x');
+    assert.match(stopBlock, /hwState\._chartAnchorAudioT\s*=\s*NaN/, 'stop() must reset _chartAnchorAudioT to the NaN sentinel');
+    assert.match(stopBlock, /hwState\._chartAnchorPerfNow\s*=\s*NaN/, 'stop() must reset _chartAnchorPerfNow to the NaN sentinel');
+    assert.match(stopBlock, /hwState\._chartLastAdvanceAt\s*=\s*0/, 'stop() must reset _chartLastAdvanceAt');
+    assert.match(stopBlock, /hwState\._chartObservedRate\s*=\s*1/, 'stop() must reset _chartObservedRate to 1x');
 });
 
 // ── Behavioral tests (run extracted setTime/getTime in vm sandbox) ──────
@@ -195,12 +201,12 @@ test('behavior: seek discontinuity resets observed rate to 1x', () => {
     sb.setTime(10);
     now = 50;
     sb.setTime(10.025); // observed rate ≈ 0.5
-    assert.ok(Math.abs(sb._chartObservedRate - 0.5) < 0.001, `prior segment must measure ≈0.5, got ${sb._chartObservedRate}`);
+    assert.ok(Math.abs(sb.hwState._chartObservedRate - 0.5) < 0.001, `prior segment must measure ≈0.5, got ${sb.hwState._chartObservedRate}`);
     // Seek: large t jump in same perf delta — observed-rate clamp
     // rejects this segment, resets to 1.
     now = 70;
     sb.setTime(120); // dPerf=20ms, dT=110s → observed=5500 (out of clamp)
-    assert.equal(sb._chartObservedRate, 1, 'seek must reset rate to 1x');
+    assert.equal(sb.hwState._chartObservedRate, 1, 'seek must reset rate to 1x');
 });
 
 test('behavior: getTime caps interpolation at _CHART_MAX_INTERP_MS', () => {
@@ -225,8 +231,8 @@ test('behavior: setTime(0) on first tick anchors correctly (boot edge case)', ()
     const sb = buildClockSandbox(() => now);
     sb.setTime(0);
     // Anchor must now be initialized.
-    assert.equal(sb._chartAnchorAudioT, 0, 'setTime(0) on first tick must set anchor.audioT');
-    assert.equal(sb._chartAnchorPerfNow, 16, 'setTime(0) on first tick must set anchor.perfNow');
+    assert.equal(sb.hwState._chartAnchorAudioT, 0, 'setTime(0) on first tick must set anchor.audioT');
+    assert.equal(sb.hwState._chartAnchorPerfNow, 16, 'setTime(0) on first tick must set anchor.perfNow');
     // getTime should return a finite value, not NaN.
     const t = sb.getTime();
     assert.ok(!Number.isNaN(t), `getTime must not return NaN after setTime(0); got ${t}`);
@@ -252,10 +258,10 @@ test('behavior: long anchor gap resets observed rate to 1x', () => {
     sb.setTime(10);
     now = 50;
     sb.setTime(10.025); // observed rate ≈ 0.5
-    assert.ok(Math.abs(sb._chartObservedRate - 0.5) < 0.001, 'first segment measured 0.5x');
+    assert.ok(Math.abs(sb.hwState._chartObservedRate - 0.5) < 0.001, 'first segment measured 0.5x');
     // Long gap (1 second) before next setTime — out of the dPerf < 0.5
     // window, so the rate must reset to 1.
     now = 1100;
     sb.setTime(10.5);
-    assert.equal(sb._chartObservedRate, 1, 'long anchor gap must reset rate to 1x');
+    assert.equal(sb.hwState._chartObservedRate, 1, 'long anchor gap must reset rate to 1x');
 });

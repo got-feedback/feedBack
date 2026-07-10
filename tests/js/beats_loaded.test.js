@@ -42,7 +42,7 @@ test('beats:loaded emit is wired into the WS beats case', () => {
     );
     assert.match(
         block,
-        /count:\s*beats\.length/,
+        /count:\s*hwState\.beats\.length/,
         'beats:loaded payload must include count = beats.length',
     );
 });

@@ -22,7 +22,7 @@ test('getPhrases returns null when _phrases is falsy or empty', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     assert.match(
         src,
-        /getPhrases\s*\(\s*\)\s*\{[^}]*!\s*_phrases[^}]*return null/,
+        /getPhrases\s*\(\s*\)\s*\{[^}]*!\s*hwState\._phrases[^}]*return null/,
         'getPhrases must return null when no phrase data is available',
     );
 });

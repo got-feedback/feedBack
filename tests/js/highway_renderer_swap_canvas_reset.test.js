@@ -44,9 +44,9 @@ test('_setRenderer captures the outgoing renderer before overwriting it', () => 
     // prev must be captured BEFORE _destroyCurrentIfInited and the
     // `_renderer = next` assignment, otherwise the swap detection below
     // would always compare next against itself.
-    const prevIdx = fn.search(/const\s+prev\s*=\s*_renderer/);
+    const prevIdx = fn.search(/const\s+prev\s*=\s*hwState\._renderer/);
     const destroyIdx = fn.search(/_destroyCurrentIfInited\(\)/);
-    const assignIdx = fn.search(/^\s*_renderer\s*=\s*next\s*;/m);
+    const assignIdx = fn.search(/^\s*hwState\._renderer\s*=\s*next\s*;/m);
     assert.ok(prevIdx !== -1, 'must capture `const prev = _renderer`');
     assert.ok(destroyIdx !== -1, 'must call _destroyCurrentIfInited');
     assert.ok(assignIdx !== -1, 'must assign `_renderer = next`');
@@ -67,7 +67,7 @@ test('_setRenderer replaces the canvas on a context-type change OR a viz change'
     );
     assert.match(
         fn,
-        /if\s*\(\s*nextType\s*!==\s*_currentCanvasContextType\s*\|\|\s*_vizChanged\s*\)\s*\{\s*_replaceCanvas\(nextType\)/,
+        /if\s*\(\s*nextType\s*!==\s*hwState\._currentCanvasContextType\s*\|\|\s*_vizChanged\s*\)\s*\{\s*_replaceCanvas\(nextType\)/,
         'replace guard must be `nextType !== _currentCanvasContextType || _vizChanged`',
     );
 });

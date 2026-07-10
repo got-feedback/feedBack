@@ -32,7 +32,7 @@ function extractBlock(src, signature) {
 test('highway declares the paused-render throttle state', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     assert.match(src, /const\s+_PAUSED_FRAME_INTERVAL_MS\s*=\s*\d+/, 'missing _PAUSED_FRAME_INTERVAL_MS cap');
-    assert.match(src, /let\s+_lastPausedDrawAt\s*=\s*0/, 'missing _lastPausedDrawAt accumulator');
+    assert.match(src, /hwState\._lastPausedDrawAt\s*=\s*0/, 'missing _lastPausedDrawAt accumulator');
 });
 
 test('draw() throttles full renders while the audio clock is stalled', () => {
@@ -42,7 +42,7 @@ test('draw() throttles full renders while the audio clock is stalled', () => {
     assert.match(fn, /_chartLastAdvanceAt/, 'throttle must key off _chartLastAdvanceAt (the advance timestamp)');
     assert.match(fn, /_CHART_MAX_INTERP_MS/, 'throttle must reuse the _CHART_MAX_INTERP_MS pause threshold');
     assert.match(fn, /_PAUSED_FRAME_INTERVAL_MS/, 'throttle must cap paused draws to _PAUSED_FRAME_INTERVAL_MS');
-    assert.match(fn, /_lastPausedDrawAt\s*=\s*_nowP/, 'throttle must record the last paused draw time');
+    assert.match(fn, /hwState\._lastPausedDrawAt\s*=\s*_nowP/, 'throttle must record the last paused draw time');
 });
 
 test('throttle runs after the ready gate, before bundle/draw', () => {
@@ -51,7 +51,7 @@ test('throttle runs after the ready gate, before bundle/draw', () => {
     // Regex landmarks (not exact-string indexOf) so harmless spacing /
     // semicolon changes don't break the ordering guard — matches the
     // search-based style of the other highway source-guard tests.
-    const readyIdx = fn.search(/if\s*\(\s*!ready\s*\)\s*return;/);
+    const readyIdx = fn.search(/if\s*\(\s*!hwState\.ready\s*\)\s*return;/);
     const throttleIdx = fn.search(/_PAUSED_FRAME_INTERVAL_MS/);
     const drawIdx = fn.search(/_renderer\.draw\s*\(/);
     assert.ok(readyIdx !== -1, 'ready gate not found');

@@ -34,16 +34,16 @@ function extractBlock(src, signature) {
 
 test('highway declares the note-state provider slot', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
-    assert.match(src, /let\s+_noteStateProvider\s*=\s*null/, 'missing _noteStateProvider (provider slot, null = none)');
+    assert.match(src, /hwState\._noteStateProvider\s*=\s*null/, 'missing _noteStateProvider (provider slot, null = none)');
 });
 
 test('public API exposes setNoteStateProvider / getNoteStateProvider / getNoteState / isDefaultRenderer', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     assert.match(src, /setNoteStateProvider\s*\(\s*fn\s*\)\s*\{[^}]*_noteStateProvider\s*=/, 'setNoteStateProvider must assign _noteStateProvider');
     assert.match(src, /setNoteStateProvider\s*\(\s*fn\s*\)\s*\{[^}]*typeof\s+fn\s*===\s*['"]function['"][^}]*:\s*null/, 'setNoteStateProvider must coerce non-functions (incl. null) to null');
-    assert.match(src, /getNoteStateProvider\s*\(\s*\)\s*\{\s*return\s+_noteStateProvider/, 'getNoteStateProvider must return the slot');
+    assert.match(src, /getNoteStateProvider\s*\(\s*\)\s*\{\s*return\s+hwState\._noteStateProvider/, 'getNoteStateProvider must return the slot');
     assert.match(src, /getNoteState\s*\(\s*note\s*,\s*chartTime\s*\)\s*\{\s*return\s+_noteState\s*\(/, 'getNoteState must delegate to _noteState');
-    assert.match(src, /isDefaultRenderer\s*\(\s*\)\s*\{\s*return\s+_renderer\s*===\s*_defaultRenderer\s*\|\|\s*_renderer\s*==\s*null/, 'isDefaultRenderer must be (_renderer === _defaultRenderer || _renderer == null)');
+    assert.match(src, /isDefaultRenderer\s*\(\s*\)\s*\{\s*return\s+hwState\._renderer\s*===\s*_defaultRenderer\s*\|\|\s*hwState\._renderer\s*==\s*null/, 'isDefaultRenderer must be (_renderer === _defaultRenderer || _renderer == null)');
 });
 
 test('_makeBundle exposes getNoteState (stable reference, no per-frame alloc)', () => {
@@ -72,7 +72,7 @@ test('_makeBundle exposes getNoteStateProvider as a stable reference (feedBack#2
     // slot, so renderers see a live "is a provider registered?" view.
     assert.match(
         src,
-        /function\s+_getNoteStateProvider\s*\(\s*\)\s*\{\s*return\s+_noteStateProvider\s*;?\s*\}/,
+        /function\s+_getNoteStateProvider\s*\(\s*\)\s*\{\s*return\s+hwState\._noteStateProvider\s*;?\s*\}/,
         '_getNoteStateProvider must be defined as a stable named function returning _noteStateProvider'
     );
 });
@@ -80,7 +80,7 @@ test('_makeBundle exposes getNoteStateProvider as a stable reference (feedBack#2
 test('_noteState normalizes provider output as documented', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     const fn = extractBlock(src, 'function _noteState(note, chartTime)');
-    assert.match(fn, /if\s*\(\s*!_noteStateProvider\s*\)\s*return\s+null/, 'must short-circuit when no provider is registered');
+    assert.match(fn, /if\s*\(\s*!hwState\._noteStateProvider\s*\)\s*return\s+null/, 'must short-circuit when no provider is registered');
     assert.match(fn, /try\s*\{[\s\S]*_noteStateProvider\s*\([\s\S]*catch[\s\S]*return\s+null/, 'must call the provider inside try/catch and return null on throw');
     assert.match(fn, /state\s*!==\s*['"]hit['"]\s*&&\s*state\s*!==\s*['"]active['"]\s*&&\s*state\s*!==\s*['"]miss['"]/, 'must reject states other than hit/active/miss');
     assert.match(fn, /Math\.max\(\s*0\s*,\s*Math\.min\(\s*1\s*,\s*raw\.alpha\s*\)\s*\)/, 'must clamp alpha to [0,1]');

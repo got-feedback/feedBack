@@ -3,24 +3,27 @@
  * Receives note data via WebSocket, renders on requestAnimationFrame.
  */
 function createHighway() {
-    let canvas, ctx, ws;
+  // R3c: per-instance mutable state in one object, so extracted renderer/ws
+  // modules can close over it as a factory arg without cross-panel sharing.
+  const hwState = {};
+    
     // Promise chain for serializing async ws.onmessage handlers —
     // reset on each connect() so reconnections start a fresh chain.
-    let _msgChain = Promise.resolve();
+    hwState._msgChain = Promise.resolve();
     // Monotonically-increasing connection generation counter.
     // Incremented on every connect() so async handlers that survive a
     // reconnect can detect they are stale and bail out before mutating
     // shared state.
-    let _wsGen = 0;
+    hwState._wsGen = 0;
     // The audio-element accessor below is polled by plugins, so record its
     // legacy bridge hit only once per highway instead of on every call —
     // otherwise a per-frame poller floods playback:bridge-hit events and
     // diagnostics.
-    let _audioElementBridgeRecorded = false;
+    hwState._audioElementBridgeRecorded = false;
     // Pending JUCE routing promise for the current connection's song_info.
     // The 'ready' handler awaits this so _juceMode is settled before
     // _onReady / song:ready fire, without blocking note/chord processing.
-    let _juceRoutingPromise = Promise.resolve();
+    hwState._juceRoutingPromise = Promise.resolve();
 
     function _audioSession() {
         return window.feedBack && window.feedBack.audioSession;
@@ -70,10 +73,10 @@ function createHighway() {
     //                 for audio-output pipeline latency without plugins having
     //                 to care about the offset.
     // avOffsetSec is set by setAvOffset(ms); default 0 means old behavior.
-    let chartTime = 0;
-    let currentTime = 0;
-    let avOffsetSec = 0;
-    let songOffset = 0.0;  // per-song chart offset (loose-folder format only)
+    hwState.chartTime = 0;
+    hwState.currentTime = 0;
+    hwState.avOffsetSec = 0;
+    hwState.songOffset = 0.0;  // per-song chart offset (loose-folder format only)
     // Monotonic getTime support: between setTime() calls, getTime()
     // interpolates forward using performance.now() so plugins observe a
     // smooth sub-frame clock instead of the coarse step-quantization
@@ -91,8 +94,8 @@ function createHighway() {
     // initial 60 Hz tick. Plain 0 would compare equal to setTime(0) and
     // skip the branch, leaving _chartAnchorPerfNow uninitialized and
     // causing getTime() to return NaN.
-    let _chartAnchorAudioT = NaN;
-    let _chartAnchorPerfNow = NaN;
+    hwState._chartAnchorAudioT = NaN;
+    hwState._chartAnchorPerfNow = NaN;
     // Pause detection: the 60Hz tick in app.js keeps calling setTime()
     // even while paused (with a stalled audio clock). Track when t last
     // ADVANCED (not just when setTime was called) — if it's been still
@@ -100,14 +103,14 @@ function createHighway() {
     // chartTime instead of interpolating forward against silent audio.
     // Independent of song:* events — avoids the edge cases where the
     // pause listener early-returns and never emits.
-    let _chartLastAdvanceAt = 0;
+    hwState._chartLastAdvanceAt = 0;
     // Observed playback rate, derived from the actual delta between
     // successive anchor updates. FeedBack's speed slider (audio
     // playbackRate != 1) means audio time advances slower/faster than
     // real time; interpolating with a fixed 1x rate would drift. Each
     // re-anchor refines the estimate from the latest segment. Default
     // to 1 until we have two anchors to compare.
-    let _chartObservedRate = 1;
+    hwState._chartObservedRate = 1;
     // Cap the interpolation so a stalled main thread (long task, GC,
     // dropped tick) can't make getTime drift far past reality. Also the
     // threshold for "audio looks paused" — if setTime hasn't advanced t
@@ -120,8 +123,8 @@ function createHighway() {
     // .h3d-wrap overlay) can hide it. _visibleOverride !== null forces
     // the state for hosts that hide via opacity / visibility / clipping
     // where offsetParent === null isn't enough.
-    let _visibleOverride = null;
-    let _lastVisible = null;
+    hwState._visibleOverride = null;
+    hwState._lastVisible = null;
     // Throttled DOM visibility sampling. Reading canvas.offsetParent
     // every rAF frame forces a style/layout recalc — profiled at ~0.5 s
     // main-thread self-time over a 63 s session. The displayed state
@@ -138,9 +141,9 @@ function createHighway() {
     // reset self-heals within ~10 frames — stale visibility can never be
     // served indefinitely.
     const _DOM_VIS_CHECK_FRAMES = 10;
-    let _domVisCached = false;
-    let _domVisSampledFrame = NaN;
-    let animFrame = null;
+    hwState._domVisCached = false;
+    hwState._domVisSampledFrame = NaN;
+    hwState.animFrame = null;
     // Paused-render throttle (feedBack#654). The rAF loop runs
     // unconditionally and only gates on visibility + ready, never on
     // playback — so an expensive renderer (3D Highway's Three.js WebGL
@@ -155,36 +158,36 @@ function createHighway() {
     // resize / seek-scrub / renderer-swap repaints correct without
     // having to hook each of those paths.
     const _PAUSED_FRAME_INTERVAL_MS = 100;
-    let _lastPausedDrawAt = 0;
-    let _connectOpts = {};
-    let _resizeContainer = null;
-    let _resizeHandler = null;
-    let _onLyricsChange = null;
+    hwState._lastPausedDrawAt = 0;
+    hwState._connectOpts = {};
+    hwState._resizeContainer = null;
+    hwState._resizeHandler = null;
+    hwState._onLyricsChange = null;
 
     // Song data (populated via WebSocket)
-    let songInfo = {};
-    let notes = [];
-    let chords = [];
-    let handShapes = [];
-    let beats = [];
-    let sections = [];
-    let anchors = [];
-    let chordTemplates = [];
+    hwState.songInfo = {};
+    hwState.notes = [];
+    hwState.chords = [];
+    hwState.handShapes = [];
+    hwState.beats = [];
+    hwState.sections = [];
+    hwState.anchors = [];
+    hwState.chordTemplates = [];
     // Number of strings on the active arrangement. Updated from the
     // `stringCount` field in each `song_info` WS message; falls back
     // to `tuning.length` (works for older servers that don't yet emit
     // stringCount) then to 6 (final safety). 4 = bass, 6 = guitar,
     // 7+ = extended-range GP imports.
-    let stringCount = 6;
-    let lyrics = [];
+    hwState.stringCount = 6;
+    hwState.lyrics = [];
     // Provenance of the active lyric set. Set from the highway WS `lyrics`
     // message's `source` field; empty when no lyrics have arrived yet or the
     // source produced lyrics without provenance (e.g. legacy GP imports).
     // Exposed via the bundle + getLyricsSource() so plugins can render an
     // "auto-transcribed" badge for whisperx-sourced lyrics.
-    let lyricsSource = "";
-    let toneChanges = [];
-    let toneBase = "";
+    hwState.lyricsSource = "";
+    hwState.toneChanges = [];
+    hwState.toneBase = "";
     // Drum-tab payload (sloppak-spec §5.3). When the active sloppak's
     // manifest carries a `drum_tab:` key, the server streams a `drum_tab`
     // metadata message followed by chunked `drum_hits`. `drumTab.hits` is
@@ -193,8 +196,8 @@ function createHighway() {
     // legacy guitar-encoded `notes` stream. Stays at the null sentinel
     // for non-drum-tab songs so plugins can distinguish "no drums" from
     // "drums loaded but empty".
-    let drumTab = null;  // { version, name, kit: [...], hits: [...] }
-    let ready = false;
+    hwState.drumTab = null;  // { version, name, kit: [...], hits: [...] }
+    hwState.ready = false;
     // Master-difficulty (feedBack#48). _phrases stays null as a
     // "slider disabled" sentinel when the source chart has no ladder
     // data (GP imports, legacy sloppak) — the server omits the
@@ -203,16 +206,16 @@ function createHighway() {
     // stages _filteredNotes / _filteredChords for the render loop.
     // _filteredNotes === null means "fall through to flat notes" —
     // either no phrase data or filter not rebuilt yet.
-    let _phrases = null;
+    hwState._phrases = null;
     // Default to full chart. Persistence lives in the caller (app.js
     // loadSettings, or a splitscreen plugin managing its own panel
     // state) so multiple createHighway() instances stay truly
     // per-instance — no shared localStorage key to race on.
-    let _mastery = 1;
-    let _filteredNotes = null;
-    let _filteredChords = null;
-    let _filteredAnchors = null;
-    let _filteredHandShapes = null;
+    hwState._mastery = 1;
+    hwState._filteredNotes = null;
+    hwState._filteredChords = null;
+    hwState._filteredAnchors = null;
+    hwState._filteredHandShapes = null;
     // Tracks whether ANY phrase level carries handshape data. Lets us
     // distinguish "this difficulty has none" (respect strictly — even
     // when empty) from "the chart's phrase data never authored any
@@ -221,29 +224,29 @@ function createHighway() {
     // arrangement root). Without this flag the bundle would silently
     // surface arp-frame hints at low-mastery levels that shouldn't
     // have any.
-    let _phrasesHaveHandShapes = false;
-    let showLyrics = localStorage.getItem('showLyrics') !== 'false';
+    hwState._phrasesHaveHandShapes = false;
+    hwState.showLyrics = localStorage.getItem('showLyrics') !== 'false';
     // Teaching marks (§6.2.2): the fret-hand finger numeral (fg) renders by
     // default (small, on the gem), but the scale-degree (sd) + strum-group (ch)
     // overlays are opt-in so the default highway stays uncluttered. Display only
     // — never used for grading.
-    let _showTeachingMarks = localStorage.getItem('showTeachingMarks') === 'true';
+    hwState._showTeachingMarks = localStorage.getItem('showTeachingMarks') === 'true';
     // Fret-hand finger (fg) hints are shown by DEFAULT (the most broadly useful
     // teaching mark) but independently hideable — separate from the sd/ch opt-in
     // above so the two defaults (fg on, sd/ch off) can coexist. Default-true: an
     // absent key reads as on; only an explicit 'false' hides it.
-    let _showFingerHints = localStorage.getItem('showFingerHints') !== 'false';
-    let _drawHooks = [];  // plugin draw callbacks: fn(ctx, W, H)
+    hwState._showFingerHints = localStorage.getItem('showFingerHints') !== 'false';
+    hwState._drawHooks = [];  // plugin draw callbacks: fn(ctx, W, H)
     // feedBack#254 — per-note judgment overlay. A plugin (note_detect)
     // registers fn(note, chartTime) -> 'hit' | 'active' | 'miss' | null
     // (or { state, alpha?, color? }); renderers consult it per visible
     // note so the gem itself can light up / a held sustain can glow,
     // instead of relying on a separate overlay ring. null = no provider.
-    let _noteStateProvider = null;
+    hwState._noteStateProvider = null;
     // 1 = full, 0.5 = half res. Sanitize on load the same way setRenderScale
     // clamps: a corrupt/out-of-range localStorage value (NaN, 0, >1) would
     // otherwise flow into _effectiveRenderScale() and zero the canvas.
-    let _renderScale = (function () {
+    hwState._renderScale = (function () {
         const v = parseFloat(localStorage.getItem('renderScale') || '1');
         return Number.isFinite(v) ? Math.max(0.25, Math.min(1, v)) : 1;
     })();
@@ -261,15 +264,15 @@ function createHighway() {
     // setRenderScale. Adapting resolution (not frame rate) keeps motion
     // at the display's native refresh, avoiding judder, and never
     // affects sync (note position is clock-derived).
-    let _autoScale = 1;
-    let _drawMsEMA = 0;              // smoothed cost of _renderer.draw()
-    let _frameMsEMA = 0;            // smoothed frame interval (for the HUD)
-    let _lastFramePerf = 0;
-    let _lastAutoAdjustAt = 0;
-    let _lastUpscaleAt = 0;          // separate, longer clock for UPscaling (lazy)
-    let _perfHud = null;
-    let _hudOn = false;       // cached highwayPerfHud flag (re-read ~2x/sec, not per-frame)
-    let _hudFlagAt = 0;
+    hwState._autoScale = 1;
+    hwState._drawMsEMA = 0;              // smoothed cost of _renderer.draw()
+    hwState._frameMsEMA = 0;            // smoothed frame interval (for the HUD)
+    hwState._lastFramePerf = 0;
+    hwState._lastAutoAdjustAt = 0;
+    hwState._lastUpscaleAt = 0;          // separate, longer clock for UPscaling (lazy)
+    hwState._perfHud = null;
+    hwState._hudOn = false;       // cached highwayPerfHud flag (re-read ~2x/sec, not per-frame)
+    hwState._hudFlagAt = 0;
     const _DRAW_BUDGET_HI_MS = 12;  // sustained draw cost above this -> scale down
     const _DRAW_BUDGET_LO_MS = 7;   // sustained draw cost below this -> scale back up
     const _AUTO_SCALE_MIN = 0.25;   // hard floor (lowest the user-configurable floor may be set)
@@ -280,7 +283,7 @@ function createHighway() {
     // chosen Quality. Read once here; live changes come through
     // api.setMinRenderScale(), surfaced as the "Min res" control next to Quality
     // in the player controls (static/index.html).
-    let _autoScaleMin = (function () {
+    hwState._autoScaleMin = (function () {
         const v = parseFloat(localStorage.getItem('highwayMinRenderScale'));
         return Number.isFinite(v) ? Math.max(_AUTO_SCALE_MIN, Math.min(1, v)) : _AUTO_SCALE_MIN;
     })();
@@ -290,23 +293,23 @@ function createHighway() {
     // budget — testers saw "quality going up and down" as parts got busier (#618
     // charrette). Downscale stays prompt to protect the frame rate.
     const _AUTO_UPSCALE_COOLDOWN_MS = 2500;
-    let _inverted = localStorage.getItem('invertHighway') === 'true';
-    let _lefty = localStorage.getItem('lefty') === '1';
-    let _lastChordOnFretLine = null;  // chord object currently shown on fret line
-    let _chordFretLineNotes = [];  // notes to render on fret line
+    hwState._inverted = localStorage.getItem('invertHighway') === 'true';
+    hwState._lefty = localStorage.getItem('lefty') === '1';
+    hwState._lastChordOnFretLine = null;  // chord object currently shown on fret line
+    hwState._chordFretLineNotes = [];  // notes to render on fret line
     const _frameMismatchWarned = new Set();  // chord ids already warned about (feedBack#88)
     // Per-chord render info, computed lazily once per src array (feedBack#88).
     const _chordRenderInfo = new WeakMap();  // chord -> { chainIndex, chainLen, isFull, baseFret, sortedNotes, nonZeroNotes, nonZeroFrets, allMuted, hasMultipleNotes }
-    let _chordRenderCacheSrc = null;
-    let _chordRenderCacheInverted = null;
+    hwState._chordRenderCacheSrc = null;
+    hwState._chordRenderCacheInverted = null;
     // Also invalidate when chordTemplates is reassigned (WS 'chord_templates'
     // can land AFTER 'chords' chunks, and `isOpen(cn)` — used to compute
     // cached nonZeroNotes/nonZeroFrets — depends on the template lookup).
-    let _chordRenderCacheTemplates = null;
+    hwState._chordRenderCacheTemplates = null;
 
     // Frame counter for cheap deterministic "random" lookups (sustain
     // shimmer). Incremented once per rAF in draw().
-    let _frameIdx = 0;
+    hwState._frameIdx = 0;
 
     // 64-entry precomputed jitter LUT replacing Math.random() in the
     // lit-sustain shimmer hot path (drawSustains). Visually
@@ -401,9 +404,9 @@ function createHighway() {
         '#ff9c3c', '#3cff9c', '#cc3cff',
         '#ff3ce0', '#3ce0e0',
     ];
-    let STRING_COLORS = DEFAULT_STRING_COLORS.slice();
-    let STRING_DIM = DEFAULT_STRING_DIM.slice();
-    let STRING_BRIGHT = DEFAULT_STRING_BRIGHT.slice();
+    hwState.STRING_COLORS = DEFAULT_STRING_COLORS.slice();
+    hwState.STRING_DIM = DEFAULT_STRING_DIM.slice();
+    hwState.STRING_BRIGHT = DEFAULT_STRING_BRIGHT.slice();
 
     // ── String-color helpers ─────────────────────────────────────────────
     function _clampByte(n) { return n < 0 ? 0 : (n > 255 ? 255 : Math.round(n)); }
@@ -448,12 +451,12 @@ function createHighway() {
     // The "zoom level" determines how many frets are visible.
     // When playing low frets, zoom in (fewer frets visible, bigger notes).
     // When playing high frets, zoom out (more frets visible, smaller spacing).
-    let displayMaxFret = 12;  // rightmost visible fret (smoothed)
+    hwState.displayMaxFret = 12;  // rightmost visible fret (smoothed)
 
     function getAnchorAt(t) {
         // Same master-difficulty fallback as the render loops — the
         // anchor ladder pairs with the note ladder.
-        const src = _filteredAnchors !== null ? _filteredAnchors : anchors;
+        const src = hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
         let a = src[0] || { fret: 1, width: 4 };
         for (const anc of src) {
             if (anc.time > t) break;
@@ -464,7 +467,7 @@ function createHighway() {
 
     function getMaxFretInWindow(t) {
         // Find the highest fret needed across all anchors visible on screen
-        const src = _filteredAnchors !== null ? _filteredAnchors : anchors;
+        const src = hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
         let maxFret = 0;
         for (const anc of src) {
             if (anc.time > t + VISIBLE_SECONDS + 2) break; // Skip anchors well in the future (with a little buffer to avoid moving early the cutoff)
@@ -487,18 +490,18 @@ function createHighway() {
         // changes read as smooth.
         const rate = Math.min(0.4 * dt, 0.4);
         // Look ahead: use the widest fret range across all visible anchors
-        const lookAheadMax = getMaxFretInWindow(currentTime);
+        const lookAheadMax = getMaxFretInWindow(hwState.currentTime);
         const currentMax = anchor.fret + anchor.width;
         const needed = Math.max(currentMax, lookAheadMax);
         const targetMax = Math.max(needed + 3, 8);
-        displayMaxFret += (targetMax - displayMaxFret) * rate;
+        hwState.displayMaxFret += (targetMax - hwState.displayMaxFret) * rate;
     }
 
     function fretX(fret, scale, w) {
         const hw = w * 0.52 * scale;
         const margin = hw * 0.06;
         const usable = hw * 2 - 2 * margin;
-        const t = fret / Math.max(1, displayMaxFret);
+        const t = fret / Math.max(1, hwState.displayMaxFret);
         return w / 2 - hw + margin + t * usable;
     }
 
@@ -572,16 +575,16 @@ function createHighway() {
         // (canvas already locked to WebGL). No-op in that case —
         // alternatives would be throwing, which breaks plugin hooks
         // that call this after a context-type mismatch.
-        if (!canvas || !ctx) return;
-        const W = canvas.width;
-        if (!_lefty) {
-            ctx.fillText(text, x, y);
+        if (!hwState.canvas || !hwState.ctx) return;
+        const W = hwState.canvas.width;
+        if (!hwState._lefty) {
+            hwState.ctx.fillText(text, x, y);
             return;
         }
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.fillText(text, W - x, y);
-        ctx.restore();
+        hwState.ctx.save();
+        hwState.ctx.setTransform(1, 0, 0, 1, 0, 0);
+        hwState.ctx.fillText(text, W - x, y);
+        hwState.ctx.restore();
     }
 
     // ── Per-note judgment state (feedBack#254) ──────────────────────────
@@ -594,9 +597,9 @@ function createHighway() {
     // there for renderers that want it. The provider owns all timing /
     // fade — `alpha` is whatever intensity it wants right now.
     function _noteState(note, chartTime) {
-        if (!_noteStateProvider) return null;
+        if (!hwState._noteStateProvider) return null;
         let raw;
-        try { raw = _noteStateProvider(note, chartTime); } catch (e) { return null; }
+        try { raw = hwState._noteStateProvider(note, chartTime); } catch (e) { return null; }
         if (!raw) return null;
         const state = typeof raw === 'string' ? raw : raw.state;
         if (state !== 'hit' && state !== 'active' && state !== 'miss') return null;
@@ -619,7 +622,7 @@ function createHighway() {
     // instance (not module scope — _noteStateProvider is per-instance),
     // so _makeBundle() doesn't reallocate an arrow function per frame
     // (matches getNoteState: _noteState's stable-reference pattern).
-    function _getNoteStateProvider() { return _noteStateProvider; }
+    function _getNoteStateProvider() { return hwState._noteStateProvider; }
 
     // Paints the judgment effect on top of an already-drawn gem at
     // (cx,cy) with half-extent `r`. `ns` is the normalized state from
@@ -632,48 +635,48 @@ function createHighway() {
     // Caller draws the gem normally first, then calls this BEFORE any
     // glyph so a readable fret number can land on top.
     function _paintGemGlow(cx, cy, r, stringIdx, ns) {
-        if (!ns || !ctx) return;
-        ctx.save();
+        if (!ns || !hwState.ctx) return;
+        hwState.ctx.save();
         if (ns.state === 'miss') {
-            ctx.globalAlpha = 0.4 * ns.alpha;
-            ctx.fillStyle = '#ff2828';
-            ctx.beginPath();
-            ctx.arc(cx, cy, r * 1.05, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
+            hwState.ctx.globalAlpha = 0.4 * ns.alpha;
+            hwState.ctx.fillStyle = '#ff2828';
+            hwState.ctx.beginPath();
+            hwState.ctx.arc(cx, cy, r * 1.05, 0, Math.PI * 2);
+            hwState.ctx.fill();
+            hwState.ctx.restore();
             return;
         }
-        const col = ns.color || STRING_BRIGHT[stringIdx] || '#ffffff';
+        const col = ns.color || hwState.STRING_BRIGHT[stringIdx] || '#ffffff';
         const a = ns.alpha;
         const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-        ctx.lineCap = 'round';
+        hwState.ctx.lineCap = 'round';
 
         // Expanding shockwave — only on a fresh struck-and-fading hit
         // (alpha decays 1→0). 'active' (held sustain, alpha pinned 1) skips it.
         if (ns.state === 'hit' && a < 1) {
             const prog = 1 - a;                       // 0 at strike → 1 at fade-out
-            ctx.globalCompositeOperation = 'lighter';
-            ctx.globalAlpha = a * 0.85;
-            ctx.strokeStyle = col;
-            ctx.lineWidth = Math.max(1.5, r * 0.26 * a);
-            ctx.beginPath();
-            ctx.arc(cx, cy, r * (1.0 + prog * 2.7), 0, Math.PI * 2);
-            ctx.stroke();
+            hwState.ctx.globalCompositeOperation = 'lighter';
+            hwState.ctx.globalAlpha = a * 0.85;
+            hwState.ctx.strokeStyle = col;
+            hwState.ctx.lineWidth = Math.max(1.5, r * 0.26 * a);
+            hwState.ctx.beginPath();
+            hwState.ctx.arc(cx, cy, r * (1.0 + prog * 2.7), 0, Math.PI * 2);
+            hwState.ctx.stroke();
         }
 
         // Throbbing halo (≈9 Hz wobble).
         const pulse = 0.8 + 0.2 * Math.sin(nowMs / 18);
         const haloR = r * 2.0 * pulse;
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = a;
-        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
+        hwState.ctx.globalCompositeOperation = 'lighter';
+        hwState.ctx.globalAlpha = a;
+        const g = hwState.ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
         g.addColorStop(0, '#ffffff');
         g.addColorStop(0.30, col);
         g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
-        ctx.fill();
+        hwState.ctx.fillStyle = g;
+        hwState.ctx.beginPath();
+        hwState.ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+        hwState.ctx.fill();
 
         // Crackle — short bright spark lines flicking out from the gem,
         // re-randomised every frame so it shimmers.
@@ -683,33 +686,33 @@ function createHighway() {
             const ang = Math.random() * Math.PI * 2;
             const inR = r * 0.45;
             const len = r * (0.7 + Math.random() * 1.6) * (0.5 + 0.5 * a);
-            ctx.globalAlpha = a * (0.45 + Math.random() * 0.55);
-            ctx.strokeStyle = Math.random() < 0.5 ? '#ffffff' : col;
-            ctx.lineWidth = Math.max(1, r * (0.08 + Math.random() * 0.08));
-            ctx.beginPath();
-            ctx.moveTo(cx + Math.cos(ang) * inR, cy + Math.sin(ang) * inR);
-            ctx.lineTo(cx + Math.cos(ang) * (inR + len), cy + Math.sin(ang) * (inR + len));
-            ctx.stroke();
+            hwState.ctx.globalAlpha = a * (0.45 + Math.random() * 0.55);
+            hwState.ctx.strokeStyle = Math.random() < 0.5 ? '#ffffff' : col;
+            hwState.ctx.lineWidth = Math.max(1, r * (0.08 + Math.random() * 0.08));
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(cx + Math.cos(ang) * inR, cy + Math.sin(ang) * inR);
+            hwState.ctx.lineTo(cx + Math.cos(ang) * (inR + len), cy + Math.sin(ang) * (inR + len));
+            hwState.ctx.stroke();
         }
 
         // Flickering white-hot core.
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = a * (0.55 + Math.random() * 0.45);
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(cx, cy, r * (0.30 + Math.random() * 0.14), 0, Math.PI * 2);
-        ctx.fill();
+        hwState.ctx.globalCompositeOperation = 'lighter';
+        hwState.ctx.globalAlpha = a * (0.55 + Math.random() * 0.45);
+        hwState.ctx.fillStyle = '#ffffff';
+        hwState.ctx.beginPath();
+        hwState.ctx.arc(cx, cy, r * (0.30 + Math.random() * 0.14), 0, Math.PI * 2);
+        hwState.ctx.fill();
 
         // Crisp bright rim.
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = a;
-        ctx.strokeStyle = col;
-        ctx.lineWidth = Math.max(2, r * 0.2);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r * 0.95, 0, Math.PI * 2);
-        ctx.stroke();
+        hwState.ctx.globalCompositeOperation = 'source-over';
+        hwState.ctx.globalAlpha = a;
+        hwState.ctx.strokeStyle = col;
+        hwState.ctx.lineWidth = Math.max(2, r * 0.2);
+        hwState.ctx.beginPath();
+        hwState.ctx.arc(cx, cy, r * 0.95, 0, Math.PI * 2);
+        hwState.ctx.stroke();
 
-        ctx.restore();
+        hwState.ctx.restore();
     }
 
     // ── Drawing ──────────────────────────────────────────────────────────
@@ -739,7 +742,7 @@ function createHighway() {
     // so renderers never touch _filteredX internals directly. Arrays
     // are live references (performance), NOT copies — renderers must
     // treat them as read-only.
-    let _renderer = null;
+    hwState._renderer = null;
 
     // Tracks the rendering context type currently bound to the canvas
     // element (`'2d'` or `'webgl2'`). Browsers lock a <canvas> to the
@@ -749,7 +752,7 @@ function createHighway() {
     // (see _replaceCanvas) so the new renderer's getContext() can
     // succeed. Default 2D — matches what _defaultRenderer.init() does
     // on the freshly-mounted canvas.
-    let _currentCanvasContextType = '2d';
+    hwState._currentCanvasContextType = '2d';
 
     // One persistent bundle object per createHighway() instance —
     // _makeBundle() mutates its fields in place each call instead of
@@ -772,9 +775,9 @@ function createHighway() {
         // cost reasons.
         const b = _bundleReused;
         // Timing
-        b.currentTime = currentTime;
-        b.songInfo = songInfo;
-        b.isReady = ready;
+        b.currentTime = hwState.currentTime;
+        b.songInfo = hwState.songInfo;
+        b.isReady = hwState.ready;
         // True while the chart clock is actively advancing; false when
         // audio is paused / stalled / mid-seek (setTime has kept getting
         // the same t for > _CHART_MAX_INTERP_MS). This is the same
@@ -785,56 +788,56 @@ function createHighway() {
         // back to raw instead of extrapolating forward against a frozen
         // audio sample. Undefined on downlevel hosts → those renderers
         // keep their own staleness-based fallback.
-        b.isPlaying = !Number.isNaN(_chartAnchorPerfNow)
-            && (performance.now() - _chartLastAdvanceAt) <= _CHART_MAX_INTERP_MS;
+        b.isPlaying = !Number.isNaN(hwState._chartAnchorPerfNow)
+            && (performance.now() - hwState._chartLastAdvanceAt) <= _CHART_MAX_INTERP_MS;
 
         // Chart content (filter-aware — difficulty-filtered arrays
         // preferred; raw arrays are the fallback when no ladder data).
-        b.notes = _filteredNotes !== null ? _filteredNotes : notes;
-        b.chords = _filteredChords !== null ? _filteredChords : chords;
-        b.anchors = _filteredAnchors !== null ? _filteredAnchors : anchors;
-        b.beats = beats;
-        b.sections = sections;
-        b.chordTemplates = chordTemplates;
-        b.stringCount = stringCount;
+        b.notes = hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
+        b.chords = hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords;
+        b.anchors = hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
+        b.beats = hwState.beats;
+        b.sections = hwState.sections;
+        b.chordTemplates = hwState.chordTemplates;
+        b.stringCount = hwState.stringCount;
         // Mirrors song_info tuning capo offsets (±semitones from the
         // instrument’s standard open-string layout). Live reference.
-        b.tuning = songInfo?.tuning;
-        b.capo = songInfo?.capo;
-        b.lyrics = lyrics;
-        b.lyricsSource = lyricsSource;
-        b.toneChanges = toneChanges;
-        b.toneBase = toneBase;
+        b.tuning = hwState.songInfo?.tuning;
+        b.capo = hwState.songInfo?.capo;
+        b.lyrics = hwState.lyrics;
+        b.lyricsSource = hwState.lyricsSource;
+        b.toneChanges = hwState.toneChanges;
+        b.toneBase = hwState.toneBase;
         // Drum tab payload (or null when the active arrangement has
         // no drum_tab). Live reference — renderers MUST treat as
         // read-only. Plugins should prefer this over decoding the
         // standard `notes` stream when present; absence is the
         // signal to fall back to legacy MIDI-encoded drums.
-        b.drumTab = drumTab;
+        b.drumTab = hwState.drumTab;
 
         // Master-difficulty (feedBack#48)
-        b.mastery = _mastery;
-        b.hasPhraseData = !!(_phrases && _phrases.length > 0);
+        b.mastery = hwState._mastery;
+        b.hasPhraseData = !!(hwState._phrases && hwState._phrases.length > 0);
         // When phrase data authored ANY handshape, respect the filtered
         // list strictly (even when this difficulty leaves it empty) —
         // otherwise low-mastery levels would surface arp hints that
         // don't belong. Only fall back to the flat list when the
         // phrase data carries no handshapes at all (common on DLC
         // where handshapes ship on the arrangement root).
-        b.handShapes = (_filteredHandShapes !== null && _phrasesHaveHandShapes)
-            ? _filteredHandShapes
-            : handShapes;
+        b.handShapes = (hwState._filteredHandShapes !== null && hwState._phrasesHaveHandShapes)
+            ? hwState._filteredHandShapes
+            : hwState.handShapes;
 
         // Display flags
-        b.inverted = _inverted;
-        b.lefty = _lefty;
+        b.inverted = hwState._inverted;
+        b.lefty = hwState._lefty;
         b.renderScale = _effectiveRenderScale();
-        b.lyricsVisible = showLyrics;
+        b.lyricsVisible = hwState.showLyrics;
         // Teaching marks sd/ch overlay pref (§6.2.2) so custom renderers
         // (e.g. the 3D highway) can mirror the 2D opt-in toggle. The fg
         // finger-hint pref rides alongside (default on, independently hideable).
-        b.teachingMarksVisible = _showTeachingMarks;
-        b.fingerHintsVisible = _showFingerHints;
+        b.teachingMarksVisible = hwState._showTeachingMarks;
+        b.fingerHintsVisible = hwState._showFingerHints;
 
         // 2D-style helpers (renderers that don't need these can ignore).
         // `fillTextUnmirrored` is deliberately NOT exposed here —
@@ -877,8 +880,8 @@ function createHighway() {
             // recover on the same canvas — surface a single clear error
             // and skip drawing. A future revision will recreate the
             // canvas element on renderer-type swap to avoid this.
-            ctx = canvasEl.getContext('2d');
-            if (!ctx && !this._ctxWarned) {
+            hwState.ctx = canvasEl.getContext('2d');
+            if (!hwState.ctx && !this._ctxWarned) {
                 console.error(
                     'Default 2D renderer: canvas.getContext("2d") returned null ' +
                     '— the canvas is locked to another context type. ' +
@@ -892,20 +895,20 @@ function createHighway() {
             // is shaped for custom renderers, not used here. Keeping the
             // default renderer's body unchanged from the pre-refactor
             // draw() preserves pixel-level parity with current main.
-            if (!canvas || !ready || !ctx) return;
+            if (!hwState.canvas || !hwState.ready || !hwState.ctx) return;
             try {
-                const W = canvas.width;
-                const H = canvas.height;
-                ctx.fillStyle = BG;
-                ctx.fillRect(0, 0, W, H);
+                const W = hwState.canvas.width;
+                const H = hwState.canvas.height;
+                hwState.ctx.fillStyle = BG;
+                hwState.ctx.fillRect(0, 0, W, H);
 
-                const anchor = getAnchorAt(currentTime);
+                const anchor = getAnchorAt(hwState.currentTime);
                 updateSmoothAnchor(anchor, 1 / 60);
 
-                ctx.save();
-                if (_lefty) {
-                    ctx.translate(W, 0);
-                    ctx.scale(-1, 1);
+                hwState.ctx.save();
+                if (hwState._lefty) {
+                    hwState.ctx.translate(W, 0);
+                    hwState.ctx.scale(-1, 1);
                 }
 
                 drawHighway(W, H);
@@ -924,14 +927,14 @@ function createHighway() {
                 // `api.fireDrawHooks(ctx, W, H)` against their own overlay
                 // 2D context after rendering. Either path receives the
                 // same `(ctx, W, H)` callback signature.
-                for (const hook of _drawHooks) {
-                    try { hook(ctx, W, H); } catch (e) { /* ignore */ }
+                for (const hook of hwState._drawHooks) {
+                    try { hook(hwState.ctx, W, H); } catch (e) { /* ignore */ }
                 }
 
-                ctx.restore();
+                hwState.ctx.restore();
 
                 // Lyrics: drawn unmirrored so lines stay left-to-right readable (layout is center-symmetric)
-                if (showLyrics) drawLyrics(W, H);
+                if (hwState.showLyrics) drawLyrics(W, H);
             } catch (e) {
                 console.error('draw error:', e);
             }
@@ -960,7 +963,7 @@ function createHighway() {
     // renderer auto-reverts to default instead of spamming the console
     // every frame. Reset on every successful draw and whenever a new
     // renderer is installed.
-    let _rendererDrawFailures = 0;
+    hwState._rendererDrawFailures = 0;
     const MAX_RENDERER_DRAW_FAILURES = 3;
 
     // True only while the current renderer has had a successful init
@@ -968,14 +971,14 @@ function createHighway() {
     // because canvas was null). Gates destroy calls so an uninit'd
     // renderer doesn't receive spurious destroys — the restore-on-
     // page-load flow relies on this: setRenderer can run before init.
-    let _rendererInited = false;
+    hwState._rendererInited = false;
 
     function _destroyCurrentIfInited() {
-        if (_renderer && _rendererInited && typeof _renderer.destroy === 'function') {
-            try { _renderer.destroy(); }
+        if (hwState._renderer && hwState._rendererInited && typeof hwState._renderer.destroy === 'function') {
+            try { hwState._renderer.destroy(); }
             catch (e) { console.error('renderer destroy:', e); }
         }
-        _rendererInited = false;
+        hwState._rendererInited = false;
     }
 
     function _emitVizReverted(reason) {
@@ -1042,8 +1045,8 @@ function createHighway() {
     // new element; longer-lived references can listen for the
     // `highway:canvas-replaced` event emitted at the end.
     function _replaceCanvas(newType) {
-        if (!canvas) return;
-        const oldCanvas = canvas;
+        if (!hwState.canvas) return;
+        const oldCanvas = hwState.canvas;
         // cloneNode(false) preserves the element type and ALL HTML
         // attributes (id, class, style, data-*, aria-*, role, tabindex,
         // width/height attribute form, plus anything else a plugin
@@ -1060,14 +1063,14 @@ function createHighway() {
         // Swap in place so siblings, parents, and document order all
         // stay intact. replaceWith() detaches the old node from the DOM.
         oldCanvas.replaceWith(newCanvas);
-        canvas = newCanvas;
+        hwState.canvas = newCanvas;
         // The default renderer caches its 2D context in the factory
         // closure (`ctx`). The old reference now points at a detached
         // canvas — null it so any straggling draw paths short-circuit
         // instead of painting into the void. The next default-renderer
         // init() will re-acquire `ctx` from the new canvas via
         // getContext('2d') (succeeds because the new element is fresh).
-        ctx = null;
+        hwState.ctx = null;
         // Re-size the new element to match the current container —
         // sets style.width/height and the backing-store width/height.
         // _renderer.resize is gated on _rendererInited, which has just
@@ -1076,14 +1079,14 @@ function createHighway() {
         // renderer's own resize fires after init completes.
         try { api.resize(); }
         catch (e) { console.error('resize after canvas replace:', e); }
-        _currentCanvasContextType = newType;
+        hwState._currentCanvasContextType = newType;
         // The visibility cache is per-canvas-instance: a freshly
         // attached canvas could be in a different displayed state
         // than the one it replaced, and _lastVisible would otherwise
         // suppress the first transition. Reset to null so the next
         // rAF tick re-emits unconditionally.
-        _lastVisible = null;
-        _domVisSampledFrame = NaN; // fresh canvas → fresh DOM sample
+        hwState._lastVisible = null;
+        hwState._domVisSampledFrame = NaN; // fresh canvas → fresh DOM sample
         // Defensive notify for plugins / overlays that cache the
         // canvas element across events. Lazy lookups via
         // getElementById('highway') do not need this — they'll pick
@@ -1102,7 +1105,7 @@ function createHighway() {
         // the `_renderer = next` assignment below overwrite it — the
         // canvas-replacement decision needs to know whether we're
         // actually swapping to a *different* renderer instance.
-        const prev = _renderer;
+        const prev = hwState._renderer;
         _destroyCurrentIfInited();
         // null/undefined reverts to default. Anything else must provide
         // at minimum a draw(bundle) function — without it the rAF loop
@@ -1117,14 +1120,14 @@ function createHighway() {
             console.error('setRenderer: renderer missing draw(bundle) function; reverting to default.');
             next = _defaultRenderer;
         }
-        _renderer = next;
-        _rendererDrawFailures = 0;
+        hwState._renderer = next;
+        hwState._rendererDrawFailures = 0;
         // Defer init/resize until the canvas is available. setRenderer
         // can legitimately be called before api.init() runs (e.g. app.js
         // restoring a saved picker selection at page load, before any
         // song has been played). api.init() will re-run these when it
         // assigns the canvas.
-        if (!canvas) return;
+        if (!hwState.canvas) return;
         // Browsers lock a <canvas> to the first context type
         // successfully acquired for its lifetime: once getContext('2d')
         // succeeds, getContext('webgl2') on the same element returns
@@ -1157,7 +1160,7 @@ function createHighway() {
         // same viz, and on the very first install (prev === null) where
         // there is no prior frame to clear.
         const _vizChanged = prev && _rendererVizKey(next) !== _rendererVizKey(prev);
-        if (nextType !== _currentCanvasContextType || _vizChanged) {
+        if (nextType !== hwState._currentCanvasContextType || _vizChanged) {
             _replaceCanvas(nextType);
         }
         const bundle = _makeBundle();
@@ -1166,10 +1169,10 @@ function createHighway() {
         // exists, only flip the flag true when it returns without
         // throwing — otherwise a later destroy would run on an
         // effectively-uninitialized renderer.
-        let initSucceeded = typeof _renderer.init !== 'function';
-        if (typeof _renderer.init === 'function') {
+        let initSucceeded = typeof hwState._renderer.init !== 'function';
+        if (typeof hwState._renderer.init === 'function') {
             try {
-                _renderer.init(canvas, bundle);
+                hwState._renderer.init(hwState.canvas, bundle);
                 initSucceeded = true;
             }
             catch (e) {
@@ -1181,26 +1184,26 @@ function createHighway() {
                 // revert to the default renderer so the user isn't
                 // stranded on a broken viz, and notify the UI so the
                 // picker + localStorage sync back to 'default'.
-                if (_renderer !== _defaultRenderer) {
-                    if (typeof _renderer.destroy === 'function') {
-                        try { _renderer.destroy(); }
+                if (hwState._renderer !== _defaultRenderer) {
+                    if (typeof hwState._renderer.destroy === 'function') {
+                        try { hwState._renderer.destroy(); }
                         catch (destroyErr) {
                             console.error('renderer destroy after init failure:', destroyErr);
                         }
                     }
-                    _renderer = _defaultRenderer;
+                    hwState._renderer = _defaultRenderer;
                     _emitVizReverted('init-failure');
                     // The just-failed renderer may have already
                     // acquired its (non-2D) context on the canvas
                     // before throwing, locking the element to that
                     // context type. Default renderer is 2D — swap in
                     // a fresh canvas so its getContext('2d') succeeds.
-                    if (_currentCanvasContextType !== '2d') {
+                    if (hwState._currentCanvasContextType !== '2d') {
                         _replaceCanvas('2d');
                     }
-                    if (typeof _renderer.init === 'function') {
+                    if (typeof hwState._renderer.init === 'function') {
                         try {
-                            _renderer.init(canvas, _makeBundle());
+                            hwState._renderer.init(hwState.canvas, _makeBundle());
                             initSucceeded = true;
                         }
                         catch (e2) {
@@ -1212,10 +1215,10 @@ function createHighway() {
                 }
             }
         }
-        _rendererInited = initSucceeded;
-        if (!_rendererInited) return;
-        if (typeof _renderer.resize === 'function') {
-            try { _renderer.resize(canvas.width, canvas.height); }
+        hwState._rendererInited = initSucceeded;
+        if (!hwState._rendererInited) return;
+        if (typeof hwState._renderer.resize === 'function') {
+            try { hwState._renderer.resize(hwState.canvas.width, hwState.canvas.height); }
             catch (e) { console.error('renderer resize:', e); }
         }
         // Optional async-ready contract: if the renderer exposes a
@@ -1228,7 +1231,7 @@ function createHighway() {
         //               a sync init failure) so the UI and Auto label sync.
         // If readyPromise is absent the sync init was all there was to do;
         // emit viz:renderer:ready immediately.
-        const _installedRenderer = _renderer;
+        const _installedRenderer = hwState._renderer;
         if (_installedRenderer !== _defaultRenderer) {
             const rp = _installedRenderer.readyPromise;
             if (rp && typeof rp.then === 'function') {
@@ -1236,39 +1239,39 @@ function createHighway() {
                 // contract is readable at a glance without unwrapping a long
                 // inline arrow function.
                 function _handleAsyncInitFailure(e) {
-                    if (_renderer !== _installedRenderer) return;
+                    if (hwState._renderer !== _installedRenderer) return;
                     console.error('renderer async init failure:', e);
                     _destroyCurrentIfInited();
-                    _renderer = _defaultRenderer;
-                    _rendererDrawFailures = 0;
+                    hwState._renderer = _defaultRenderer;
+                    hwState._rendererDrawFailures = 0;
                     _emitVizReverted('async-init-failure');
-                    if (canvas) {
+                    if (hwState.canvas) {
                         // Async-init failure usually means the renderer
                         // got far enough to acquire its (non-2D) context
                         // before rejecting — the canvas is locked to
                         // that type. Reverting to the 2D default
                         // requires a fresh canvas element.
-                        if (_currentCanvasContextType !== '2d') {
+                        if (hwState._currentCanvasContextType !== '2d') {
                             _replaceCanvas('2d');
                         }
                         let defInitOk = typeof _defaultRenderer.init !== 'function';
                         if (typeof _defaultRenderer.init === 'function') {
                             try {
-                                _defaultRenderer.init(canvas, _makeBundle());
+                                _defaultRenderer.init(hwState.canvas, _makeBundle());
                                 defInitOk = true;
                             } catch (e2) {
                                 console.error('default renderer init after async revert:', e2);
                             }
                         }
-                        _rendererInited = defInitOk;
-                        if (_rendererInited && typeof _defaultRenderer.resize === 'function') {
-                            try { _defaultRenderer.resize(canvas.width, canvas.height); }
+                        hwState._rendererInited = defInitOk;
+                        if (hwState._rendererInited && typeof _defaultRenderer.resize === 'function') {
+                            try { _defaultRenderer.resize(hwState.canvas.width, hwState.canvas.height); }
                             catch (e2) { console.error('default renderer resize after async revert:', e2); }
                         }
                     }
                 }
                 rp.then(
-                    () => { if (_renderer === _installedRenderer) _emitVizReady(); },
+                    () => { if (hwState._renderer === _installedRenderer) _emitVizReady(); },
                     _handleAsyncInitFailure
                 );
             } else {
@@ -1282,15 +1285,15 @@ function createHighway() {
     // catch visibility:hidden / opacity:0 / off-screen transforms;
     // hosts that need those use setVisible() instead.
     function _isHighwayVisible() {
-        if (_visibleOverride !== null) return _visibleOverride;
+        if (hwState._visibleOverride !== null) return hwState._visibleOverride;
         // Throttled offsetParent read — see _DOM_VIS_CHECK_FRAMES above.
-        if (Number.isNaN(_domVisSampledFrame)
-            || ((_frameIdx - _domVisSampledFrame) | 0) >= _DOM_VIS_CHECK_FRAMES
-            || ((_frameIdx - _domVisSampledFrame) | 0) < 0) {
-            _domVisCached = !!(canvas && canvas.offsetParent !== null);
-            _domVisSampledFrame = _frameIdx;
+        if (Number.isNaN(hwState._domVisSampledFrame)
+            || ((hwState._frameIdx - hwState._domVisSampledFrame) | 0) >= _DOM_VIS_CHECK_FRAMES
+            || ((hwState._frameIdx - hwState._domVisSampledFrame) | 0) < 0) {
+            hwState._domVisCached = !!(hwState.canvas && hwState.canvas.offsetParent !== null);
+            hwState._domVisSampledFrame = hwState._frameIdx;
         }
-        return _domVisCached;
+        return hwState._domVisCached;
     }
 
     // Emit only on transition so renderer-side listeners aren't woken
@@ -1299,12 +1302,12 @@ function createHighway() {
     // transitions including the first one."
     function _emitVisibilityIfChanged() {
         const v = _isHighwayVisible();
-        if (v === _lastVisible) return;
-        _lastVisible = v;
+        if (v === hwState._lastVisible) return;
+        hwState._lastVisible = v;
         if (typeof window !== 'undefined'
             && window.feedBack
             && typeof window.feedBack.emit === 'function') {
-            window.feedBack.emit('highway:visibility', { visible: v, canvas });
+            window.feedBack.emit('highway:visibility', { visible: v, canvas: hwState.canvas });
         }
     }
 
@@ -1315,13 +1318,13 @@ function createHighway() {
         // Sanitize each factor independently so one corrupt value doesn't
         // silently force full-res (which would ignore a valid manual ceiling)
         // or propagate NaN into canvas sizing.
-        const user = Number.isFinite(_renderScale) ? _renderScale : 1;
-        const auto = Number.isFinite(_autoScale) ? _autoScale : 1;
+        const user = Number.isFinite(hwState._renderScale) ? hwState._renderScale : 1;
+        const auto = Number.isFinite(hwState._autoScale) ? hwState._autoScale : 1;
         // The adaptive floor can't exceed the user's manual ceiling — a minimum
         // resolution higher than the chosen maximum makes no sense — so clamp the
         // floor to `user` and never let the effective scale rise above the
         // ceiling (preserves the "Quality is the cap" semantics).
-        const floor = Math.min(_autoScaleMin, user);
+        const floor = Math.min(hwState._autoScaleMin, user);
         return Math.min(user, Math.max(floor, user * auto));
     }
 
@@ -1331,41 +1334,41 @@ function createHighway() {
     // and back up when it has headroom. A change re-applies via api.resize()
     // — the same path manual setRenderScale uses. (#654)
     function _adaptRenderScale(drawMs) {
-        _drawMsEMA = _drawMsEMA === 0 ? drawMs : _drawMsEMA * 0.9 + drawMs * 0.1;
+        hwState._drawMsEMA = hwState._drawMsEMA === 0 ? drawMs : hwState._drawMsEMA * 0.9 + drawMs * 0.1;
         const nowP = performance.now();
-        if (nowP - _lastAutoAdjustAt < _AUTO_ADJUST_COOLDOWN_MS) return;
+        if (nowP - hwState._lastAutoAdjustAt < _AUTO_ADJUST_COOLDOWN_MS) return;
         // Commit to one evaluation per cooldown regardless of outcome —
         // otherwise, once the cooldown elapses, the deadband branch below
         // would re-run this comparison every frame on the hot path.
-        _lastAutoAdjustAt = nowP;
+        hwState._lastAutoAdjustAt = nowP;
         const eff = _effectiveRenderScale();
-        let next = _autoScale;
-        if (_drawMsEMA > _DRAW_BUDGET_HI_MS && eff > _autoScaleMin) {
+        let next = hwState._autoScale;
+        if (hwState._drawMsEMA > _DRAW_BUDGET_HI_MS && eff > hwState._autoScaleMin) {
             // Over budget — downscale promptly to protect the frame rate, and reset
             // the upscale clock so we don't immediately bounce back up.
-            next = _autoScale * 0.85;
-            _lastUpscaleAt = nowP;
-        } else if (_drawMsEMA < _DRAW_BUDGET_LO_MS && eff < 1
-                   && nowP - _lastUpscaleAt >= _AUTO_UPSCALE_COOLDOWN_MS) {
+            next = hwState._autoScale * 0.85;
+            hwState._lastUpscaleAt = nowP;
+        } else if (hwState._drawMsEMA < _DRAW_BUDGET_LO_MS && eff < 1
+                   && nowP - hwState._lastUpscaleAt >= _AUTO_UPSCALE_COOLDOWN_MS) {
             // Headroom — upscale LAZILY: a smaller step on a longer cooldown, and
             // only when the projected cost AFTER the step (cost scales ~with the
             // pixel count, i.e. step²) still clears the high budget. That predictive
             // guard is what stops the up→over-budget→down ping-pong testers saw: the
             // scale settles just inside the deadband instead of oscillating across it.
             const step = 1.06;
-            if (_drawMsEMA * step * step < _DRAW_BUDGET_HI_MS) {
-                next = _autoScale * step;
-                _lastUpscaleAt = nowP;
+            if (hwState._drawMsEMA * step * step < _DRAW_BUDGET_HI_MS) {
+                next = hwState._autoScale * step;
+                hwState._lastUpscaleAt = nowP;
             }
         }
         // Clamp so _renderScale * _autoScale stays within [_autoScaleMin, 1].
         // Cap `lo` at 1: when the floor exceeds the manual ceiling (e.g. quality
         // 0.5 + floor 1.0) the raw ratio is > 1, which would otherwise push
         // _autoScale above 1 and break the "auto is a [0,1] multiplier" invariant.
-        const lo = _renderScale > 0 ? Math.min(1, _autoScaleMin / _renderScale) : 1;
+        const lo = hwState._renderScale > 0 ? Math.min(1, hwState._autoScaleMin / hwState._renderScale) : 1;
         next = Math.max(lo, Math.min(1, next));
-        if (Math.abs(next - _autoScale) < 0.01) return;
-        _autoScale = next;
+        if (Math.abs(next - hwState._autoScale) < 0.01) return;
+        hwState._autoScale = next;
         try { api.resize(); } catch (e) { /* resize is best-effort */ }
     }
 
@@ -1378,42 +1381,42 @@ function createHighway() {
         const nowP = performance.now();
         // Re-read the debug-only flag at most ~2x/sec, not every frame:
         // localStorage access is synchronous and this is on the rAF hot path.
-        if (nowP - _hudFlagAt > 500) {
-            _hudFlagAt = nowP;
-            try { _hudOn = localStorage.getItem('highwayPerfHud') === '1'; } catch (_) { _hudOn = false; }
+        if (nowP - hwState._hudFlagAt > 500) {
+            hwState._hudFlagAt = nowP;
+            try { hwState._hudOn = localStorage.getItem('highwayPerfHud') === '1'; } catch (_) { hwState._hudOn = false; }
         }
-        if (!_hudOn) {
-            if (_perfHud) { _perfHud.remove(); _perfHud = null; }
+        if (!hwState._hudOn) {
+            if (hwState._perfHud) { hwState._perfHud.remove(); hwState._perfHud = null; }
             return;
         }
-        if (_lastFramePerf) {
-            const d = nowP - _lastFramePerf;
-            _frameMsEMA = _frameMsEMA === 0 ? d : _frameMsEMA * 0.9 + d * 0.1;
+        if (hwState._lastFramePerf) {
+            const d = nowP - hwState._lastFramePerf;
+            hwState._frameMsEMA = hwState._frameMsEMA === 0 ? d : hwState._frameMsEMA * 0.9 + d * 0.1;
         }
-        _lastFramePerf = nowP;
-        if (!_perfHud) {
-            _perfHud = document.createElement('div');
+        hwState._lastFramePerf = nowP;
+        if (!hwState._perfHud) {
+            hwState._perfHud = document.createElement('div');
             // Class, not a fixed id: multiple createHighway() instances
             // (splitscreen) would otherwise mint duplicate #ids — invalid
             // HTML. We hold the element by reference (_perfHud), not lookup.
-            _perfHud.className = 'highway-perf-hud';
-            _perfHud.style.cssText = 'position:fixed;top:8px;right:8px;z-index:2147483647;' +
+            hwState._perfHud.className = 'highway-perf-hud';
+            hwState._perfHud.style.cssText = 'position:fixed;top:8px;right:8px;z-index:2147483647;' +
                 'font:11px/1.4 monospace;background:rgba(0,0,0,.7);color:#0f0;' +
                 'padding:4px 6px;border-radius:4px;pointer-events:none;white-space:pre;';
-            document.body.appendChild(_perfHud);
+            document.body.appendChild(hwState._perfHud);
         }
-        const fps = _frameMsEMA > 0 ? 1000 / _frameMsEMA : 0;
-        _perfHud.textContent =
+        const fps = hwState._frameMsEMA > 0 ? 1000 / hwState._frameMsEMA : 0;
+        hwState._perfHud.textContent =
             'fps ' + fps.toFixed(0) +
-            '  draw ' + _drawMsEMA.toFixed(1) + 'ms' +
+            '  draw ' + hwState._drawMsEMA.toFixed(1) + 'ms' +
             '  scale ' + _effectiveRenderScale().toFixed(2) +
-            ' (user ' + _renderScale.toFixed(2) + ' / auto ' + _autoScale.toFixed(2) + ')';
+            ' (user ' + hwState._renderScale.toFixed(2) + ' / auto ' + hwState._autoScale.toFixed(2) + ')';
     }
 
     function draw() {
-        animFrame = requestAnimationFrame(draw);
-        if (!canvas || !_renderer) return;
-        _frameIdx = (_frameIdx + 1) | 0;
+        hwState.animFrame = requestAnimationFrame(draw);
+        if (!hwState.canvas || !hwState._renderer) return;
+        hwState._frameIdx = (hwState._frameIdx + 1) | 0;
         // Visibility-aware skip (#246). Run BEFORE the !ready bail so
         // hide/show transitions during the loading / reconnect window
         // still propagate to listeners (a splitscreen-driven hide that
@@ -1440,17 +1443,17 @@ function createHighway() {
         // Previously the gate was a bare `if (!_lastVisible) return`, which
         // starved an active custom renderer's draw() on an override-hide — the
         // Tab View cursor froze in single-player (feedBack#734).
-        let _rendering = _lastVisible;
+        let _rendering = hwState._lastVisible;
         if (!_rendering
-            && _visibleOverride === false
-            && _renderer !== _defaultRenderer
-            && canvas && canvas.offsetParent !== null) {
+            && hwState._visibleOverride === false
+            && hwState._renderer !== _defaultRenderer
+            && hwState.canvas && hwState.canvas.offsetParent !== null) {
             _rendering = true;
         }
         // Don't let the debug HUD strand on screen while we're not actively
         // rendering (hidden, or WS not ready). It re-creates next frame once
         // rendering resumes and the flag is still on. (#654)
-        if (_perfHud && (!_rendering || !ready)) { _perfHud.remove(); _perfHud = null; }
+        if (hwState._perfHud && (!_rendering || !hwState.ready)) { hwState._perfHud.remove(); hwState._perfHud = null; }
         if (!_rendering) return;
         // Match pre-refactor behaviour: skip draw until WS ready fires.
         // This gates out the brief "arrays cleared, WS reconnecting"
@@ -1460,7 +1463,7 @@ function createHighway() {
         // we'd need to widen the contract to support that, out of
         // scope here. Default 2D renderer also checks `ready` in its
         // draw body (defence in depth).
-        if (!ready) return;
+        if (!hwState.ready) return;
         // Playback-aware throttle (#654). Reuse getTime()'s pause
         // signal: once an anchor exists, chartTime not advancing for
         // > _CHART_MAX_INTERP_MS means audio is paused/stalled (the
@@ -1470,40 +1473,40 @@ function createHighway() {
         // pinning the GPU re-rendering a static frame. Active playback
         // (clock advancing) is never throttled.
         let _paused = false;
-        if (!Number.isNaN(_chartAnchorPerfNow)) {
+        if (!Number.isNaN(hwState._chartAnchorPerfNow)) {
             const _nowP = performance.now();
-            if (_nowP - _chartLastAdvanceAt > _CHART_MAX_INTERP_MS) {
+            if (_nowP - hwState._chartLastAdvanceAt > _CHART_MAX_INTERP_MS) {
                 _paused = true;
-                if (_nowP - _lastPausedDrawAt < _PAUSED_FRAME_INTERVAL_MS) return;
-                _lastPausedDrawAt = _nowP;
+                if (_nowP - hwState._lastPausedDrawAt < _PAUSED_FRAME_INTERVAL_MS) return;
+                hwState._lastPausedDrawAt = _nowP;
             }
         }
         // Skip bundle allocation when the default renderer is active —
         // it reads closure state directly and ignores the bundle.
         // _makeBundle at 60fps was a steady GC churn for the common
         // case where no custom renderer is installed.
-        const bundle = _renderer === _defaultRenderer ? undefined : _makeBundle();
+        const bundle = hwState._renderer === _defaultRenderer ? undefined : _makeBundle();
         try {
             const _drawStart = performance.now();
-            _renderer.draw(bundle);
-            _rendererDrawFailures = 0;
+            hwState._renderer.draw(bundle);
+            hwState._rendererDrawFailures = 0;
             // Adaptive render-scale (#654): only adapt during active
             // playback — paused frames are throttled above, so their
             // timing isn't representative of the playback workload.
             if (!_paused) _adaptRenderScale(performance.now() - _drawStart);
             _updatePerfHud();
         } catch (e) {
-            _rendererDrawFailures += 1;
+            hwState._rendererDrawFailures += 1;
             console.error('renderer draw:', e);
             // Self-heal: a plugin whose draw() throws every frame
             // would otherwise spam the console and leave the canvas
             // blank indefinitely. After a short streak of failures,
             // revert to the built-in renderer so the user at least
             // gets the default highway back. 2D default is known-safe.
-            if (_rendererDrawFailures >= MAX_RENDERER_DRAW_FAILURES &&
-                _renderer !== _defaultRenderer) {
+            if (hwState._rendererDrawFailures >= MAX_RENDERER_DRAW_FAILURES &&
+                hwState._renderer !== _defaultRenderer) {
                 console.error(
-                    'renderer draw: failed ' + _rendererDrawFailures +
+                    'renderer draw: failed ' + hwState._rendererDrawFailures +
                     ' frames in a row; reverting to default renderer.'
                 );
                 _setRenderer(_defaultRenderer);
@@ -1524,35 +1527,35 @@ function createHighway() {
             const hw1 = W * 0.26 * p1.scale;
             const bright = 18 + 10 * p0.scale;
 
-            ctx.fillStyle = `rgb(${bright|0},${bright|0},${(bright+14)|0})`;
-            ctx.beginPath();
-            ctx.moveTo(W/2 - hw0, p0.y * H);
-            ctx.lineTo(W/2 + hw0, p0.y * H);
-            ctx.lineTo(W/2 + hw1, p1.y * H);
-            ctx.lineTo(W/2 - hw1, p1.y * H);
-            ctx.fill();
+            hwState.ctx.fillStyle = `rgb(${bright|0},${bright|0},${(bright+14)|0})`;
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(W/2 - hw0, p0.y * H);
+            hwState.ctx.lineTo(W/2 + hw0, p0.y * H);
+            hwState.ctx.lineTo(W/2 + hw1, p1.y * H);
+            hwState.ctx.lineTo(W/2 - hw1, p1.y * H);
+            hwState.ctx.fill();
         }
     }
 
     function drawFretLines(W, H) {
         const pad = 3;
         const lo = 0;
-        const hi = Math.ceil(displayMaxFret);
-        ctx.strokeStyle = '#2d2d45';
-        ctx.lineWidth = 1;
+        const hi = Math.ceil(hwState.displayMaxFret);
+        hwState.ctx.strokeStyle = '#2d2d45';
+        hwState.ctx.lineWidth = 1;
 
         for (let fret = lo; fret <= hi; fret++) {
             if (fret < 0) continue;
-            ctx.beginPath();
+            hwState.ctx.beginPath();
             for (let i = 0; i <= 40; i++) {
                 const t = (i / 40) * VISIBLE_SECONDS;
                 const p = project(t);
                 if (!p) continue;
                 const x = fretX(fret, p.scale, W);
-                if (i === 0) ctx.moveTo(x, p.y * H);
-                else ctx.lineTo(x, p.y * H);
+                if (i === 0) hwState.ctx.moveTo(x, p.y * H);
+                else hwState.ctx.lineTo(x, p.y * H);
             }
-            ctx.stroke();
+            hwState.ctx.stroke();
         }
     }
 
@@ -1560,21 +1563,21 @@ function createHighway() {
         // Window the beat scan — a long song carries thousands of beats
         // and iterating (and projecting) all of them per frame was pure
         // waste; project() culling stays as the safety net.
-        const lo = bsearchTime(beats, currentTime - 0.25);
-        const hi = bsearchTime(beats, currentTime + VISIBLE_SECONDS + 0.25);
+        const lo = bsearchTime(hwState.beats, hwState.currentTime - 0.25);
+        const hi = bsearchTime(hwState.beats, hwState.currentTime + VISIBLE_SECONDS + 0.25);
         for (let i = lo; i < hi; i++) {
-            const beat = beats[i];
-            const tOff = beat.time - currentTime;
+            const beat = hwState.beats[i];
+            const tOff = beat.time - hwState.currentTime;
             const p = project(tOff);
             if (!p || p.scale < 0.06) continue;
             const hw = W * 0.26 * p.scale;
             const isMeasure = beat.measure >= 0;
-            ctx.strokeStyle = isMeasure ? '#343450' : '#202038';
-            ctx.lineWidth = isMeasure ? 2 : 1;
-            ctx.beginPath();
-            ctx.moveTo(W/2 - hw, p.y * H);
-            ctx.lineTo(W/2 + hw, p.y * H);
-            ctx.stroke();
+            hwState.ctx.strokeStyle = isMeasure ? '#343450' : '#202038';
+            hwState.ctx.lineWidth = isMeasure ? 2 : 1;
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(W/2 - hw, p.y * H);
+            hwState.ctx.lineTo(W/2 + hw, p.y * H);
+            hwState.ctx.stroke();
         }
     }
 
@@ -1588,16 +1591,16 @@ function createHighway() {
         // slots, so 4 strings spread across the full band rather than
         // using the upper 4/6ths of the 6-string layout. The Math.max
         // guards against a hypothetical 1-string instrument (denom=0).
-        const span = Math.max(1, stringCount - 1);
-        for (let i = 0; i < stringCount; i++) {
-            const yi = _inverted ? (stringCount - 1 - i) : i;
+        const span = Math.max(1, hwState.stringCount - 1);
+        for (let i = 0; i < hwState.stringCount; i++) {
+            const yi = hwState._inverted ? (hwState.stringCount - 1 - i) : i;
             const y = strTop + (yi / span) * (strBot - strTop);
-            ctx.strokeStyle = STRING_COLORS[i] || '#888';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(margin, y);
-            ctx.lineTo(W - margin, y);
-            ctx.stroke();
+            hwState.ctx.strokeStyle = hwState.STRING_COLORS[i] || '#888';
+            hwState.ctx.lineWidth = 3;
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(margin, y);
+            hwState.ctx.lineTo(W - margin, y);
+            hwState.ctx.stroke();
         }
     }
 
@@ -1607,23 +1610,23 @@ function createHighway() {
         // Glow
         for (let i = 1; i < 5; i++) {
             const a = Math.max(0, 70 - i * 15);
-            ctx.strokeStyle = `rgba(${a},${a},${a+8},1)`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(W/2 - hw, y - i);
-            ctx.lineTo(W/2 + hw, y - i);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(W/2 - hw, y + i);
-            ctx.lineTo(W/2 + hw, y + i);
-            ctx.stroke();
+            hwState.ctx.strokeStyle = `rgba(${a},${a},${a+8},1)`;
+            hwState.ctx.lineWidth = 1;
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(W/2 - hw, y - i);
+            hwState.ctx.lineTo(W/2 + hw, y - i);
+            hwState.ctx.stroke();
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(W/2 - hw, y + i);
+            hwState.ctx.lineTo(W/2 + hw, y + i);
+            hwState.ctx.stroke();
         }
-        ctx.strokeStyle = '#dce0f0';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(W/2 - hw, y);
-        ctx.lineTo(W/2 + hw, y);
-        ctx.stroke();
+        hwState.ctx.strokeStyle = '#dce0f0';
+        hwState.ctx.lineWidth = 2;
+        hwState.ctx.beginPath();
+        hwState.ctx.moveTo(W/2 - hw, y);
+        hwState.ctx.lineTo(W/2 + hw, y);
+        hwState.ctx.stroke();
     }
 
     function drawNote(W, H, x, y, scale, string, fret, opts, ns) {
@@ -1649,14 +1652,14 @@ function createHighway() {
         // When lit, bump the body one step brighter and the backing-glow
         // one step up from STRING_DIM, so even shapes that don't get the
         // _paintGemGlow halo (the open-string bar) read as "lit".
-        const color = lit ? (ns.color || STRING_BRIGHT[string] || STRING_COLORS[string] || '#888') : (STRING_COLORS[string] || '#888');
-        const dark = lit ? (STRING_COLORS[string] || '#666') : (STRING_DIM[string] || '#222');
+        const color = lit ? (ns.color || hwState.STRING_BRIGHT[string] || hwState.STRING_COLORS[string] || '#888') : (hwState.STRING_COLORS[string] || '#888');
+        const dark = lit ? (hwState.STRING_COLORS[string] || '#666') : (hwState.STRING_DIM[string] || '#222');
 
         if (sz < 6) {
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(x, y, 2, 0, Math.PI * 2);
-            ctx.fill();
+            hwState.ctx.fillStyle = color;
+            hwState.ctx.beginPath();
+            hwState.ctx.arc(x, y, 2, 0, Math.PI * 2);
+            hwState.ctx.fill();
             return;
         }
 
@@ -1665,22 +1668,22 @@ function createHighway() {
             const hw = W * 0.26 * scale;
             const barH = Math.max(6, sz * 0.45);
             // Shadow
-            ctx.fillStyle = dark;
-            roundRect(ctx, W/2 - hw - 1, y - barH/2 - 1, hw * 2 + 2, barH + 2, 3);
-            ctx.fill();
+            hwState.ctx.fillStyle = dark;
+            roundRect(hwState.ctx, W/2 - hw - 1, y - barH/2 - 1, hw * 2 + 2, barH + 2, 3);
+            hwState.ctx.fill();
             // Body
-            ctx.fillStyle = color;
-            roundRect(ctx, W/2 - hw, y - barH/2, hw * 2, barH, 2);
-            ctx.fill();
+            hwState.ctx.fillStyle = color;
+            roundRect(hwState.ctx, W/2 - hw, y - barH/2, hw * 2, barH, 2);
+            hwState.ctx.fill();
             // Judgment glow (feedBack#254) — central halo on the bar.
             // _paintGemGlow takes a half-extent; barH is the full bar height.
             _paintGemGlow(W/2, y, barH * 0.5, string, ns);
             // "0" label
             const fontSize = Math.max(8, sz * 0.5) | 0;
-            ctx.fillStyle = '#fff';
-            ctx.font = `bold ${fontSize}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+            hwState.ctx.fillStyle = '#fff';
+            hwState.ctx.font = `bold ${fontSize}px sans-serif`;
+            hwState.ctx.textAlign = 'center';
+            hwState.ctx.textBaseline = 'middle';
             fillTextReadable('0', W/2, y);
 
             // Technique labels on open strings — PM, H/P/T, tremolo, and
@@ -1693,44 +1696,44 @@ function createHighway() {
                 // H / P / T above
                 if (hammerOn || pullOff || tap) {
                     const label = tap ? 'T' : (hammerOn ? 'H' : 'P');
-                    ctx.fillStyle = '#fff';
-                    ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'bottom';
+                    hwState.ctx.fillStyle = '#fff';
+                    hwState.ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
+                    hwState.ctx.textAlign = 'center';
+                    hwState.ctx.textBaseline = 'bottom';
                     fillTextReadable(label, W/2, y - barH/2 - 4);
                 }
                 // PM below
                 if (palmMute) {
-                    ctx.fillStyle = '#aaa';
-                    ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'top';
+                    hwState.ctx.fillStyle = '#aaa';
+                    hwState.ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
+                    hwState.ctx.textAlign = 'center';
+                    hwState.ctx.textBaseline = 'top';
                     fillTextReadable('PM', W/2, y + barH/2 + 2);
                 }
                 // Tremolo (wavy line above)
                 if (tremolo) {
                     const ty = y - barH/2 - 6;
-                    ctx.strokeStyle = '#ff0';
-                    ctx.lineWidth = 1.5;
-                    ctx.beginPath();
+                    hwState.ctx.strokeStyle = '#ff0';
+                    hwState.ctx.lineWidth = 1.5;
+                    hwState.ctx.beginPath();
                     for (let i = -3; i <= 3; i++) {
                         const wx = W/2 + i * sz * 0.08;
                         const wy = ty + Math.sin(i * 2) * 3;
-                        if (i === -3) ctx.moveTo(wx, wy);
-                        else ctx.lineTo(wx, wy);
+                        if (i === -3) hwState.ctx.moveTo(wx, wy);
+                        else hwState.ctx.lineTo(wx, wy);
                     }
-                    ctx.stroke();
+                    hwState.ctx.stroke();
                 }
                 // Accent caret above
                 if (accent) {
                     const ay2 = y - barH/2 - 4;
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(W/2 - sz * 0.2, ay2 + 3);
-                    ctx.lineTo(W/2, ay2 - 2);
-                    ctx.lineTo(W/2 + sz * 0.2, ay2 + 3);
-                    ctx.stroke();
+                    hwState.ctx.strokeStyle = '#fff';
+                    hwState.ctx.lineWidth = 2;
+                    hwState.ctx.beginPath();
+                    hwState.ctx.moveTo(W/2 - sz * 0.2, ay2 + 3);
+                    hwState.ctx.lineTo(W/2, ay2 - 2);
+                    hwState.ctx.lineTo(W/2 + sz * 0.2, ay2 + 3);
+                    hwState.ctx.stroke();
                 }
             }
             return;
@@ -1740,41 +1743,41 @@ function createHighway() {
             // Diamond shape for harmonics
             const dh = half * 1.15;
             // Glow
-            ctx.fillStyle = dark;
-            ctx.beginPath();
-            ctx.moveTo(x, y - dh - 3); ctx.lineTo(x + half + 3, y);
-            ctx.lineTo(x, y + dh + 3); ctx.lineTo(x - half - 3, y);
-            ctx.closePath(); ctx.fill();
+            hwState.ctx.fillStyle = dark;
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(x, y - dh - 3); hwState.ctx.lineTo(x + half + 3, y);
+            hwState.ctx.lineTo(x, y + dh + 3); hwState.ctx.lineTo(x - half - 3, y);
+            hwState.ctx.closePath(); hwState.ctx.fill();
             // Body
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.moveTo(x, y - dh); ctx.lineTo(x + half, y);
-            ctx.lineTo(x, y + dh); ctx.lineTo(x - half, y);
-            ctx.closePath(); ctx.fill();
+            hwState.ctx.fillStyle = color;
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(x, y - dh); hwState.ctx.lineTo(x + half, y);
+            hwState.ctx.lineTo(x, y + dh); hwState.ctx.lineTo(x - half, y);
+            hwState.ctx.closePath(); hwState.ctx.fill();
             // Bright outline
-            ctx.strokeStyle = STRING_BRIGHT[string] || '#fff';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(x, y - dh); ctx.lineTo(x + half, y);
-            ctx.lineTo(x, y + dh); ctx.lineTo(x - half, y);
-            ctx.closePath(); ctx.stroke();
+            hwState.ctx.strokeStyle = hwState.STRING_BRIGHT[string] || '#fff';
+            hwState.ctx.lineWidth = 2;
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(x, y - dh); hwState.ctx.lineTo(x + half, y);
+            hwState.ctx.lineTo(x, y + dh); hwState.ctx.lineTo(x - half, y);
+            hwState.ctx.closePath(); hwState.ctx.stroke();
             // PH label for pinch harmonics
             if (isPinchHarmonic && sz >= 14) {
-                ctx.fillStyle = '#ff0';
-                ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'top';
+                hwState.ctx.fillStyle = '#ff0';
+                hwState.ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
+                hwState.ctx.textAlign = 'center';
+                hwState.ctx.textBaseline = 'top';
                 fillTextReadable('PH', x, y + dh + 2);
             }
         } else {
             // Glow
-            ctx.fillStyle = dark;
-            roundRect(ctx, x - half - 4, y - half - 4, sz + 8, sz + 8, sz / 3);
-            ctx.fill();
+            hwState.ctx.fillStyle = dark;
+            roundRect(hwState.ctx, x - half - 4, y - half - 4, sz + 8, sz + 8, sz / 3);
+            hwState.ctx.fill();
             // Body
-            ctx.fillStyle = color;
-            roundRect(ctx, x - half, y - half, sz, sz, sz / 5);
-            ctx.fill();
+            hwState.ctx.fillStyle = color;
+            roundRect(hwState.ctx, x - half, y - half, sz, sz, sz / 5);
+            hwState.ctx.fill();
         }
 
         // Judgment glow (feedBack#254) — additive halo for a correct
@@ -1784,10 +1787,10 @@ function createHighway() {
 
         // Fret number
         const fontSize = Math.max(10, sz * 0.5) | 0;
-        ctx.fillStyle = '#fff';
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
+        hwState.ctx.fillStyle = '#fff';
+        hwState.ctx.font = `bold ${fontSize}px sans-serif`;
+        hwState.ctx.textAlign = 'center';
+        hwState.ctx.textBaseline = 'middle';
         fillTextReadable(String(fret), x, y);
 
         // Bend notation
@@ -1799,8 +1802,8 @@ function createHighway() {
             const hOf = (v) => sz * 0.55 * Math.min(Math.max(v, 0), 2);
             const bnv = Array.isArray(opts?.bnv) ? opts.bnv : null;
 
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = lw;
+            hwState.ctx.strokeStyle = '#fff';
+            hwState.ctx.lineWidth = lw;
 
             let labelTopY;  // y of the highest drawn point, for the label
             if (bnv && bnv.length >= 2) {
@@ -1810,38 +1813,38 @@ function createHighway() {
                 const pts = bnvNormalizedPoints(bnv, opts?.sus);
                 const gw = sz * 0.6;
                 const x0 = x - gw / 2;
-                ctx.beginPath();
+                hwState.ctx.beginPath();
                 pts.forEach((pt, i) => {
                     const px = x0 + pt.x * gw;
                     const py = ay - hOf(pt.v);
-                    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                    if (i === 0) hwState.ctx.moveTo(px, py); else hwState.ctx.lineTo(px, py);
                 });
-                ctx.stroke();
+                hwState.ctx.stroke();
                 // Arrowhead only when the gesture ends rising (plain bend /
                 // pre-bend); round-trip and release finish heading down.
                 const a = pts[pts.length - 2], b = pts[pts.length - 1];
                 if (b.v > a.v + 0.05) {
                     const tipX = x0 + b.x * gw, tipY = ay - hOf(b.v);
-                    ctx.beginPath();
-                    ctx.moveTo(tipX - sz * 0.1, tipY + sz * 0.12);
-                    ctx.lineTo(tipX, tipY);
-                    ctx.lineTo(tipX + sz * 0.1, tipY + sz * 0.12);
-                    ctx.stroke();
+                    hwState.ctx.beginPath();
+                    hwState.ctx.moveTo(tipX - sz * 0.1, tipY + sz * 0.12);
+                    hwState.ctx.lineTo(tipX, tipY);
+                    hwState.ctx.lineTo(tipX + sz * 0.1, tipY + sz * 0.12);
+                    hwState.ctx.stroke();
                 }
                 labelTopY = ay - hOf(Math.max(...pts.map(p => p.v)));
             } else {
                 // Fallback: single curved arrow up to the scalar peak.
                 const arrowH = hOf(bend);  // taller for bigger bends
                 const tipY = ay - arrowH;
-                ctx.beginPath();
-                ctx.moveTo(x, ay);
-                ctx.quadraticCurveTo(x + sz * 0.2, ay - arrowH * 0.5, x, tipY);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(x - sz * 0.12, tipY + sz * 0.12);
-                ctx.lineTo(x, tipY);
-                ctx.lineTo(x + sz * 0.12, tipY + sz * 0.12);
-                ctx.stroke();
+                hwState.ctx.beginPath();
+                hwState.ctx.moveTo(x, ay);
+                hwState.ctx.quadraticCurveTo(x + sz * 0.2, ay - arrowH * 0.5, x, tipY);
+                hwState.ctx.stroke();
+                hwState.ctx.beginPath();
+                hwState.ctx.moveTo(x - sz * 0.12, tipY + sz * 0.12);
+                hwState.ctx.lineTo(x, tipY);
+                hwState.ctx.lineTo(x + sz * 0.12, tipY + sz * 0.12);
+                hwState.ctx.stroke();
                 labelTopY = tipY;
             }
 
@@ -1853,10 +1856,10 @@ function createHighway() {
             else if (bend === 2) label = '2';
             else label = bend.toFixed(1);
 
-            ctx.fillStyle = '#fff';
-            ctx.font = `bold ${Math.max(9, sz * 0.28) | 0}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
+            hwState.ctx.fillStyle = '#fff';
+            hwState.ctx.font = `bold ${Math.max(9, sz * 0.28) | 0}px sans-serif`;
+            hwState.ctx.textAlign = 'center';
+            hwState.ctx.textBaseline = 'bottom';
             fillTextReadable(label, x, labelTopY - 2);
         }
 
@@ -1867,21 +1870,21 @@ function createHighway() {
         // right edge (T = thumb, 1..4), hideable via the finger-hints toggle; the
         // scale degree (sd) is opt-in and sits on the left edge so the two never
         // collide with the centred fret number.
-        const fgLabel = _showFingerHints ? teachingFingerLabel(opts?.fg) : '';
+        const fgLabel = hwState._showFingerHints ? teachingFingerLabel(opts?.fg) : '';
         if (fgLabel) {
-            ctx.fillStyle = '#7fd1ff';
-            ctx.font = `bold ${Math.max(8, sz * 0.26) | 0}px sans-serif`;
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
+            hwState.ctx.fillStyle = '#7fd1ff';
+            hwState.ctx.font = `bold ${Math.max(8, sz * 0.26) | 0}px sans-serif`;
+            hwState.ctx.textAlign = 'left';
+            hwState.ctx.textBaseline = 'middle';
             fillTextReadable(fgLabel, x + half + 2, y + half * 0.5);
         }
-        if (_showTeachingMarks) {
+        if (hwState._showTeachingMarks) {
             const sdLabel = teachingDegreeLabel(opts?.sd);
             if (sdLabel) {
-                ctx.fillStyle = '#ffcc66';
-                ctx.font = `bold ${Math.max(8, sz * 0.26) | 0}px sans-serif`;
-                ctx.textAlign = 'right';
-                ctx.textBaseline = 'middle';
+                hwState.ctx.fillStyle = '#ffcc66';
+                hwState.ctx.font = `bold ${Math.max(8, sz * 0.26) | 0}px sans-serif`;
+                hwState.ctx.textAlign = 'right';
+                hwState.ctx.textBaseline = 'middle';
                 fillTextReadable(sdLabel, x - half - 2, y + half * 0.5);
             }
         }
@@ -1894,20 +1897,20 @@ function createHighway() {
             const pitched = slide >= 0;
             const target = pitched ? slide : slu;
             const dir = target > fret ? -1 : 1;  // up or down the neck; mirror handles lefty
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = Math.max(2, sz / 10);
-            if (!pitched) ctx.setLineDash([Math.max(2, sz / 8), Math.max(2, sz / 8)]);
-            ctx.beginPath();
-            ctx.moveTo(x - sz * 0.3, y + dir * sz * 0.3);
-            ctx.lineTo(x + sz * 0.3, y - dir * sz * 0.3);
-            ctx.stroke();
-            if (!pitched) ctx.setLineDash([]);
+            hwState.ctx.strokeStyle = '#fff';
+            hwState.ctx.lineWidth = Math.max(2, sz / 10);
+            if (!pitched) hwState.ctx.setLineDash([Math.max(2, sz / 8), Math.max(2, sz / 8)]);
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(x - sz * 0.3, y + dir * sz * 0.3);
+            hwState.ctx.lineTo(x + sz * 0.3, y - dir * sz * 0.3);
+            hwState.ctx.stroke();
+            if (!pitched) hwState.ctx.setLineDash([]);
             // Arrowhead only for a pitched slide (definite target pitch).
             if (pitched) {
-                ctx.beginPath();
-                ctx.moveTo(x + sz * 0.3, y - dir * sz * 0.3);
-                ctx.lineTo(x + sz * 0.15, y - dir * sz * 0.15);
-                ctx.stroke();
+                hwState.ctx.beginPath();
+                hwState.ctx.moveTo(x + sz * 0.3, y - dir * sz * 0.3);
+                hwState.ctx.lineTo(x + sz * 0.15, y - dir * sz * 0.15);
+                hwState.ctx.stroke();
             }
         }
 
@@ -1915,47 +1918,47 @@ function createHighway() {
         if (hammerOn || pullOff || tap) {
             const label = tap ? 'T' : (hammerOn ? 'H' : 'P');
             const ly = y - half - (bend > 0 ? sz * 0.6 : 4);
-            ctx.fillStyle = '#fff';
-            ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
+            hwState.ctx.fillStyle = '#fff';
+            hwState.ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
+            hwState.ctx.textAlign = 'center';
+            hwState.ctx.textBaseline = 'bottom';
             fillTextReadable(label, x, ly);
         }
 
         // Palm mute (PM below note)
         if (palmMute) {
-            ctx.fillStyle = '#aaa';
-            ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
+            hwState.ctx.fillStyle = '#aaa';
+            hwState.ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
+            hwState.ctx.textAlign = 'center';
+            hwState.ctx.textBaseline = 'top';
             fillTextReadable('PM', x, y + half + 2);
         }
 
         // Tremolo (wavy line above)
         if (tremolo) {
             const ty = y - half - (bend > 0 ? sz * 0.7 : 6);
-            ctx.strokeStyle = '#ff0';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
+            hwState.ctx.strokeStyle = '#ff0';
+            hwState.ctx.lineWidth = 1.5;
+            hwState.ctx.beginPath();
             for (let i = -3; i <= 3; i++) {
                 const wx = x + i * sz * 0.08;
                 const wy = ty + Math.sin(i * 2) * 3;
-                if (i === -3) ctx.moveTo(wx, wy);
-                else ctx.lineTo(wx, wy);
+                if (i === -3) hwState.ctx.moveTo(wx, wy);
+                else hwState.ctx.lineTo(wx, wy);
             }
-            ctx.stroke();
+            hwState.ctx.stroke();
         }
 
         // Accent (> marker)
         if (accent) {
             const ay2 = y - half - 4;
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(x - sz * 0.2, ay2 + 3);
-            ctx.lineTo(x, ay2 - 2);
-            ctx.lineTo(x + sz * 0.2, ay2 + 3);
-            ctx.stroke();
+            hwState.ctx.strokeStyle = '#fff';
+            hwState.ctx.lineWidth = 2;
+            hwState.ctx.beginPath();
+            hwState.ctx.moveTo(x - sz * 0.2, ay2 + 3);
+            hwState.ctx.lineTo(x, ay2 - 2);
+            hwState.ctx.lineTo(x + sz * 0.2, ay2 + 3);
+            hwState.ctx.stroke();
         }
     }
 
@@ -1964,14 +1967,14 @@ function createHighway() {
         // without this, sustain bars for filtered-out notes would
         // still render, leaving orphan rectangles where no note head
         // is drawn.
-        const src = _filteredNotes !== null ? _filteredNotes : notes;
+        const src = hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
         for (const n of src) {
             if (n.sus <= 0.01) continue;
             const end = n.t + n.sus;
-            if (end < currentTime || n.t > currentTime + VISIBLE_SECONDS) continue;
+            if (end < hwState.currentTime || n.t > hwState.currentTime + VISIBLE_SECONDS) continue;
 
-            const t0 = Math.max(n.t - currentTime, 0);
-            const t1 = Math.min(end - currentTime, VISIBLE_SECONDS);
+            const t0 = Math.max(n.t - hwState.currentTime, 0);
+            const t1 = Math.min(end - hwState.currentTime, VISIBLE_SECONDS);
             if (t0 >= t1) continue;
 
             const p0 = project(t0), p1 = project(t1);
@@ -1989,21 +1992,21 @@ function createHighway() {
             // (the gem / overlay marks the miss; a red trail would be
             // noisy). Skip the lookup entirely when no provider is set —
             // zero cost in the hot loop for the common case.
-            const ns = _noteStateProvider ? _noteState(n, n.t) : null;
+            const ns = hwState._noteStateProvider ? _noteState(n, n.t) : null;
             const litTrail = !!(ns && ns.state !== 'miss');
             const y0 = p0.y * H, y1 = p1.y * H;
             if (litTrail) {
                 const a = ns.alpha;
-                const col = ns.color || STRING_BRIGHT[n.s] || STRING_COLORS[n.s] || '#666';
+                const col = ns.color || hwState.STRING_BRIGHT[n.s] || hwState.STRING_COLORS[n.s] || '#666';
                 // Per-note seed so neighbouring sustains shimmer
                 // independently. Math.floor(n.t * 60) is stable across
                 // frames yet drifts on song progression; combined with
                 // _frameIdx + n.s it gives a non-correlated walk through
                 // the LUT, matching the original visual intent
                 // (feedBack#254 comment above).
-                const seedBase = (_frameIdx + n.s + ((n.t * 60) | 0)) | 0;
-                ctx.save();
-                ctx.fillStyle = col;
+                const seedBase = (hwState._frameIdx + n.s + ((n.t * 60) | 0)) | 0;
+                hwState.ctx.save();
+                hwState.ctx.fillStyle = col;
                 // Shimmering glow WITHOUT ctx.shadowBlur: blur cost scales with
                 // the blurred DEVICE-pixel area, and a held sustain's trail can
                 // span half the (DPR-scaled) canvas — profiling the "stutters
@@ -2015,46 +2018,46 @@ function createHighway() {
                 const glowPx = (8 + 6 * _shimmerNoise(seedBase)) * a;
                 const baseA = (0.45 + 0.45 * a) * (0.78 + 0.22 * _shimmerNoise(seedBase + 17));
                 const fillTrail = (inflate) => {
-                    ctx.beginPath();
-                    ctx.moveTo(x0 - sw0 - inflate, y0);
-                    ctx.lineTo(x0 + sw0 + inflate, y0);
-                    ctx.lineTo(x1 + sw1 + inflate, y1);
-                    ctx.lineTo(x1 - sw1 - inflate, y1);
-                    ctx.fill();
+                    hwState.ctx.beginPath();
+                    hwState.ctx.moveTo(x0 - sw0 - inflate, y0);
+                    hwState.ctx.lineTo(x0 + sw0 + inflate, y0);
+                    hwState.ctx.lineTo(x1 + sw1 + inflate, y1);
+                    hwState.ctx.lineTo(x1 - sw1 - inflate, y1);
+                    hwState.ctx.fill();
                 };
-                ctx.globalAlpha = baseA * 0.22;
+                hwState.ctx.globalAlpha = baseA * 0.22;
                 fillTrail(glowPx);
-                ctx.globalAlpha = baseA * 0.4;
+                hwState.ctx.globalAlpha = baseA * 0.4;
                 fillTrail(glowPx * 0.45);
-                ctx.globalAlpha = baseA;
+                hwState.ctx.globalAlpha = baseA;
                 fillTrail(0);
                 // Crackling "current" — a jittery white core line down
                 // the trail, re-randomised each frame.
-                ctx.globalCompositeOperation = 'lighter';
-                ctx.globalAlpha = a * (0.55 + 0.45 * _shimmerNoise(seedBase + 31));
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = Math.max(1.5, sw0 * 0.5);
-                ctx.lineJoin = 'round';
-                ctx.lineCap = 'round';
-                ctx.beginPath();
+                hwState.ctx.globalCompositeOperation = 'lighter';
+                hwState.ctx.globalAlpha = a * (0.55 + 0.45 * _shimmerNoise(seedBase + 31));
+                hwState.ctx.strokeStyle = '#ffffff';
+                hwState.ctx.lineWidth = Math.max(1.5, sw0 * 0.5);
+                hwState.ctx.lineJoin = 'round';
+                hwState.ctx.lineCap = 'round';
+                hwState.ctx.beginPath();
                 const segs = 7;
                 for (let k = 0; k <= segs; k++) {
                     const f = k / segs;
                     const jx = (k === 0 || k === segs) ? 0 : (_shimmerNoise(seedBase + 47 + k) - 0.5) * sw0 * 2.2;
                     const xx = x0 + (x1 - x0) * f + jx;
                     const yy = y0 + (y1 - y0) * f;
-                    if (k === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+                    if (k === 0) hwState.ctx.moveTo(xx, yy); else hwState.ctx.lineTo(xx, yy);
                 }
-                ctx.stroke();
-                ctx.restore();
+                hwState.ctx.stroke();
+                hwState.ctx.restore();
             } else {
-                ctx.fillStyle = STRING_DIM[n.s] || '#333';
-                ctx.beginPath();
-                ctx.moveTo(x0 - sw0, y0);
-                ctx.lineTo(x0 + sw0, y0);
-                ctx.lineTo(x1 + sw1, y1);
-                ctx.lineTo(x1 - sw1, y1);
-                ctx.fill();
+                hwState.ctx.fillStyle = hwState.STRING_DIM[n.s] || '#333';
+                hwState.ctx.beginPath();
+                hwState.ctx.moveTo(x0 - sw0, y0);
+                hwState.ctx.lineTo(x0 + sw0, y0);
+                hwState.ctx.lineTo(x1 + sw1, y1);
+                hwState.ctx.lineTo(x1 - sw1, y1);
+                hwState.ctx.fill();
             }
         }
     }
@@ -2064,26 +2067,26 @@ function createHighway() {
         // phrase-level ladder data, render from the mastery-filtered
         // array. _filteredNotes stays null for slider-disabled sources
         // so rendering falls through to the flat notes array unchanged.
-        const src = _filteredNotes !== null ? _filteredNotes : notes;
+        const src = hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
         // Binary search for visible range
-        const tMin = currentTime - 0.25;
-        const tMax = currentTime + VISIBLE_SECONDS;
+        const tMin = hwState.currentTime - 0.25;
+        const tMax = hwState.currentTime + VISIBLE_SECONDS;
         let lo = bsearch(src, tMin);
         let hi = bsearch(src, tMax);
 
         // Include sustained notes
-        while (lo > 0 && src[lo-1].t + src[lo-1].sus > currentTime) lo--;
+        while (lo > 0 && src[lo-1].t + src[lo-1].sus > hwState.currentTime) lo--;
 
         // Collect drawn positions for unison bend detection
         const drawnNotes = [];
 
         for (let i = hi - 1; i >= lo; i--) {
             const n = src[i];
-            let tOff = n.t - currentTime;
+            let tOff = n.t - hwState.currentTime;
 
             // Hold sustained notes at now line
             let p;
-            if (tOff < -0.05 && n.sus > 0 && n.t + n.sus > currentTime) {
+            if (tOff < -0.05 && n.sus > 0 && n.t + n.sus > hwState.currentTime) {
                 p = { y: 0.82, scale: 1.0 };
             } else {
                 p = project(tOff);
@@ -2091,7 +2094,7 @@ function createHighway() {
             if (!p) continue;
 
             const x = fretX(n.f, p.scale, W);
-            drawNote(W, H, x, p.y * H, p.scale, n.s, n.f, n, _noteStateProvider ? _noteState(n, n.t) : null);
+            drawNote(W, H, x, p.y * H, p.scale, n.s, n.f, n, hwState._noteStateProvider ? _noteState(n, n.t) : null);
             drawnNotes.push({
                 t: n.t, s: n.s, f: n.f, bn: n.bn || 0, x, y: p.y * H, scale: p.scale,
                 ch: Number.isInteger(n.ch) ? n.ch : -1,
@@ -2105,7 +2108,7 @@ function createHighway() {
         // Scoped to standalone notes (the stream drawNotes renders); chord-note
         // strum groups aren't bracketed (the editor authors ch over single-note
         // selections, and chord notes already read as one simultaneous gesture).
-        if (_showTeachingMarks) drawStrumGroups(W, H, drawnNotes);
+        if (hwState._showTeachingMarks) drawStrumGroups(W, H, drawnNotes);
     }
 
     function drawStrumGroups(W, H, drawnNotes) {
@@ -2120,13 +2123,13 @@ function createHighway() {
             if (sz < 14) continue;
             const pkd = (group.find(p => p.pkd === 0 || p.pkd === 1) || {}).pkd;
 
-            ctx.save();
-            ctx.strokeStyle = '#c89bff';
-            ctx.lineWidth = Math.max(2, sz / 12);
-            ctx.lineJoin = 'round';
-            ctx.beginPath();
-            pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
-            ctx.stroke();
+            hwState.ctx.save();
+            hwState.ctx.strokeStyle = '#c89bff';
+            hwState.ctx.lineWidth = Math.max(2, sz / 12);
+            hwState.ctx.lineJoin = 'round';
+            hwState.ctx.beginPath();
+            pts.forEach((p, i) => (i === 0 ? hwState.ctx.moveTo(p.x, p.y) : hwState.ctx.lineTo(p.x, p.y)));
+            hwState.ctx.stroke();
             // Arrowhead at the gesture start: down-strum (pkd 0) points toward
             // the last gem, up-strum (pkd 1) toward the first.
             if (pkd === 0 || pkd === 1) {
@@ -2134,13 +2137,13 @@ function createHighway() {
                 const from = pkd === 1 ? pts[1] : pts[pts.length - 2];
                 const dy = Math.sign(head.y - from.y) || 1;
                 const a = sz * 0.18;
-                ctx.beginPath();
-                ctx.moveTo(head.x - a, head.y - dy * a);
-                ctx.lineTo(head.x, head.y);
-                ctx.lineTo(head.x + a, head.y - dy * a);
-                ctx.stroke();
+                hwState.ctx.beginPath();
+                hwState.ctx.moveTo(head.x - a, head.y - dy * a);
+                hwState.ctx.lineTo(head.x, head.y);
+                hwState.ctx.lineTo(head.x + a, head.y - dy * a);
+                hwState.ctx.stroke();
             }
-            ctx.restore();
+            hwState.ctx.restore();
         }
     }
 
@@ -2185,23 +2188,23 @@ function createHighway() {
                 const midX = (x1 + x2) / 2 + sz * 0.5;
                 const midY = (y1 + y2) / 2;
 
-                ctx.save();
-                ctx.strokeStyle = '#60d0ff';
-                ctx.lineWidth = Math.max(2, sz / 12);
-                ctx.setLineDash([4, 4]);
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.quadraticCurveTo(midX, midY, x2, y2);
-                ctx.stroke();
-                ctx.setLineDash([]);
-                ctx.restore();
+                hwState.ctx.save();
+                hwState.ctx.strokeStyle = '#60d0ff';
+                hwState.ctx.lineWidth = Math.max(2, sz / 12);
+                hwState.ctx.setLineDash([4, 4]);
+                hwState.ctx.beginPath();
+                hwState.ctx.moveTo(x1, y1);
+                hwState.ctx.quadraticCurveTo(midX, midY, x2, y2);
+                hwState.ctx.stroke();
+                hwState.ctx.setLineDash([]);
+                hwState.ctx.restore();
 
                 // "U" label at midpoint
                 const labelSz = Math.max(10, sz * 0.3) | 0;
-                ctx.fillStyle = '#60d0ff';
-                ctx.font = `bold ${labelSz}px sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
+                hwState.ctx.fillStyle = '#60d0ff';
+                hwState.ctx.font = `bold ${labelSz}px sans-serif`;
+                hwState.ctx.textAlign = 'center';
+                hwState.ctx.textBaseline = 'middle';
                 const cpX = (x1 + 2 * midX + x2) / 4;
                 const cpY = (y1 + 2 * midY + y2) / 4;
                 fillTextReadable('U', cpX + sz * 0.3, cpY);
@@ -2212,11 +2215,11 @@ function createHighway() {
     function drawChords(W, H) {
         // See drawNotes — _filteredChords is null for slider-disabled
         // sources so we fall through to the flat chords array.
-        const src = _filteredChords !== null ? _filteredChords : chords;
+        const src = hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords;
         _ensureChordRenderCache(src);
 
-        const tMin = currentTime - 0.25;
-        const tMax = currentTime + VISIBLE_SECONDS;
+        const tMin = hwState.currentTime - 0.25;
+        const tMax = hwState.currentTime + VISIBLE_SECONDS;
         const lo = bsearchChords(src, tMin);
         const hi = bsearchChords(src, tMax);
 
@@ -2225,7 +2228,7 @@ function createHighway() {
 
         for (let i = hi - 1; i >= lo; i--) {
             const ch = src[i];
-            const p = project(ch.t - currentTime);
+            const p = project(ch.t - hwState.currentTime);
             if (!p) continue;
 
             const info = _chordRenderInfo.get(ch);
@@ -2237,7 +2240,7 @@ function createHighway() {
             const actualSpread = Math.max(spread, minSpread);
             const actualTotalH = actualSpread * Math.max(0, sorted.length - 1);
 
-            const { tmpl, getTemplateFret } = getChordTemplateInfo(ch.id, chordTemplates);
+            const { tmpl, getTemplateFret } = getChordTemplateInfo(ch.id, hwState.chordTemplates);
             const hasNonZero = nonZeroNotes.length >= 1;
 
             const frameLeftFret = baseFret;
@@ -2270,24 +2273,24 @@ function createHighway() {
             if (allMuted) {
                 const { boxX, boxW, boxTop, boxH } = _computeChordBox(p, H, W, sorted, sz, actualSpread, baseFret);
 
-                ctx.strokeStyle = MUTE_BOX_STROKE;
-                ctx.lineWidth = Math.max(2, sz / 6);
-                roundRect(ctx, boxX, boxTop, boxW, boxH, 2);
-                ctx.stroke();
+                hwState.ctx.strokeStyle = MUTE_BOX_STROKE;
+                hwState.ctx.lineWidth = Math.max(2, sz / 6);
+                roundRect(hwState.ctx, boxX, boxTop, boxW, boxH, 2);
+                hwState.ctx.stroke();
 
-                ctx.fillStyle = MUTE_BOX_BAR;
-                ctx.fillRect(boxX, boxTop + 2, boxW, 4);
+                hwState.ctx.fillStyle = MUTE_BOX_BAR;
+                hwState.ctx.fillRect(boxX, boxTop + 2, boxW, 4);
 
                 // Gray X cross, centered in frame
                 const xInset = sz * 0.6;
                 const xStartX = boxX + xInset;
                 const xEndX = boxX + boxW - xInset;
-                ctx.beginPath();
-                ctx.moveTo(xStartX, boxTop + sz * 0.5);
-                ctx.lineTo(xEndX, boxTop + boxH - sz * 0.5);
-                ctx.moveTo(xEndX, boxTop + sz * 0.5);
-                ctx.lineTo(xStartX, boxTop + boxH - sz * 0.5);
-                ctx.stroke();
+                hwState.ctx.beginPath();
+                hwState.ctx.moveTo(xStartX, boxTop + sz * 0.5);
+                hwState.ctx.lineTo(xEndX, boxTop + boxH - sz * 0.5);
+                hwState.ctx.moveTo(xEndX, boxTop + sz * 0.5);
+                hwState.ctx.lineTo(xStartX, boxTop + boxH - sz * 0.5);
+                hwState.ctx.stroke();
 
                 continue;
             }
@@ -2296,12 +2299,12 @@ function createHighway() {
             if (!isFull) {
                 const { boxX, boxW, boxTop, boxH } = _computeChordBox(p, H, W, sorted, sz, actualSpread, baseFret);
 
-                ctx.fillStyle = REPEAT_BOX_FILL;
-                roundRect(ctx, boxX, boxTop, boxW, boxH, 2);
-                ctx.fill();
+                hwState.ctx.fillStyle = REPEAT_BOX_FILL;
+                roundRect(hwState.ctx, boxX, boxTop, boxW, boxH, 2);
+                hwState.ctx.fill();
 
-                ctx.fillStyle = REPEAT_BOX_BAR;
-                ctx.fillRect(boxX, boxTop + 2, boxW, 4);
+                hwState.ctx.fillStyle = REPEAT_BOX_BAR;
+                hwState.ctx.fillRect(boxX, boxTop + 2, boxW, 4);
 
                 continue;
             }
@@ -2317,12 +2320,12 @@ function createHighway() {
                 const barLeft = hasNonZero ? xMin : fretX(frameLeftFret, p.scale, W);
                 const barRight = hasNonZero ? xMax : fretX(frameRightFret, p.scale, W);
 
-                ctx.fillStyle = REPEAT_BOX_BAR;
-                ctx.lineWidth = Math.max(3, sz / 4);
-                roundRect(ctx, barLeft - 2, barY - 2, barRight - barLeft + 4, 4, 2);
-                ctx.fill();
+                hwState.ctx.fillStyle = REPEAT_BOX_BAR;
+                hwState.ctx.lineWidth = Math.max(3, sz / 4);
+                roundRect(hwState.ctx, barLeft - 2, barY - 2, barRight - barLeft + 4, 4, 2);
+                hwState.ctx.fill();
                 for (const pos of positions) {
-                    ctx.fillRect(pos.x - 2, barY, 4, pos.y - sz / 2 - barY);
+                    hwState.ctx.fillRect(pos.x - 2, barY, 4, pos.y - sz / 2 - barY);
                 }
             }
 
@@ -2336,10 +2339,10 @@ function createHighway() {
                     : (sorted.length >= 2
                         ? (fretX(frameLeftFret, p.scale, W) + fretX(frameRightFret, p.scale, W)) / 2
                         : fretX(sorted[0].f, p.scale, W));
-                ctx.fillStyle = '#fff';
-                ctx.font = `bold ${Math.max(14, sz * 0.45) | 0}px sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'bottom';
+                hwState.ctx.fillStyle = '#fff';
+                hwState.ctx.font = `bold ${Math.max(14, sz * 0.45) | 0}px sans-serif`;
+                hwState.ctx.textAlign = 'center';
+                hwState.ctx.textBaseline = 'bottom';
                 fillTextReadable(tmpl.name, labelX, labelY);
             }
 
@@ -2348,7 +2351,7 @@ function createHighway() {
             // chord name. Gated behind the teaching-marks opt-in (same overlay
             // class as sd/ch) so they don't clutter the default highway.
             // Display only — never grading.
-            if (_showTeachingMarks && !ch.hd && p.scale > 0.15 && sorted.length > 0) {
+            if (hwState._showTeachingMarks && !ch.hd && p.scale > 0.15 && sorted.length > 0) {
                 const { rn, voicing, caged, guideTones } = chordHarmonyLabels(
                     ch.fn, tmpl && tmpl.voicing, tmpl && tmpl.caged, tmpl && tmpl.guideTones);
                 if (rn || voicing || caged || guideTones) {
@@ -2361,27 +2364,27 @@ function createHighway() {
                     const nameY = hasNonZero
                         ? (p.y * H - actualTotalH / 2 - sz * 0.7 - sz * 0.4)
                         : (p.y * H - sz * 0.8);
-                    ctx.font = `bold ${Math.max(10, sz * 0.32) | 0}px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'bottom';
+                    hwState.ctx.font = `bold ${Math.max(10, sz * 0.32) | 0}px sans-serif`;
+                    hwState.ctx.textAlign = 'center';
+                    hwState.ctx.textBaseline = 'bottom';
                     let stackY = nameY - sz * 0.5;
                     if (rn) {
-                        ctx.fillStyle = '#ffcc66';   // matches the sd teaching color
+                        hwState.ctx.fillStyle = '#ffcc66';   // matches the sd teaching color
                         fillTextReadable(rn, hx, stackY);
                         stackY -= sz * 0.45;
                     }
                     if (voicing) {
-                        ctx.fillStyle = '#7fd1ff';   // matches the fg teaching color
+                        hwState.ctx.fillStyle = '#7fd1ff';   // matches the fg teaching color
                         fillTextReadable(voicing, hx, stackY);
                         stackY -= sz * 0.45;
                     }
                     if (caged) {
-                        ctx.fillStyle = '#a0ffa0';   // CAGED shape teaching color
+                        hwState.ctx.fillStyle = '#a0ffa0';   // CAGED shape teaching color
                         fillTextReadable(caged, hx, stackY);
                         stackY -= sz * 0.45;
                     }
                     if (guideTones) {
-                        ctx.fillStyle = '#d0a0ff';   // guide-tone teaching color
+                        hwState.ctx.fillStyle = '#d0a0ff';   // guide-tone teaching color
                         fillTextReadable(guideTones, hx, stackY);
                     }
                 }
@@ -2400,7 +2403,7 @@ function createHighway() {
                 const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
                 // feedBack#254 — per-string judgment, keyed by the
                 // chord's chart time (matches how note_detect stores it).
-                const cnNs = _noteStateProvider ? _noteState(cn, ch.t) : null;
+                const cnNs = hwState._noteStateProvider ? _noteState(cn, ch.t) : null;
 
                 // Open-string-in-chord wide bar — only when the note has no
                 // technique flags. Otherwise fall back to drawNote so PM /
@@ -2408,23 +2411,23 @@ function createHighway() {
                 // is the only path that emits those labels).
                 if (getTemplateFret(cn) === 0 && hasMultipleNotes && !_noteHasTechniqueFlags(cn)) {
                     const litBar = !!(cnNs && cnNs.state !== 'miss');
-                    const color = litBar ? (cnNs.color || STRING_BRIGHT[cn.s] || STRING_COLORS[cn.s] || '#888') : (STRING_COLORS[cn.s] || '#888');
-                    const dark = litBar ? (STRING_COLORS[cn.s] || '#666') : (STRING_DIM[cn.s] || '#222');
+                    const color = litBar ? (cnNs.color || hwState.STRING_BRIGHT[cn.s] || hwState.STRING_COLORS[cn.s] || '#888') : (hwState.STRING_COLORS[cn.s] || '#888');
+                    const dark = litBar ? (hwState.STRING_COLORS[cn.s] || '#666') : (hwState.STRING_DIM[cn.s] || '#222');
                     const barH = sz;
                     const barLeft = fretX(frameLeftFret, p.scale, W);
                     const barRight = fretX(frameRightFret, p.scale, W);
-                    ctx.fillStyle = dark;
-                    roundRect(ctx, barLeft - 1, ny - barH / 2 - 1, barRight - barLeft + 2, barH + 2, 3);
-                    ctx.fill();
-                    ctx.fillStyle = color;
-                    roundRect(ctx, barLeft, ny - barH / 2, barRight - barLeft, barH, 2);
-                    ctx.fill();
+                    hwState.ctx.fillStyle = dark;
+                    roundRect(hwState.ctx, barLeft - 1, ny - barH / 2 - 1, barRight - barLeft + 2, barH + 2, 3);
+                    hwState.ctx.fill();
+                    hwState.ctx.fillStyle = color;
+                    roundRect(hwState.ctx, barLeft, ny - barH / 2, barRight - barLeft, barH, 2);
+                    hwState.ctx.fill();
                     _paintGemGlow((barLeft + barRight) / 2, ny, barH * 0.5, cn.s, cnNs);
                     const fontSize = Math.max(8, sz * 0.5) | 0;
-                    ctx.fillStyle = '#fff';
-                    ctx.font = `bold ${fontSize}px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
+                    hwState.ctx.fillStyle = '#fff';
+                    hwState.ctx.font = `bold ${fontSize}px sans-serif`;
+                    hwState.ctx.textAlign = 'center';
+                    hwState.ctx.textBaseline = 'middle';
                     fillTextReadable('0', (barLeft + barRight) / 2, ny);
                 } else {
                     drawNote(W, H, x, ny, p.scale, cn.s, cn.f, { ...cn, chord: true }, cnNs);
@@ -2455,22 +2458,22 @@ function createHighway() {
                     const midX = (x1 + x2) / 2 + sz * 0.5;
                     const midY = (y1 + y2) / 2;
 
-                    ctx.save();
-                    ctx.strokeStyle = '#60d0ff';
-                    ctx.lineWidth = Math.max(2, sz / 12);
-                    ctx.setLineDash([4, 4]);
-                    ctx.beginPath();
-                    ctx.moveTo(x1, y1);
-                    ctx.quadraticCurveTo(midX, midY, x2, y2);
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-                    ctx.restore();
+                    hwState.ctx.save();
+                    hwState.ctx.strokeStyle = '#60d0ff';
+                    hwState.ctx.lineWidth = Math.max(2, sz / 12);
+                    hwState.ctx.setLineDash([4, 4]);
+                    hwState.ctx.beginPath();
+                    hwState.ctx.moveTo(x1, y1);
+                    hwState.ctx.quadraticCurveTo(midX, midY, x2, y2);
+                    hwState.ctx.stroke();
+                    hwState.ctx.setLineDash([]);
+                    hwState.ctx.restore();
 
                     const labelSz = Math.max(10, sz * 0.3) | 0;
-                    ctx.fillStyle = '#60d0ff';
-                    ctx.font = `bold ${labelSz}px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
+                    hwState.ctx.fillStyle = '#60d0ff';
+                    hwState.ctx.font = `bold ${labelSz}px sans-serif`;
+                    hwState.ctx.textAlign = 'center';
+                    hwState.ctx.textBaseline = 'middle';
                     const cpX = (x1 + 2 * midX + x2) / 4;
                     const cpY = (y1 + 2 * midY + y2) / 4;
                     fillTextReadable('U', cpX + sz * 0.3, cpY);
@@ -2483,25 +2486,25 @@ function createHighway() {
         const y = H * 0.97;
         const pad = 3;
         const lo = 0;
-        const hi = Math.ceil(displayMaxFret);
-        const anchor = getAnchorAt(currentTime);
+        const hi = Math.ceil(hwState.displayMaxFret);
+        const anchor = getAnchorAt(hwState.currentTime);
 
-        ctx.font = 'bold 20px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
+        hwState.ctx.font = 'bold 20px sans-serif';
+        hwState.ctx.textAlign = 'center';
+        hwState.ctx.textBaseline = 'middle';
 
         for (let fret = lo; fret <= hi; fret++) {
             if (fret < 0) continue;
             const x = fretX(fret, 1.0, W);
             const inAnchor = fret >= anchor.fret && fret <= anchor.fret + anchor.width;
-            ctx.fillStyle = inAnchor ? '#e8c040' : '#8a6830';
+            hwState.ctx.fillStyle = inAnchor ? '#e8c040' : '#8a6830';
             fillTextReadable(String(fret), x, y);
         }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
     function drawLyrics(W, H) {
-        if (!lyrics.length) return;
+        if (!hwState.lyrics.length) return;
 
         const fontSize = Math.max(18, H * 0.028) | 0;
         const lineY = H * 0.04;
@@ -2510,7 +2513,7 @@ function createHighway() {
         // next one into a single word (no space); a trailing "+" marks the end
         // of an authored line. Build a flat list of authored lines so we can
         // cap rendering to a 2-line rolling window (current + upcoming).
-        if (!lyrics._lines) {
+        if (!hwState.lyrics._lines) {
             const lines = [];
             let line = null, word = null;
 
@@ -2524,8 +2527,8 @@ function createHighway() {
                 line = null;
             };
 
-            for (let i = 0; i < lyrics.length; i++) {
-                const l = lyrics[i];
+            for (let i = 0; i < hwState.lyrics.length; i++) {
+                const l = hwState.lyrics[i];
                 const raw = l.w || '';
                 const endsLine = raw.endsWith('+');
                 const continuesWord = raw.endsWith('-');
@@ -2533,7 +2536,7 @@ function createHighway() {
                 // Safety fallback: if a song has no "+" markers at all, force a
                 // line break on any gap > 4s so we never build a single giant line.
                 if (line && i > 0) {
-                    const prev = lyrics[i - 1];
+                    const prev = hwState.lyrics[i - 1];
                     if (l.t - (prev.t + prev.d) > 4.0) flushLine();
                 }
 
@@ -2548,21 +2551,21 @@ function createHighway() {
             }
             flushLine();
 
-            lyrics._lines = lines;
+            hwState.lyrics._lines = lines;
         }
 
-        const allLines = lyrics._lines;
+        const allLines = hwState.lyrics._lines;
         if (!allLines.length) return;
 
         // Current line = most recently started line. Before the first line has
         // started, preview the first line if it's within 2s of starting.
         let currentIdx = -1;
         for (let i = 0; i < allLines.length; i++) {
-            if (allLines[i].start <= currentTime) currentIdx = i;
+            if (allLines[i].start <= hwState.currentTime) currentIdx = i;
             else break;
         }
         if (currentIdx === -1) {
-            if (allLines[0].start - currentTime > 2.0) return;
+            if (allLines[0].start - hwState.currentTime > 2.0) return;
             currentIdx = 0;
         }
 
@@ -2571,7 +2574,7 @@ function createHighway() {
         const gapToNext = nextLine ? (nextLine.start - currentLine.end) : Infinity;
 
         // Hide once the current line is clearly over and nothing relevant follows.
-        if (currentTime > currentLine.end + 0.5 && gapToNext > 3.0) return;
+        if (hwState.currentTime > currentLine.end + 0.5 && gapToNext > 3.0) return;
 
         const linesToShow = [currentLine];
         if (nextLine && gapToNext <= 3.0) linesToShow.push(nextLine);
@@ -2581,8 +2584,8 @@ function createHighway() {
             return (t.endsWith('+') || t.endsWith('-')) ? t.slice(0, -1) : t;
         };
 
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        const spaceWidth = _measureLyricText(ctx, fontSize, ' ');
+        hwState.ctx.font = `bold ${fontSize}px sans-serif`;
+        const spaceWidth = _measureLyricText(hwState.ctx, fontSize, ' ');
         const maxWidth = W * 0.8;
 
         // Respect authored line breaks; wrap only if a line overflows maxWidth.
@@ -2594,7 +2597,7 @@ function createHighway() {
                 let wordWidth = 0;
                 for (const s of wordSyls) {
                     const text = sylText(s);
-                    const w = _measureLyricText(ctx, fontSize, text);
+                    const w = _measureLyricText(hwState.ctx, fontSize, text);
                     parts.push({ syl: s, text, width: w });
                     wordWidth += w;
                 }
@@ -2618,12 +2621,12 @@ function createHighway() {
         }
         bgWidth = Math.min(bgWidth + 30, W * 0.85);
 
-        ctx.fillStyle = 'rgba(0,0,0,0.7)';
-        roundRect(ctx, W/2 - bgWidth/2, lineY - 4, bgWidth, totalHeight, 8);
-        ctx.fill();
+        hwState.ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        roundRect(hwState.ctx, W/2 - bgWidth/2, lineY - 4, bgWidth, totalHeight, 8);
+        hwState.ctx.fill();
 
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
+        hwState.ctx.textAlign = 'left';
+        hwState.ctx.textBaseline = 'top';
 
         for (let r = 0; r < rows.length; r++) {
             const row = rows[r];
@@ -2634,21 +2637,21 @@ function createHighway() {
             for (const w of row) {
                 for (const part of w.parts) {
                     const l = part.syl;
-                    const isActive = currentTime >= l.t && currentTime < l.t + l.d;
-                    const isPast = currentTime >= l.t + l.d;
+                    const isActive = hwState.currentTime >= l.t && hwState.currentTime < l.t + l.d;
+                    const isPast = hwState.currentTime >= l.t + l.d;
 
                     if (isActive) {
-                        ctx.fillStyle = '#4ae0ff';
-                        ctx.font = `bold ${fontSize}px sans-serif`;
+                        hwState.ctx.fillStyle = '#4ae0ff';
+                        hwState.ctx.font = `bold ${fontSize}px sans-serif`;
                     } else if (isPast) {
-                        ctx.fillStyle = '#8899aa';
-                        ctx.font = `normal ${fontSize}px sans-serif`;
+                        hwState.ctx.fillStyle = '#8899aa';
+                        hwState.ctx.font = `normal ${fontSize}px sans-serif`;
                     } else {
-                        ctx.fillStyle = '#556677';
-                        ctx.font = `normal ${fontSize}px sans-serif`;
+                        hwState.ctx.fillStyle = '#556677';
+                        hwState.ctx.font = `normal ${fontSize}px sans-serif`;
                     }
 
-                    ctx.fillText(part.text, xPos, yPos);
+                    hwState.ctx.fillText(part.text, xPos, yPos);
                     xPos += part.width;
                 }
                 xPos += spaceWidth;
@@ -2742,12 +2745,12 @@ function createHighway() {
     // reconnect() so per-song state (preview, frame-mismatch warnings,
     // chain cache) doesn't leak across songs that reuse chord IDs.
     function _resetChordRenderState() {
-        _lastChordOnFretLine = null;
-        _chordFretLineNotes = [];
+        hwState._lastChordOnFretLine = null;
+        hwState._chordFretLineNotes = [];
         _frameMismatchWarned.clear();
-        _chordRenderCacheSrc = null;
-        _chordRenderCacheInverted = null;
-        _chordRenderCacheTemplates = null;
+        hwState._chordRenderCacheSrc = null;
+        hwState._chordRenderCacheInverted = null;
+        hwState._chordRenderCacheTemplates = null;
     }
 
     // True if a chord note carries per-strum technique data (bend,
@@ -2784,18 +2787,18 @@ function createHighway() {
     // Two passes over the array: chain bounds, then base-fret resolution
     // (which can read previous chord's cached baseFret).
     function _ensureChordRenderCache(src) {
-        const templatesChanged = _chordRenderCacheTemplates !== chordTemplates;
-        if (_chordRenderCacheSrc === src && _chordRenderCacheInverted === _inverted && !templatesChanged) return;
-        _chordRenderCacheSrc = src;
-        _chordRenderCacheInverted = _inverted;
-        _chordRenderCacheTemplates = chordTemplates;
+        const templatesChanged = hwState._chordRenderCacheTemplates !== hwState.chordTemplates;
+        if (hwState._chordRenderCacheSrc === src && hwState._chordRenderCacheInverted === hwState._inverted && !templatesChanged) return;
+        hwState._chordRenderCacheSrc = src;
+        hwState._chordRenderCacheInverted = hwState._inverted;
+        hwState._chordRenderCacheTemplates = hwState.chordTemplates;
         // Templates feed isOpen() — when they land after `chords`,
         // _updateFretLinePreview's stashed open/non-open classification
         // for the currently-active chord is also stale. It only refreshes
         // on the next chord transition, so force a refresh here.
         if (templatesChanged) {
-            _lastChordOnFretLine = null;
-            _chordFretLineNotes = [];
+            hwState._lastChordOnFretLine = null;
+            hwState._chordFretLineNotes = [];
             // Also clear the once-per-chord-id frame-mismatch warner —
             // a chord ID warned against stale (missing/empty) templates
             // would otherwise never be re-validated against the
@@ -2844,8 +2847,8 @@ function createHighway() {
         for (let i = 0; i < src.length; i++) {
             const ch = src[i];
             const info = _chordRenderInfo.get(ch);
-            const { isOpen } = getChordTemplateInfo(ch.id, chordTemplates);
-            const sortedNotes = [...ch.notes].sort((a, b) => _inverted ? b.s - a.s : a.s - b.s);
+            const { isOpen } = getChordTemplateInfo(ch.id, hwState.chordTemplates);
+            const sortedNotes = [...ch.notes].sort((a, b) => hwState._inverted ? b.s - a.s : a.s - b.s);
             const nonZero = sortedNotes.filter(cn => !isOpen(cn));
             const nonZeroFrets = nonZero.map(cn => cn.f);
             if (nonZero.length >= 1) {
@@ -2892,7 +2895,7 @@ function createHighway() {
     // only when the active chord changes (lets the preview persist while a
     // chord is held).
     function _updateFretLinePreview(src, lo, hi) {
-        const targetTime = currentTime + FRETLINE_TARGET_OFFSET;
+        const targetTime = hwState.currentTime + FRETLINE_TARGET_OFFSET;
         let activeChord = null;
         let activeNotesOnFret = [];
         let bestChordTime = -Infinity;
@@ -2904,7 +2907,7 @@ function createHighway() {
                 ch.t > bestChordTime) {
                 bestChordTime = ch.t;
                 activeChord = ch;
-                const { isOpen } = getChordTemplateInfo(ch.id, chordTemplates);
+                const { isOpen } = getChordTemplateInfo(ch.id, hwState.chordTemplates);
                 const nonZero = ch.notes.filter(cn => !isOpen(cn));
                 activeNotesOnFret = nonZero.length >= 1 ? nonZero.map(cn => ({ s: cn.s, f: cn.f })) : [];
             }
@@ -2913,10 +2916,10 @@ function createHighway() {
         if (activeChord === null) {
             for (let i = lo; i < hi; i++) {
                 const ch = src[i];
-                const p = project(ch.t - currentTime);
+                const p = project(ch.t - hwState.currentTime);
                 if (!p) continue;
                 activeChord = ch;
-                const { isOpen } = getChordTemplateInfo(ch.id, chordTemplates);
+                const { isOpen } = getChordTemplateInfo(ch.id, hwState.chordTemplates);
                 const nonZero = ch.notes.filter(cn => !isOpen(cn));
                 activeNotesOnFret = nonZero.length >= 1 ? nonZero.map(cn => ({ s: cn.s, f: cn.f })) : [];
                 break;
@@ -2927,14 +2930,14 @@ function createHighway() {
         // the same chord template are different objects, so a chain like
         // (G normal) → (G all-muted) refreshes the preview instead of
         // leaving the first strum's fingerings stuck on the fret line.
-        if (activeChord !== _lastChordOnFretLine) {
-            _chordFretLineNotes = activeNotesOnFret;
-            _lastChordOnFretLine = activeChord;
+        if (activeChord !== hwState._lastChordOnFretLine) {
+            hwState._chordFretLineNotes = activeNotesOnFret;
+            hwState._lastChordOnFretLine = activeChord;
         }
     }
 
     function _drawFretLineChordPreview(W, H) {
-        if (_chordFretLineNotes.length === 0) return;
+        if (hwState._chordFretLineNotes.length === 0) return;
         const strTop = H * 0.83;
         const strBot = H * 0.95;
         // Scale glyphs with H so preview stays proportionate at any
@@ -2942,18 +2945,18 @@ function createHighway() {
         // hardcoded 30px diameter / 24px font at H=900.
         const noteSize = Math.max(14, H * 0.033);
         const fontSize = Math.max(11, H * 0.027) | 0;
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        for (const cn of _chordFretLineNotes) {
-            const yi = _inverted ? 5 - cn.s : cn.s;
+        hwState.ctx.font = `bold ${fontSize}px sans-serif`;
+        hwState.ctx.textAlign = 'center';
+        hwState.ctx.textBaseline = 'middle';
+        for (const cn of hwState._chordFretLineNotes) {
+            const yi = hwState._inverted ? 5 - cn.s : cn.s;
             const syl = strTop + (yi / 5) * (strBot - strTop);
             const fretXPos = fretX(cn.f, 1, W);
-            ctx.fillStyle = STRING_COLORS[cn.s] || '#888';
-            ctx.beginPath();
-            ctx.arc(fretXPos, syl, noteSize / 2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#fff';
+            hwState.ctx.fillStyle = hwState.STRING_COLORS[cn.s] || '#888';
+            hwState.ctx.beginPath();
+            hwState.ctx.arc(fretXPos, syl, noteSize / 2, 0, Math.PI * 2);
+            hwState.ctx.fill();
+            hwState.ctx.fillStyle = '#fff';
             fillTextReadable(String(cn.f), fretXPos, syl);
         }
     }
@@ -2973,12 +2976,12 @@ function createHighway() {
         // at `[]` in practice (it'd require the `phrases` message to
         // fire with zero data), but the defensive guard means a bug
         // on the way in wouldn't blank the chart.
-        if (_phrases === null || _phrases.length === 0) {
-            _filteredNotes = null;
-            _filteredChords = null;
-            _filteredAnchors = null;
-            _filteredHandShapes = null;
-            _phrasesHaveHandShapes = false;
+        if (hwState._phrases === null || hwState._phrases.length === 0) {
+            hwState._filteredNotes = null;
+            hwState._filteredChords = null;
+            hwState._filteredAnchors = null;
+            hwState._filteredHandShapes = null;
+            hwState._phrasesHaveHandShapes = false;
             return;
         }
         const outNotes = [];
@@ -2992,14 +2995,14 @@ function createHighway() {
         // didn't ship handshapes via phrases at all and we should fall
         // back to the flat arrangement-root list (DLC pattern).
         let anyHandShapeInPhrases = false;
-        for (const p of _phrases) {
+        for (const p of hwState._phrases) {
             const n = p.levels.length;
             if (n === 0) continue;
             // Map slider fraction to a level index. `n` already equals
             // `max_difficulty + 1` for fully-authored phrases, and
             // equals the authored-level count otherwise — so indexing
             // into p.levels.length is both correct and defensive.
-            const idx = Math.min(n - 1, Math.floor(_mastery * n));
+            const idx = Math.min(n - 1, Math.floor(hwState._mastery * n));
             const lv = p.levels[idx];
             for (const x of lv.notes)   outNotes.push(x);
             for (const x of lv.chords)  outChords.push(x);
@@ -3018,22 +3021,22 @@ function createHighway() {
                 }
             }
         }
-        _filteredNotes = outNotes;
-        _filteredChords = outChords;
-        _filteredAnchors = outAnchors;
+        hwState._filteredNotes = outNotes;
+        hwState._filteredChords = outChords;
+        hwState._filteredAnchors = outAnchors;
         if (outHandShapes.length) {
             outHandShapes.sort((a, b) => a.start_time - b.start_time);
         }
-        _filteredHandShapes = outHandShapes;
-        _phrasesHaveHandShapes = anyHandShapeInPhrases;
+        hwState._filteredHandShapes = outHandShapes;
+        hwState._phrasesHaveHandShapes = anyHandShapeInPhrases;
     }
 
     // ── Public API ───────────────────────────────────────────────────────
     const api = {
         init(canvasEl, container) {
-            canvas = canvasEl;
-            _resizeContainer = container || null;
-            _domVisSampledFrame = NaN; // new mount → fresh DOM sample
+            hwState.canvas = canvasEl;
+            hwState._resizeContainer = container || null;
+            hwState._domVisSampledFrame = NaN; // new mount → fresh DOM sample
             // Size the canvas BEFORE installing the renderer so
             // _setRenderer's init/resize calls see the real dimensions
             // instead of the default 300x150 backing store. Otherwise
@@ -3052,35 +3055,35 @@ function createHighway() {
             // successfully init'd before this mount (so a pre-selected
             // renderer that never saw a canvas gets init'd fresh, not
             // destroy+init'd).
-            _setRenderer(_renderer || _defaultRenderer);
-            if (_resizeHandler) window.removeEventListener('resize', _resizeHandler);
-            _resizeHandler = () => this.resize();
-            window.addEventListener('resize', _resizeHandler);
-            ready = false;
-            notes = []; chords = []; handShapes = []; beats = []; sections = []; anchors = []; chordTemplates = []; lyrics = []; lyricsSource = ""; toneChanges = []; toneBase = ""; drumTab = null;
-            stringCount = 6;  // default until song_info arrives
+            _setRenderer(hwState._renderer || _defaultRenderer);
+            if (hwState._resizeHandler) window.removeEventListener('resize', hwState._resizeHandler);
+            hwState._resizeHandler = () => this.resize();
+            window.addEventListener('resize', hwState._resizeHandler);
+            hwState.ready = false;
+            hwState.notes = []; hwState.chords = []; hwState.handShapes = []; hwState.beats = []; hwState.sections = []; hwState.anchors = []; hwState.chordTemplates = []; hwState.lyrics = []; hwState.lyricsSource = ""; hwState.toneChanges = []; hwState.toneBase = ""; hwState.drumTab = null;
+            hwState.stringCount = 6;  // default until song_info arrives
             // Reset phrase ladder + filter (feedBack#48). _mastery
             // persists across arrangement switches — the slider's
             // position stays put. Filter rebuilds on the next `ready`
             // once the new arrangement's phrases arrive (or stays
             // disabled if the new source has no phrase data).
-            _phrases = null;
-            _filteredNotes = null;
-            _filteredChords = null;
-            _filteredAnchors = null;
-            _filteredHandShapes = null;
-            _phrasesHaveHandShapes = false;
+            hwState._phrases = null;
+            hwState._filteredNotes = null;
+            hwState._filteredChords = null;
+            hwState._filteredAnchors = null;
+            hwState._filteredHandShapes = null;
+            hwState._phrasesHaveHandShapes = false;
             _resetChordRenderState();
         },
 
         resize() {
-            if (!canvas) return;
+            if (!hwState.canvas) return;
             // Layout just changed (window resize / container swap) —
             // re-sample DOM visibility on the next check.
-            _domVisSampledFrame = NaN;
+            hwState._domVisSampledFrame = NaN;
             let w, h;
-            if (_resizeContainer) {
-                const rect = _resizeContainer.getBoundingClientRect();
+            if (hwState._resizeContainer) {
+                const rect = hwState._resizeContainer.getBoundingClientRect();
                 w = rect.width;
                 h = rect.height;
             } else {
@@ -3093,10 +3096,10 @@ function createHighway() {
                 w = document.documentElement.clientWidth;
                 h = document.documentElement.clientHeight - controlsH;
             }
-            canvas.style.width = w + 'px';
-            canvas.style.height = h + 'px';
-            canvas.width = Math.round(w * _effectiveRenderScale());
-            canvas.height = Math.round(h * _effectiveRenderScale());
+            hwState.canvas.style.width = w + 'px';
+            hwState.canvas.style.height = h + 'px';
+            hwState.canvas.width = Math.round(w * _effectiveRenderScale());
+            hwState.canvas.height = Math.round(h * _effectiveRenderScale());
             // Notify the active renderer so WebGL / offscreen buffers
             // can recreate their framebuffers. Setting canvas.width
             // above already invalidates both 2D and WebGL state — any
@@ -3109,8 +3112,8 @@ function createHighway() {
             // that assume resize() means "canvas dims changed after
             // setup." The subsequent api.init will call its resize()
             // once init succeeds.
-            if (_renderer && _rendererInited && typeof _renderer.resize === 'function') {
-                try { _renderer.resize(canvas.width, canvas.height); }
+            if (hwState._renderer && hwState._rendererInited && typeof hwState._renderer.resize === 'function') {
+                try { hwState._renderer.resize(hwState.canvas.width, hwState.canvas.height); }
                 catch (e) { console.error('renderer resize:', e); }
             }
         },
@@ -3121,12 +3124,12 @@ function createHighway() {
             // bad caller can't poison _renderScale and blank the canvas;
             // keep the current scale in that case. Mirrors the load guard.
             if (!Number.isFinite(v)) return;
-            _renderScale = Math.max(0.25, Math.min(1, v));
-            localStorage.setItem('renderScale', _renderScale);
+            hwState._renderScale = Math.max(0.25, Math.min(1, v));
+            localStorage.setItem('renderScale', hwState._renderScale);
             this.resize();
         },
 
-        getRenderScale() { return _renderScale; },
+        getRenderScale() { return hwState._renderScale; },
 
         // Floor for the load-adaptive render scale (#654). 0.25 = stock (allows
         // quarter-res on heavy frames), 1.0 = never auto-downscale below the
@@ -3137,16 +3140,16 @@ function createHighway() {
         setMinRenderScale(scale) {
             const v = Number(scale);
             if (!Number.isFinite(v)) return;
-            _autoScaleMin = Math.max(_AUTO_SCALE_MIN, Math.min(1, v));
+            hwState._autoScaleMin = Math.max(_AUTO_SCALE_MIN, Math.min(1, v));
             // Pull the live multiplier back within the new bounds so a raised
             // floor applies at once and a previously-low (or, defensively, a
             // >1) _autoScale can't strand the resolution when the floor changes.
-            const lo = _renderScale > 0 ? Math.min(1, _autoScaleMin / _renderScale) : 1;
-            _autoScale = Math.max(lo, Math.min(1, _autoScale));
-            localStorage.setItem('highwayMinRenderScale', _autoScaleMin);
+            const lo = hwState._renderScale > 0 ? Math.min(1, hwState._autoScaleMin / hwState._renderScale) : 1;
+            hwState._autoScale = Math.max(lo, Math.min(1, hwState._autoScale));
+            localStorage.setItem('highwayMinRenderScale', hwState._autoScaleMin);
             this.resize(); // recompute the backing store via _effectiveRenderScale()
         },
-        getMinRenderScale() { return _autoScaleMin; },
+        getMinRenderScale() { return hwState._autoScaleMin; },
 
         // Scale actually applied = manual ceiling * load-adaptive factor (#654).
         getEffectiveRenderScale() { return _effectiveRenderScale(); },
@@ -3154,21 +3157,21 @@ function createHighway() {
         // adaptive cap is holding.
         getPerfStats() {
             return {
-                drawMs: _drawMsEMA,
-                autoScale: _autoScale,
-                renderScale: _renderScale,
+                drawMs: hwState._drawMsEMA,
+                autoScale: hwState._autoScale,
+                renderScale: hwState._renderScale,
                 effectiveScale: _effectiveRenderScale(),
             };
         },
 
-        getInverted() { return _inverted; },
-        setInverted(v) { _inverted = v; localStorage.setItem('invertHighway', v); },
+        getInverted() { return hwState._inverted; },
+        setInverted(v) { hwState._inverted = v; localStorage.setItem('invertHighway', v); },
         setLefty(on) {
-            _lefty = !!on;
-            localStorage.setItem('lefty', _lefty ? '1' : '0');
+            hwState._lefty = !!on;
+            localStorage.setItem('lefty', hwState._lefty ? '1' : '0');
         },
 
-        getLefty() { return _lefty; },
+        getLefty() { return hwState._lefty; },
 
         // Master-difficulty (feedBack#48). Per-instance: splitscreen
         // plugins that call createHighway() separately get their own
@@ -3181,20 +3184,20 @@ function createHighway() {
             // Math.floor → p.levels[NaN].
             const next = Number(fraction);
             if (!Number.isFinite(next)) return;
-            _mastery = Math.max(0, Math.min(1, next));
+            hwState._mastery = Math.max(0, Math.min(1, next));
             _rebuildMasteryFilter();
         },
-        getMastery() { return _mastery; },
+        getMastery() { return hwState._mastery; },
         // Align with _rebuildMasteryFilter's own "null OR empty → fall
         // through" check. If we returned true for _phrases = [], the
         // slider would be enabled (via song:ready's hasPhraseData) but
         // dragging it would do nothing (filter stays null). Same
         // sentinel, same check, single source of truth.
-        hasPhraseData() { return !!(_phrases && _phrases.length > 0); },
+        hasPhraseData() { return !!(hwState._phrases && hwState._phrases.length > 0); },
         // Lightweight phrase windows for Section Practice — timing only, no note payloads.
         getPracticePhrases() {
-            if (!_phrases || !_phrases.length) return null;
-            return _phrases.map((p, index) => ({
+            if (!hwState._phrases || !hwState._phrases.length) return null;
+            return hwState._phrases.map((p, index) => ({
                 index,
                 start_time: p.start_time,
                 end_time: p.end_time,
@@ -3203,21 +3206,21 @@ function createHighway() {
         },
 
         connect(wsUrl, opts = {}) {
-            _connectOpts = opts;
+            hwState._connectOpts = opts;
             // Bump generation so async handlers from the previous connection
             // can detect they are stale and skip state mutations.
-            _wsGen += 1;
+            hwState._wsGen += 1;
             // Fresh routing promise for this connection's song_info load.
-            _juceRoutingPromise = Promise.resolve();
+            hwState._juceRoutingPromise = Promise.resolve();
             // Clear any stale "initial routing in-flight" flag from a prior
             // connection so the app.js engine-reroute watcher isn't wedged.
             window._highwayJuceRoutingPending = false;
-            ws = new WebSocket(wsUrl);
-            ws.onclose = () => { console.log('WS closed'); };
-            ws.onerror = (e) => { console.error('WS error', e); };
+            hwState.ws = new WebSocket(wsUrl);
+            hwState.ws.onclose = () => { console.log('WS closed'); };
+            hwState.ws.onerror = (e) => { console.error('WS error', e); };
             // Reset the serialization chain so old in-flight handlers
             // from a previous connection don't delay new messages.
-            _msgChain = Promise.resolve();
+            hwState._msgChain = Promise.resolve();
 
             // Helper: attach the HTML5 audio buffering overlay to `audio`.
             // Shared by both the direct HTML5 path and the JUCE fallback path.
@@ -3265,14 +3268,14 @@ function createHighway() {
                 audio.addEventListener('canplaythrough', cleanup, { once: true });
             }
 
-            ws.onmessage = (ev) => {
+            hwState.ws.onmessage = (ev) => {
                 const data = ev.data;
                 // Capture generation synchronously before any async work so
                 // stale completions from a prior WebSocket can be detected.
-                const gen = _wsGen;
-                _msgChain = _msgChain.then(async () => {
+                const gen = hwState._wsGen;
+                hwState._msgChain = hwState._msgChain.then(async () => {
                     // Bail out if a reconnect happened while this step was queued.
-                    if (gen !== _wsGen) return;
+                    if (gen !== hwState._wsGen) return;
                     try {
                     const msg = JSON.parse(data);
                     if (msg.error) {
@@ -3290,14 +3293,14 @@ function createHighway() {
                             // can use songInfo.hasNotation without knowing the wire
                             // field name. Keep has_notation intact for consumers that
                             // already read the raw field (e.g. _isNotationOnlySong).
-                            songInfo = Object.assign({}, msg, {
+                            hwState.songInfo = Object.assign({}, msg, {
                                 hasNotation: Boolean(msg.has_notation),
                                 hasDrumTab: Boolean(msg.has_drum_tab),
                             });
                             _reportAudioSessionStart(msg);
                             {
                                 const parsedOffset = Number(msg.offset);
-                                songOffset = Number.isFinite(parsedOffset) ? parsedOffset : 0.0;
+                                hwState.songOffset = Number.isFinite(parsedOffset) ? parsedOffset : 0.0;
                             }
                             // Pick up the active arrangement's string count.
                             // Prefer the explicit `stringCount` field (added
@@ -3336,7 +3339,7 @@ function createHighway() {
                             // the Math.min(MAX_STRINGS, ...) below caps it
                             // safely.
                             const _scTrunc = Number.isFinite(_sc) ? Math.trunc(_sc) : 1;
-                            stringCount = Math.max(1, Math.min(MAX_STRINGS, _scTrunc));
+                            hwState.stringCount = Math.max(1, Math.min(MAX_STRINGS, _scTrunc));
                             if (opts.onSongInfo) {
                                 opts.onSongInfo(msg);
                             } else {
@@ -3471,7 +3474,7 @@ function createHighway() {
                                             // settled — otherwise its 350ms poll could race this routing
                                             // and double-call loadBackingTrack for the same URL.
                                             window._highwayJuceRoutingPending = true;
-                                            _juceRoutingPromise = (async () => {
+                                            hwState._juceRoutingPromise = (async () => {
                                                 let pathLabel = '<missing>';
                                                 try {
                                                     // Wait out any in-flight native-audio reconfiguration (e.g.
@@ -3500,7 +3503,7 @@ function createHighway() {
                                                         // Promise.race doesn't cancel the loser — clear the timer
                                                         // when the barrier wins so rapid song switches don't leak.
                                                         clearTimeout(barrierTimer);
-                                                        if (gen !== _wsGen) return; // navigated away during the wait
+                                                        if (gen !== hwState._wsGen) return; // navigated away during the wait
                                                     }
                                                     // Feedpak full-mix rides the engine ONLY under an
                                                     // exclusive-style output (shared mode falls through to
@@ -3511,7 +3514,7 @@ function createHighway() {
                                                     let routeToJuce = await juceApi.isAudioRunning();
                                                     console.log('[feedpak-route] initial-load: engineRunning=', routeToJuce);
                                                     if (routeToJuce) {
-                                                        if (gen !== _wsGen) return; // stale
+                                                        if (gen !== hwState._wsGen) return; // stale
                                                         if (isFeedpakFullMix) {
                                                             const exclFn = window._juceOutputIsExclusive;
                                                             routeToJuce = !!(await exclFn?.());
@@ -3520,7 +3523,7 @@ function createHighway() {
                                                         }
                                                     }
                                                     if (routeToJuce) {
-                                                        if (gen !== _wsGen) return; // stale
+                                                        if (gen !== hwState._wsGen) return; // stale
                                                         const res = await fetch(`/api/audio-local-path?url=${encodeURIComponent(audioUrl)}`);
                                                         if (!res.ok) throw new Error('HTTP ' + res.status);
                                                         const { path } = await res.json();
@@ -3528,9 +3531,9 @@ function createHighway() {
                                                         const ok = await juceApi.loadBackingTrack(path);
                                                         console.log('[highway] JUCE loadBackingTrack file=', pathLabel, 'ok=', ok);
                                                         if (ok === false) throw new Error('JUCE rejected backing track: ' + pathLabel);
-                                                        if (gen !== _wsGen) return; // stale
+                                                        if (gen !== hwState._wsGen) return; // stale
                                                         if (window.jucePlayer) window.jucePlayer._dur = await juceApi.getBackingDuration();
-                                                        if (gen !== _wsGen) return; // stale
+                                                        if (gen !== hwState._wsGen) return; // stale
                                                         window._juceMode = true;
                                                         window._juceAudioUrl = audioUrl;
                                                         _reportAudioRoute('juce', 'available');
@@ -3562,20 +3565,20 @@ function createHighway() {
                                                         } catch (gainErr) {
                                                             console.warn('[highway] JUCE setGain backing failed', gainErr);
                                                         }
-                                                        if (gen !== _wsGen) return; // stale
+                                                        if (gen !== hwState._wsGen) return; // stale
                                                         // Clear the HTML5 element so it does not buffer an unused track
                                                         audio.src = '';
                                                         return;
                                                     }
                                                 } catch (err) {
                                                     console.warn('[highway] JUCE audio routing failed, falling back to HTML5 file=', pathLabel, err);
-                                                    if (gen !== _wsGen) return; // stale
+                                                    if (gen !== hwState._wsGen) return; // stale
                                                     window._juceMode = false;
                                                     window._juceAudioUrl = null;
                                                     _reportAudioRoute('html5', 'degraded', err && err.message ? err.message : String(err));
                                                 }
                                                 // HTML5 fallback (isAudioRunning false, or JUCE error)
-                                                if (gen !== _wsGen) return; // stale
+                                                if (gen !== hwState._wsGen) return; // stale
                                                 window._juceMode = false;
                                                 window._juceAudioUrl = null;
                                                 audio.src = audioUrl;
@@ -3592,7 +3595,7 @@ function createHighway() {
                                                 // stale finally from a previous song must not release
                                                 // the gate for a newer in-flight load (which has its
                                                 // own pending=true and will clear its own finally).
-                                                if (gen === _wsGen) {
+                                                if (gen === hwState._wsGen) {
                                                     window._highwayJuceRoutingPending = false;
                                                 }
                                             });
@@ -3639,7 +3642,7 @@ function createHighway() {
                             }
                             // Plugin context API — broadcast current song state
                             if (window.feedBack) {
-                                const wsPath = ws.url.split('/ws/highway/')[1] || '';
+                                const wsPath = hwState.ws.url.split('/ws/highway/')[1] || '';
                                 const filename = decodeURIComponent(wsPath.split('?')[0]);
                                 window.feedBack.currentSong = {
                                     filename,
@@ -3676,7 +3679,7 @@ function createHighway() {
                             }
                             break;
                         case 'beats':
-                            beats = msg.data;
+                            hwState.beats = msg.data;
                             // Notify plugins that beats are now available so
                             // they don't have to poll highway.getBeats() in a
                             // setInterval to know when the WS finished
@@ -3684,36 +3687,36 @@ function createHighway() {
                             // callable too — the namespace can be partially
                             // attached during early boot.
                             if (window.feedBack && typeof window.feedBack.emit === 'function') {
-                                window.feedBack.emit('beats:loaded', { count: beats.length });
+                                window.feedBack.emit('beats:loaded', { count: hwState.beats.length });
                             }
                             break;
-                        case 'sections': sections = msg.data; break;
+                        case 'sections': hwState.sections = msg.data; break;
                         case 'anchors':
-                            anchors = msg.data;
-                            if (anchors.length) {
-                                displayMaxFret = Math.max(anchors[0].fret + anchors[0].width + 3, 8);
+                            hwState.anchors = msg.data;
+                            if (hwState.anchors.length) {
+                                hwState.displayMaxFret = Math.max(hwState.anchors[0].fret + hwState.anchors[0].width + 3, 8);
                             }
                             break;
-                        case 'chord_templates': chordTemplates = msg.data; break;
+                        case 'chord_templates': hwState.chordTemplates = msg.data; break;
                         case 'lyrics':
-                            lyrics = msg.data;
+                            hwState.lyrics = msg.data;
                             // Provenance: "xml" | "notechart" | "whisperx" | "user".
                             // Surfaced via the renderer bundle so visualization
                             // plugins can render an "auto-transcribed" badge
                             // (or any other source-dependent UI) without
                             // having to hook the raw WS themselves.
-                            lyricsSource = msg.source || "";
+                            hwState.lyricsSource = msg.source || "";
                             break;
-                        case 'tone_changes': toneChanges = msg.data; toneBase = msg.base || ""; break;
-                        case 'notes': notes = notes.concat(msg.data); break;
-                        case 'chords': chords = chords.concat(msg.data); break;
-                        case 'handshapes': handShapes = handShapes.concat(msg.data); break;
+                        case 'tone_changes': hwState.toneChanges = msg.data; hwState.toneBase = msg.base || ""; break;
+                        case 'notes': hwState.notes = hwState.notes.concat(msg.data); break;
+                        case 'chords': hwState.chords = hwState.chords.concat(msg.data); break;
+                        case 'handshapes': hwState.handShapes = hwState.handShapes.concat(msg.data); break;
                         case 'drum_tab':
                             // Metadata + kit legend arrive first; the hits
                             // come in 500-per-frame chunks below. Reset the
                             // hits array per `drum_tab` to defend against
                             // an arrangement-change replay on the same WS.
-                            drumTab = {
+                            hwState.drumTab = {
                                 version: Number.isInteger(msg.version) ? msg.version : 1,
                                 name: (typeof msg.name === 'string' && msg.name) ? msg.name : 'Drums',
                                 kit: Array.isArray(msg.kit) ? msg.kit : [],
@@ -3721,8 +3724,8 @@ function createHighway() {
                             };
                             break;
                         case 'drum_hits':
-                            if (drumTab && Array.isArray(msg.data)) {
-                                Array.prototype.push.apply(drumTab.hits, msg.data);
+                            if (hwState.drumTab && Array.isArray(msg.data)) {
+                                Array.prototype.push.apply(hwState.drumTab.hits, msg.data);
                             }
                             break;
                         case 'phrases':
@@ -3731,22 +3734,22 @@ function createHighway() {
                             // cause visual flicker (partial filtered array
                             // visible while later chunks are still arriving)
                             // and duplicate work.
-                            if (_phrases === null) _phrases = [];
-                            for (const p of msg.data) _phrases.push(p);
+                            if (hwState._phrases === null) hwState._phrases = [];
+                            for (const p of msg.data) hwState._phrases.push(p);
                             break;
                         case 'ready':
-                            ready = true;
-                            if (handShapes.length) {
-                                handShapes.sort((a, b) => a.start_time - b.start_time);
+                            hwState.ready = true;
+                            if (hwState.handShapes.length) {
+                                hwState.handShapes.sort((a, b) => a.start_time - b.start_time);
                             }
                             _rebuildMasteryFilter();
-                            console.log(`Highway ready: ${notes.length} notes, ${chords.length} chords` +
-                                `, ${handShapes.length} handShapes` +
-                                (_phrases !== null ? `, ${_phrases.length} phrases (mastery ${Math.round(_mastery * 100)}%)` : ""));
+                            console.log(`Highway ready: ${hwState.notes.length} notes, ${hwState.chords.length} chords` +
+                                `, ${hwState.handShapes.length} handShapes` +
+                                (hwState._phrases !== null ? `, ${hwState._phrases.length} phrases (mastery ${Math.round(hwState._mastery * 100)}%)` : ""));
                             // Wait for the off-chain JUCE routing (if any) to settle
                             // so _juceMode is correctly set before _onReady and song:ready fire.
-                            await _juceRoutingPromise.catch(() => {});
-                            if (!animFrame) draw();
+                            await hwState._juceRoutingPromise.catch(() => {});
+                            if (!hwState.animFrame) draw();
                             if (api._onReady) await Promise.resolve(api._onReady()).catch((err) => console.error('[highway] _onReady error:', err));
                             // Broadcast to interested listeners (e.g. the
                             // difficulty-slider disabled-state update in
@@ -3773,8 +3776,8 @@ function createHighway() {
             // chartTime is what getTime() exposes to plugins — bake the
             // per-song offset in here so plugins (scoring, note detect,
             // etc.) see the same chart-aligned clock the renderer does.
-            chartTime = t + songOffset;
-            currentTime = chartTime + avOffsetSec;
+            hwState.chartTime = t + hwState.songOffset;
+            hwState.currentTime = hwState.chartTime + hwState.avOffsetSec;
             // Only re-anchor on a genuinely new audio time. Repeated
             // calls with the same `t` (audio.currentTime hasn't updated
             // yet) keep the anchor's perfNow fixed so interpolation
@@ -3782,7 +3785,7 @@ function createHighway() {
             // _chartLastAdvanceAt here too lets getTime() detect when
             // the audio clock has stalled (= paused) without coupling
             // to song:* events.
-            if (t !== _chartAnchorAudioT) {
+            if (t !== hwState._chartAnchorAudioT) {
                 const newPerfNow = performance.now();
                 // Derive observed rate from this anchor segment so
                 // interpolation respects speed slider changes (and
@@ -3790,51 +3793,51 @@ function createHighway() {
                 // initial anchor (no prior segment) and on near-zero
                 // dt (would divide by ~0). Clamp to a sane window so
                 // a noisy seek doesn't poison the estimate.
-                const hadPriorAnchor = !Number.isNaN(_chartAnchorPerfNow);
-                const dPerf = hadPriorAnchor ? (newPerfNow - _chartAnchorPerfNow) / 1000 : 0;
+                const hadPriorAnchor = !Number.isNaN(hwState._chartAnchorPerfNow);
+                const dPerf = hadPriorAnchor ? (newPerfNow - hwState._chartAnchorPerfNow) / 1000 : 0;
                 if (hadPriorAnchor && dPerf > 0.001 && dPerf < 0.5) {
-                    const observed = (t - _chartAnchorAudioT) / dPerf;
+                    const observed = (t - hwState._chartAnchorAudioT) / dPerf;
                     if (observed > 0.05 && observed < 5) {
-                        _chartObservedRate = observed;
+                        hwState._chartObservedRate = observed;
                     } else {
                         // Out-of-band rate (seek discontinuity, loop wrap,
                         // negative jump back). We can't measure rate from
                         // this segment, so reset to 1 instead of carrying
                         // a stale estimate from the prior segment.
-                        _chartObservedRate = 1;
+                        hwState._chartObservedRate = 1;
                     }
                 } else if (hadPriorAnchor && dPerf >= 0.5) {
                     // Long gap between anchor updates — anchor was stale
                     // (paused, tab inactive, seek). Same reset.
-                    _chartObservedRate = 1;
+                    hwState._chartObservedRate = 1;
                 }
-                _chartAnchorAudioT = t;
-                _chartAnchorPerfNow = newPerfNow;
-                _chartLastAdvanceAt = newPerfNow;
+                hwState._chartAnchorAudioT = t;
+                hwState._chartAnchorPerfNow = newPerfNow;
+                hwState._chartLastAdvanceAt = newPerfNow;
             }
         },
-        setAvOffset(ms) { avOffsetSec = (Number(ms) || 0) / 1000; currentTime = chartTime + avOffsetSec; },
-        getAvOffset() { return avOffsetSec * 1000; },
+        setAvOffset(ms) { hwState.avOffsetSec = (Number(ms) || 0) / 1000; hwState.currentTime = hwState.chartTime + hwState.avOffsetSec; },
+        getAvOffset() { return hwState.avOffsetSec * 1000; },
 
         getBPM(t) {
             // Calculate BPM from beat intervals near time t
-            if (beats.length < 2) return 120;
+            if (hwState.beats.length < 2) return 120;
             let closest = 0;
-            for (let i = 1; i < beats.length; i++) {
-                if (Math.abs(beats[i].time - t) < Math.abs(beats[closest].time - t)) closest = i;
+            for (let i = 1; i < hwState.beats.length; i++) {
+                if (Math.abs(hwState.beats[i].time - t) < Math.abs(hwState.beats[closest].time - t)) closest = i;
             }
             // Average interval from nearby beats
             const start = Math.max(0, closest - 2);
-            const end = Math.min(beats.length - 1, closest + 2);
+            const end = Math.min(hwState.beats.length - 1, closest + 2);
             let sum = 0, count = 0;
             for (let i = start; i < end; i++) {
-                sum += beats[i + 1].time - beats[i].time;
+                sum += hwState.beats[i + 1].time - hwState.beats[i].time;
                 count++;
             }
             return count > 0 ? 60 / (sum / count) : 120;
         },
 
-        getBeats() { return beats; },
+        getBeats() { return hwState.beats; },
         // Returns the chart clock smoothed via performance.now()
         // interpolation while audio is actively advancing — sub-frame
         // accurate even though audio.currentTime updates only ~every
@@ -3847,16 +3850,16 @@ function createHighway() {
             // early boot before the 60 Hz tick has fired): just return
             // chartTime. Without this guard, elapsedMs would be NaN and
             // the rate-scaled return would propagate NaN to plugins.
-            if (Number.isNaN(_chartAnchorPerfNow)) return chartTime;
+            if (Number.isNaN(hwState._chartAnchorPerfNow)) return hwState.chartTime;
             const nowP = performance.now();
             // If t hasn't advanced for a while, audio is paused or the
             // tick has stopped — trust the raw chartTime.
-            if (nowP - _chartLastAdvanceAt > _CHART_MAX_INTERP_MS) return chartTime;
-            const elapsedMs = nowP - _chartAnchorPerfNow;
+            if (nowP - hwState._chartLastAdvanceAt > _CHART_MAX_INTERP_MS) return hwState.chartTime;
+            const elapsedMs = nowP - hwState._chartAnchorPerfNow;
             // Same cap as a backstop for the "long main-thread task"
             // case — audio briefly advanced just before the stall, so
             // we'd interpolate beyond what reality permits.
-            if (elapsedMs > _CHART_MAX_INTERP_MS) return chartTime;
+            if (elapsedMs > _CHART_MAX_INTERP_MS) return hwState.chartTime;
             // Scale by the observed playback rate so getTime stays
             // accurate across slowdowns / speedups (audio.playbackRate
             // != 1 is a first-class feedBack feature). Add songOffset
@@ -3864,7 +3867,7 @@ function createHighway() {
             // chartTime that setTime() / the early-return branches
             // expose — anchors are stored in raw audio time, so the
             // offset is applied on the way out.
-            return _chartAnchorAudioT + (_chartObservedRate * elapsedMs) / 1000 + songOffset;
+            return hwState._chartAnchorAudioT + (hwState._chartObservedRate * elapsedMs) / 1000 + hwState.songOffset;
         },
         // Returns the feedBack <audio> element so plugins don't have to
         // reach for `document.getElementById('audio')` directly. In JUCE
@@ -3873,14 +3876,14 @@ function createHighway() {
         // `audio.play/pause` route to the JUCE backing engine — so the
         // returned element behaves uniformly regardless of mode.
         getAudioElement() {
-            if (typeof window !== 'undefined' && !_audioElementBridgeRecorded) {
+            if (typeof window !== 'undefined' && !hwState._audioElementBridgeRecorded) {
                 const playback = window.feedBack && window.feedBack.playback;
                 if (playback && typeof playback.recordBridgeHit === 'function') {
                     // Consume the one-shot before recording so a reentrant poll
                     // during the synchronous bridge-hit emit can't double-record;
                     // reset it if recordBridgeHit throws so a failed record (and
                     // an early call before the domain is ready) still retries.
-                    _audioElementBridgeRecorded = true;
+                    hwState._audioElementBridgeRecorded = true;
                     try {
                         playback.recordBridgeHit({
                             bridgeId: 'playback.audio-element-shim',
@@ -3889,7 +3892,7 @@ function createHighway() {
                             reason: 'legacy audio element bridge requested',
                         });
                     } catch (_) {
-                        _audioElementBridgeRecorded = false;
+                        hwState._audioElementBridgeRecorded = false;
                     }
                 }
             }
@@ -3904,11 +3907,11 @@ function createHighway() {
         // transition immediately rather than waiting for the next
         // rAF tick.
         setVisible(v) {
-            _visibleOverride = (v === null || v === undefined) ? null : !!v;
+            hwState._visibleOverride = (v === null || v === undefined) ? null : !!v;
             // Clearing the override resumes DOM-based detection — force a
             // fresh offsetParent sample so the resulting transition (if
             // any) emits now, not after the throttle window.
-            if (_visibleOverride === null) _domVisSampledFrame = NaN;
+            if (hwState._visibleOverride === null) hwState._domVisSampledFrame = NaN;
             _emitVisibilityIfChanged();
         },
         // Snapshot of the current visibility state (the override if
@@ -3922,11 +3925,11 @@ function createHighway() {
             // must not serve the rAF loop's throttled cache (up to
             // ~166 ms stale). Called rarely; the layout-read cost that
             // motivated the throttle only matters per-frame.
-            _domVisSampledFrame = NaN;
+            hwState._domVisSampledFrame = NaN;
             return _isHighwayVisible();
         },
-        getNotes() { return notes; },
-        getChords() { return chords; },
+        getNotes() { return hwState.notes; },
+        getChords() { return hwState.chords; },
         // Difficulty-filtered variants of getNotes()/getChords(). Returns the
         // master-difficulty-filtered arrays when the current song has phrase-level
         // data (i.e. the mastery slider is active). For songs with a single
@@ -3934,8 +3937,8 @@ function createHighway() {
         // these fall through to the raw arrays, the same as getNotes()/getChords().
         // Plugins that score or analyse only the notes the player is currently
         // expected to play should prefer these over getNotes()/getChords(). Read-only.
-        getFilteredNotes()  { return _filteredNotes  !== null ? _filteredNotes  : notes;  },
-        getFilteredChords() { return _filteredChords !== null ? _filteredChords : chords; },
+        getFilteredNotes()  { return hwState._filteredNotes  !== null ? hwState._filteredNotes  : hwState.notes;  },
+        getFilteredChords() { return hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords; },
         // Live reference to the chord-template lookup table —
         // `getChords()[i].id` is an index into this array. Each
         // template carries `{ name, fingers, frets }`:
@@ -3950,39 +3953,39 @@ function createHighway() {
         // its entries. Not difficulty-filter-aware (templates are
         // static metadata; every chord_id referenced by `getChords()`
         // is guaranteed valid).
-        getChordTemplates() { return chordTemplates; },
-        getToneChanges() { return toneChanges; },
-        getToneBase() { return toneBase; },
-        getSections() { return sections; },
+        getChordTemplates() { return hwState.chordTemplates; },
+        getToneChanges() { return hwState.toneChanges; },
+        getToneBase() { return hwState.toneBase; },
+        getSections() { return hwState.sections; },
         // Timed lyric syllables for the active song: [{t: start, d: length,
         // w: word}], same array the highway WS populates. Exposed so overlay
         // plugins (e.g. stream_kit vocals) can render karaoke without a second
         // WS connection — mirrors getBeats()/getSections().
-        getLyrics() { return lyrics; },
+        getLyrics() { return hwState.lyrics; },
         // Phrase timing windows for plugins — `[{ index, start_time, end_time, max_difficulty }]`.
         // Returns null when the current song has no phrase data (GP imports, single-difficulty
         // charts). Gate phrase-aware logic with hasPhraseData() first. Read-only; do not mutate.
         getPhrases() {
-            if (!_phrases || !_phrases.length) return null;
-            return _phrases.map((p, index) => ({
+            if (!hwState._phrases || !hwState._phrases.length) return null;
+            return hwState._phrases.map((p, index) => ({
                 index,
                 start_time: p.start_time,
                 end_time: p.end_time,
                 max_difficulty: p.max_difficulty,
             }));
         },
-        getSongInfo() { return songInfo; },
+        getSongInfo() { return hwState.songInfo; },
         // Number of strings on the active arrangement
         // (feedBack-plugin-3dhighway#7). 4 for bass, 6 for guitar,
         // 7+ for extended-range GP imports. Plugins should size
         // string-indexed UI / geometry against THIS rather than
         // assuming 6. Defaults to 6 between songs (until the next
         // song_info message arrives).
-        getStringCount() { return stringCount; },
+        getStringCount() { return hwState.stringCount; },
         addDrawHook(fn) {
-            _drawHooks.push(fn);
+            hwState._drawHooks.push(fn);
         },
-        removeDrawHook(fn) { _drawHooks = _drawHooks.filter(h => h !== fn); },
+        removeDrawHook(fn) { hwState._drawHooks = hwState._drawHooks.filter(h => h !== fn); },
         /**
          * Register a per-note judgment-state provider (feedBack#254).
          * `fn(note, chartTime)` is called by renderers for each visible
@@ -4000,10 +4003,10 @@ function createHighway() {
          * Pass `null` to clear. Only one provider is active at a time.
          * Custom renderers read the same data via `bundle.getNoteState`.
          */
-        setNoteStateProvider(fn) { _noteStateProvider = (typeof fn === 'function') ? fn : null; },
-        getNoteStateProvider() { return _noteStateProvider; },
+        setNoteStateProvider(fn) { hwState._noteStateProvider = (typeof fn === 'function') ? fn : null; },
+        getNoteStateProvider() { return hwState._noteStateProvider; },
         /** Current per-string base colors (copy). Index 0..7. */
-        getStringColors() { return STRING_COLORS.slice(); },
+        getStringColors() { return hwState.STRING_COLORS.slice(); },
         /**
          * Override per-string colors for the "Highway String Colors" theme.
          * `arr` is an array of up to 8 hex strings; each provided entry sets
@@ -4017,13 +4020,13 @@ function createHighway() {
                 const hex = (arr && arr[i]) ? _parseHex(arr[i]) : null;
                 if (hex) {
                     const base = _toHex(hex.r, hex.g, hex.b);
-                    STRING_COLORS[i] = base;
-                    STRING_DIM[i] = _darken(base, 0.40);
-                    STRING_BRIGHT[i] = _lighten(base, 0.30);
+                    hwState.STRING_COLORS[i] = base;
+                    hwState.STRING_DIM[i] = _darken(base, 0.40);
+                    hwState.STRING_BRIGHT[i] = _lighten(base, 0.30);
                 } else {
-                    STRING_COLORS[i] = DEFAULT_STRING_COLORS[i];
-                    STRING_DIM[i] = DEFAULT_STRING_DIM[i];
-                    STRING_BRIGHT[i] = DEFAULT_STRING_BRIGHT[i];
+                    hwState.STRING_COLORS[i] = DEFAULT_STRING_COLORS[i];
+                    hwState.STRING_DIM[i] = DEFAULT_STRING_DIM[i];
+                    hwState.STRING_BRIGHT[i] = DEFAULT_STRING_BRIGHT[i];
                 }
             }
         },
@@ -4037,7 +4040,7 @@ function createHighway() {
          * renderer is active.
          */
         fireDrawHooks(ctx, W, H) {
-            for (const hook of _drawHooks) {
+            for (const hook of hwState._drawHooks) {
                 try { hook(ctx, W, H); } catch (e) { /* ignore */ }
             }
         },
@@ -4048,67 +4051,67 @@ function createHighway() {
         fillTextUnmirrored(text, x, y) { fillTextReadable(text, x, y); },
 
         toggleLyrics() {
-            showLyrics = !showLyrics;
-            localStorage.setItem('showLyrics', String(showLyrics));
-            if (_onLyricsChange) _onLyricsChange(showLyrics);
+            hwState.showLyrics = !hwState.showLyrics;
+            localStorage.setItem('showLyrics', String(hwState.showLyrics));
+            if (hwState._onLyricsChange) hwState._onLyricsChange(hwState.showLyrics);
         },
 
-        getLyricsVisible() { return showLyrics; },
+        getLyricsVisible() { return hwState.showLyrics; },
         // Provenance of the active lyric set. See `lyricsSource` declaration
         // for the full enum. Plugins consume this to badge auto-transcribed
         // (whisperx) lyrics differently from authored (xml/notechart/user) ones.
-        getLyricsSource() { return lyricsSource; },
+        getLyricsSource() { return hwState.lyricsSource; },
         setLyricsVisible(v) {
-            showLyrics = !!v;
-            if (_onLyricsChange) _onLyricsChange(showLyrics);
+            hwState.showLyrics = !!v;
+            if (hwState._onLyricsChange) hwState._onLyricsChange(hwState.showLyrics);
         },
-        setOnLyricsChange(fn) { _onLyricsChange = fn; },
+        setOnLyricsChange(fn) { hwState._onLyricsChange = fn; },
 
         // Teaching marks (§6.2.2): toggle the opt-in sd/ch overlays. The fg
         // numeral has its own toggle below. Persisted to localStorage.
-        getTeachingMarksVisible() { return _showTeachingMarks; },
+        getTeachingMarksVisible() { return hwState._showTeachingMarks; },
         toggleTeachingMarks() {
-            _showTeachingMarks = !_showTeachingMarks;
-            localStorage.setItem('showTeachingMarks', String(_showTeachingMarks));
+            hwState._showTeachingMarks = !hwState._showTeachingMarks;
+            localStorage.setItem('showTeachingMarks', String(hwState._showTeachingMarks));
         },
         setTeachingMarksVisible(v) {
-            _showTeachingMarks = !!v;
-            localStorage.setItem('showTeachingMarks', String(_showTeachingMarks));
+            hwState._showTeachingMarks = !!v;
+            localStorage.setItem('showTeachingMarks', String(hwState._showTeachingMarks));
         },
 
         // Fret-hand finger hints (§6.2.2 fg): shown by default, hideable
         // independently of the sd/ch overlays. Persisted to localStorage.
-        getFingerHintsVisible() { return _showFingerHints; },
+        getFingerHintsVisible() { return hwState._showFingerHints; },
         toggleFingerHints() {
-            _showFingerHints = !_showFingerHints;
-            localStorage.setItem('showFingerHints', String(_showFingerHints));
+            hwState._showFingerHints = !hwState._showFingerHints;
+            localStorage.setItem('showFingerHints', String(hwState._showFingerHints));
         },
         setFingerHintsVisible(v) {
-            _showFingerHints = !!v;
-            localStorage.setItem('showFingerHints', String(_showFingerHints));
+            hwState._showFingerHints = !!v;
+            localStorage.setItem('showFingerHints', String(hwState._showFingerHints));
         },
 
         reconnect(filename, arrangement) {
             // Close old WS but keep audio + animation running
-            if (ws) { ws.close(); ws = null; }
-            ready = false;
-            notes = []; chords = []; handShapes = []; beats = []; sections = []; anchors = []; chordTemplates = []; lyrics = []; lyricsSource = ""; toneChanges = []; toneBase = ""; drumTab = null;
-            stringCount = 6;  // default until song_info arrives
+            if (hwState.ws) { hwState.ws.close(); hwState.ws = null; }
+            hwState.ready = false;
+            hwState.notes = []; hwState.chords = []; hwState.handShapes = []; hwState.beats = []; hwState.sections = []; hwState.anchors = []; hwState.chordTemplates = []; hwState.lyrics = []; hwState.lyricsSource = ""; hwState.toneChanges = []; hwState.toneBase = ""; hwState.drumTab = null;
+            hwState.stringCount = 6;  // default until song_info arrives
             // Drop any per-song offset from the previous load so setTime
             // calls that fire before the next song_info arrives don't
             // bias the clock with stale data.
-            songOffset = 0.0;
+            hwState.songOffset = 0.0;
             // Reset phrase ladder + filter (feedBack#48). _mastery
             // persists across arrangement switches — the slider's
             // position stays put. Filter rebuilds on the next `ready`
             // once the new arrangement's phrases arrive (or stays
             // disabled if the new source has no phrase data).
-            _phrases = null;
-            _filteredNotes = null;
-            _filteredChords = null;
-            _filteredAnchors = null;
-            _filteredHandShapes = null;
-            _phrasesHaveHandShapes = false;
+            hwState._phrases = null;
+            hwState._filteredNotes = null;
+            hwState._filteredChords = null;
+            hwState._filteredAnchors = null;
+            hwState._filteredHandShapes = null;
+            hwState._phrasesHaveHandShapes = false;
             _resetChordRenderState();
             const wsParams = new URLSearchParams();
             if (arrangement !== undefined) wsParams.set('arrangement', arrangement);
@@ -4128,43 +4131,43 @@ function createHighway() {
             const decoded = decodeURIComponent(filename);
             const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/highway/${decoded}${qs ? '?' + qs : ''}`;
             console.log('reconnect:', wsUrl);
-            this.connect(wsUrl, _connectOpts);
+            this.connect(wsUrl, hwState._connectOpts);
         },
 
         stop() {
-            if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+            if (hwState.animFrame) { cancelAnimationFrame(hwState.animFrame); hwState.animFrame = null; }
             // Tear down the perf HUD explicitly: the rAF loop (which otherwise
             // removes it when the flag flips off) is about to stop, so leaving
             // it would strand the overlay in the DOM until a page reload.
-            if (_perfHud) { _perfHud.remove(); _perfHud = null; }
+            if (hwState._perfHud) { hwState._perfHud.remove(); hwState._perfHud = null; }
             // Reset per-session adaptive-scale + HUD accumulators so a quick
             // stop→init can't inherit stale performance.now() anchors (which
             // would skip the next paused session's first draw or defer a
             // HUD-flag re-read), and so the next song re-adapts from the
             // user's manual scale rather than the last session's auto level. (#654)
-            _autoScale = 1;
-            _drawMsEMA = 0;
-            _lastAutoAdjustAt = 0;
-            _lastPausedDrawAt = 0;
-            _frameMsEMA = 0;
-            _lastFramePerf = 0;
-            _hudOn = false;
-            _hudFlagAt = 0;
-            if (ws) { ws.close(); ws = null; }
-            songOffset = 0.0;  // reset per-song offset so next song starts clean
-            if (_resizeHandler) {
-                window.removeEventListener('resize', _resizeHandler);
-                _resizeHandler = null;
+            hwState._autoScale = 1;
+            hwState._drawMsEMA = 0;
+            hwState._lastAutoAdjustAt = 0;
+            hwState._lastPausedDrawAt = 0;
+            hwState._frameMsEMA = 0;
+            hwState._lastFramePerf = 0;
+            hwState._hudOn = false;
+            hwState._hudFlagAt = 0;
+            if (hwState.ws) { hwState.ws.close(); hwState.ws = null; }
+            hwState.songOffset = 0.0;  // reset per-song offset so next song starts clean
+            if (hwState._resizeHandler) {
+                window.removeEventListener('resize', hwState._resizeHandler);
+                hwState._resizeHandler = null;
             }
             // No song:* listeners to tear down — the monotonic clock
             // detects pause via setTime call patterns, not events.
             // Reset the anchor state so a fresh init/connect cycle
             // doesn't see stale advance timestamps from the previous
             // session, and reset the observed rate to the 1x default.
-            _chartAnchorAudioT = NaN;
-            _chartAnchorPerfNow = NaN;
-            _chartLastAdvanceAt = 0;
-            _chartObservedRate = 1;
+            hwState._chartAnchorAudioT = NaN;
+            hwState._chartAnchorPerfNow = NaN;
+            hwState._chartLastAdvanceAt = 0;
+            hwState._chartObservedRate = 1;
             // Release the renderer's GPU / DOM / event-listener resources
             // when leaving the player — anything it allocated in init()
             // should be torn down here so navigating away doesn't leak.
@@ -4174,8 +4177,8 @@ function createHighway() {
             // _setRenderer knows not to call destroy() again on this
             // already-destroyed instance.
             _destroyCurrentIfInited();
-            ready = false;
-            songInfo = {};
+            hwState.ready = false;
+            hwState.songInfo = {};
         },
 
         /**
@@ -4204,7 +4207,7 @@ function createHighway() {
          * itself. Plugins that draw renderer-agnostic overlays (fretboard
          * diagram, chord-label HUD) don't need this.
          */
-        isDefaultRenderer() { return _renderer === _defaultRenderer || _renderer == null; },
+        isDefaultRenderer() { return hwState._renderer === _defaultRenderer || hwState._renderer == null; },
     };
     return api;
 }

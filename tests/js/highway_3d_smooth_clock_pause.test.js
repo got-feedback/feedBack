@@ -49,12 +49,12 @@ test('core _makeBundle exposes isPlaying derived from the chart-clock anchor', (
     // within the interp cap.
     assert.match(
         fn,
-        /isPlaying\s*[:=]\s*!Number\.isNaN\(\s*_chartAnchorPerfNow\s*\)/,
+        /isPlaying\s*[:=]\s*!Number\.isNaN\(\s*hwState\._chartAnchorPerfNow\s*\)/,
         'isPlaying must gate on a live anchor (_chartAnchorPerfNow not NaN)',
     );
     assert.match(
         fn,
-        /_chartLastAdvanceAt\s*\)\s*<=\s*_CHART_MAX_INTERP_MS/,
+        /hwState\._chartLastAdvanceAt\s*\)\s*<=\s*_CHART_MAX_INTERP_MS/,
         'isPlaying must require the clock advanced within _CHART_MAX_INTERP_MS',
     );
 });

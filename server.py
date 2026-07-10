@@ -45,9 +45,10 @@ from song import (
 from audio import find_wem_files, convert_wem
 from tunings import (
     DEFAULT_REFERENCE_PITCH, DEFAULT_TUNINGS, PROFILE_IDS, PROFILE_PATHWAYS,
-    apply_flat_instrument_patch_to_profiles, apply_reference_pitch,
-    normalize_instrument_profile, normalize_instrument_profiles,
-    settings_with_instrument_profiles, tuning_name,
+    TUNING_PRESET_MIDIS, apply_flat_instrument_patch_to_profiles,
+    apply_reference_pitch, freqs_to_midis, normalize_instrument_profile,
+    normalize_instrument_profiles, settings_with_instrument_profiles,
+    tuning_name,
 )
 import sloppak as sloppak_mod
 import drums as drums_mod
@@ -10766,7 +10767,25 @@ def get_tunings():
             ref = DEFAULT_REFERENCE_PITCH
     except (TypeError, ValueError):
         ref = DEFAULT_REFERENCE_PITCH
-    return {"referencePitch": ref, "tunings": tuning_providers.get_merged(ref)}
+    merged = tuning_providers.get_merged(ref)
+    # tuningMidis: the same catalog as exact integer MIDI notes (low → high).
+    # Built-ins come straight from TUNING_PRESET_MIDIS (no float round-trip);
+    # provider-contributed entries are recovered from their frequencies at the
+    # served reference pitch. Every consumer today (the v3 badges, plugins)
+    # reconstructs midis client-side via log2 — a rounding footgun at non-440
+    # references — so serve the integers once, host-side. Additive: the
+    # existing referencePitch/tunings shape is unchanged.
+    tuning_midis: dict[str, dict[str, list[int]]] = {}
+    for key, names in merged.items():
+        builtin = TUNING_PRESET_MIDIS.get(key, {})
+        resolved: dict[str, list[int]] = {}
+        for name, freqs in names.items():
+            midis = builtin.get(name) or freqs_to_midis(freqs, ref)
+            if midis:
+                resolved[name] = list(midis)
+        if resolved:
+            tuning_midis[key] = resolved
+    return {"referencePitch": ref, "tunings": merged, "tuningMidis": tuning_midis}
 
 
 @app.get("/api/settings")

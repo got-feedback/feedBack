@@ -6,6 +6,9 @@ Extracted verbatim from ``server.py`` (R3). Edits: ``@app`` -> ``@router``,
 ``reqfields``. See ``appstate.py``.
 """
 
+import logging
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -13,6 +16,8 @@ from fastapi.responses import FileResponse, JSONResponse
 
 import appstate
 from reqfields import _clean_str
+
+log = logging.getLogger("feedBack.server")
 
 router = APIRouter()
 
@@ -204,15 +209,40 @@ async def api_set_playlist_cover(pid: int, data: dict):
         return JSONResponse({"error": "Invalid base64"}, status_code=400)
     cover = _playlist_cover_path(pid)
     cover.parent.mkdir(parents=True, exist_ok=True)
+    # Decode/validate the image — a bad payload is a CLIENT error (400), and the
+    # message stays generic so it can't echo internals.
     try:
         from PIL import Image
         img = Image.open(io.BytesIO(img_data)).convert("RGB")
         img.thumbnail((640, 640))                  # covers stay small
-        tmp = cover.with_suffix(".png.tmp")
-        img.save(str(tmp), "PNG")
+    except Exception:
+        return JSONResponse({"error": "Invalid image"}, status_code=400)
+    # Persist. A save/replace failure is a SERVER error (500, logged, no
+    # filesystem detail leaked) — the pre-split handler mislabeled these as 400
+    # and echoed the exception. A unique temp name in the cover dir (not a shared
+    # `{pid}.png.tmp`) means two concurrent uploads can't clobber each other's
+    # temp file; the atomic replace publishes. Re-check the playlist still exists
+    # just before publishing so a delete that raced the decode above can't leave
+    # an orphan cover — cheap belt-and-braces; FeedBack is single-user
+    # (Principle I), so a full per-playlist lock would be for a race the
+    # deployment model precludes.
+    tmp = None
+    try:
+        # mkstemp is inside the try too: an unwritable dir / full disk raises
+        # here, and that's the same class of persistence failure as save/replace.
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{pid}.", suffix=".png.tmp", dir=str(cover.parent))
+        tmp = Path(tmp_name)
+        with os.fdopen(fd, "wb") as f:
+            img.save(f, "PNG")
+        if appstate.meta_db.get_playlist(pid) is None:
+            tmp.unlink(missing_ok=True)
+            return JSONResponse({"error": "not found"}, status_code=404)
         tmp.replace(cover)
-    except Exception as e:
-        return JSONResponse({"error": f"Invalid image: {e}"}, status_code=400)
+    except Exception:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        log.exception("playlist cover save failed (pid=%s)", pid)
+        return JSONResponse({"error": "could not save cover"}, status_code=500)
     return {"ok": True, "cover_url": _playlist_cover_url(pid)}
 
 

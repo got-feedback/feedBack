@@ -45,7 +45,11 @@ class _DisconnectingWS:
 
     async def send_json(self, data):
         self.sends += 1
-        raise WebSocketDisconnect(code=1001)
+        # Raise only on the FIRST send. If the handler wrongly kept streaming
+        # after catching the disconnect, later sends would succeed and `sends`
+        # would climb past 1 — the exactly-one assertion catches that.
+        if self.sends == 1:
+            raise WebSocketDisconnect(code=1001)
 
     async def receive_text(self):
         raise WebSocketDisconnect(code=1001)
@@ -101,6 +105,6 @@ def test_midstream_disconnect_is_not_logged_as_error(server):
     finally:
         lg.removeHandler(cap)
 
-    assert ws.sends >= 1, "handler never reached a streamed send"
+    assert ws.sends == 1, f"handler kept streaming after the disconnect ({ws.sends} sends)"
     unhandled = [m for m in cap.messages if "highway_ws unhandled error" in m]
     assert not unhandled, f"disconnect logged as unhandled error: {unhandled}"

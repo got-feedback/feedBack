@@ -6,6 +6,10 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
+# Moved to routers/playlists in R3; reads appstate.config_dir, which the
+# `server` fixture configures via CONFIG_DIR before this is called.
+from routers.playlists import _playlist_cover_path
+
 
 @pytest.fixture()
 def server(tmp_path, monkeypatch, isolate_logging):
@@ -168,6 +172,6 @@ def test_cover_rejects_non_string_image_with_400_not_500(client):
 def test_deleting_playlist_removes_custom_cover(client, server):
     pid = client.post("/api/playlists", json={"name": "Doomed"}).json()["id"]
     client.post(f"/api/playlists/{pid}/cover", json={"image": _png_b64()})
-    assert server._playlist_cover_path(pid).exists()
+    assert _playlist_cover_path(pid).exists()
     client.delete(f"/api/playlists/{pid}")
-    assert not server._playlist_cover_path(pid).exists()
+    assert not _playlist_cover_path(pid).exists()

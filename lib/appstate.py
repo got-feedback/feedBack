@@ -62,10 +62,16 @@ copies a hardcoded file list — that regression is what moved this file here.
 meta_db = None
 audio_effect_mappings = None
 
-# Declared up front so `configure()` can reject a typo'd or stale keyword
-# instead of silently creating a new global that nothing ever reads. A seam
-# whose wiring can no-op undetected is worse than no seam.
-_SLOTS = frozenset({"meta_db", "audio_effect_mappings"})
+# Config paths. server.py derives these from the environment (fresh on every
+# import, so the ~49 pop-and-reimport fixtures keep working) and injects them
+# here. Routers read them as `appstate.config_dir` etc. — a module attribute at
+# call time. NOTE: config_dir/dlc_dir are env-derived, so a `setenv`+reimport
+# test reconfigures them for free; STATIC_DIR/SLOPPAK_CACHE_DIR are patched via
+# `setattr(server, …)` in a few tests, so those slots (when added) need their
+# tests retargeted to appstate in the same PR.
+config_dir = None
+
+_SLOTS = frozenset({"meta_db", "audio_effect_mappings", "config_dir"})
 
 
 def configure(**kwargs) -> None:

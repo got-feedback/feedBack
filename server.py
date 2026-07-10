@@ -55,7 +55,7 @@ from dlc_paths import _get_dlc_dir, _resolve_dlc_path
 # Lives in lib/ because that is the one core dir every packaging path copies.
 import appstate
 # Extracted route modules. They import `appstate`, never `server` — one-way graph.
-from routers import audio_effects, artist_aliases, loops, playlists, ws_highway, chart, wanted, library_extras
+from routers import audio_effects, artist_aliases, loops, playlists, ws_highway, chart, wanted, library_extras, shop
 import sloppak as sloppak_mod
 import loosefolder as loosefolder_mod
 # Pure text-matching engine for MusicBrainz enrichment (P8): denoise/score/
@@ -1162,6 +1162,13 @@ def _get_progression_content() -> dict:
                     log.warning("progression content: %s", warning)
                 _progression_content = content
     return _progression_content
+
+
+# Publish the progression-content accessor into the seam now that it's defined
+# (the main configure() at import-top runs before this def). The cache global +
+# lock stay in server.py, so the `setattr(server, "_progression_content")` test
+# path is unchanged; routers call `appstate.get_progression_content()`.
+appstate.configure(get_progression_content=_get_progression_content)
 
 
 def _copy_builtin_packs(
@@ -5005,51 +5012,9 @@ def api_progression_events(data: dict):
     return {"ok": True, "progression": summary}
 
 
-@app.get("/api/shop")
-def api_shop():
-    content = _get_progression_content()
-    owned = meta_db.get_owned_items()
-    equipped = meta_db.get_equipped()
-    items = [
-        {**item, "owned": iid in owned, "equipped": equipped.get(item["slot"]) == iid}
-        for iid, item in sorted(content["shop"].items())
-    ]
-    return {"items": items, "wallet": meta_db.get_wallet()}
-
-
-@app.post("/api/shop/buy")
-def api_shop_buy(data: dict):
-    """Spend Decibels on a cosmetic. Atomic: balance check + spend + ownership
-    in one transaction. Decibels are earned by playing only — never purchasable."""
-    item_id = _clean_str(data.get("item_id"))
-    item = _get_progression_content()["shop"].get(item_id)
-    if not item:
-        return JSONResponse({"error": f"unknown item: {item_id!r}"}, status_code=400)
-    status, wallet = meta_db.buy_shop_item(item)
-    if status == "owned":
-        return JSONResponse({"error": "already owned", "wallet": wallet}, status_code=409)
-    if status == "insufficient":
-        return JSONResponse({"error": "insufficient balance", "wallet": wallet}, status_code=402)
-    return {"ok": True, "item_id": item_id, "wallet": wallet}
-
-
-@app.post("/api/shop/equip")
-def api_shop_equip(data: dict):
-    """Equip an owned cosmetic into its slot. Body: {slot, item_id|null}
-    (null unequips, restoring the default look)."""
-    import progression as progression_mod
-    slot = _clean_str(data.get("slot"))
-    if slot not in progression_mod.SHOP_SLOTS:
-        return JSONResponse({"error": f"slot must be one of {sorted(progression_mod.SHOP_SLOTS)}"}, status_code=400)
-    item_id = data.get("item_id")
-    if item_id is not None:
-        item_id = _clean_str(item_id)
-        item = _get_progression_content()["shop"].get(item_id)
-        if not item or item["slot"] != slot:
-            return JSONResponse({"error": f"unknown item for slot {slot}: {item_id!r}"}, status_code=400)
-        if item_id not in meta_db.get_owned_items():
-            return JSONResponse({"error": "item not owned"}, status_code=403)
-    return {"ok": True, "equipped": meta_db.equip_item(slot, item_id)}
+# ── Cosmetics shop (spec 010) ────────────────────────────────────────────────
+# Mounted here (registration order). Implementation in lib/routers/shop.py.
+app.include_router(shop.router)
 
 
 # ── Per-song practice stats (fee[dB]ack v0.3.0) ───────────────────────────────

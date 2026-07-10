@@ -71,7 +71,7 @@ from audio_effects_db import AudioEffectsMappingDB
 # Lives in lib/ because that is the one core dir every packaging path copies.
 import appstate
 # Extracted route modules. They import `appstate`, never `server` — one-way graph.
-from routers import audio_effects, artist_aliases
+from routers import audio_effects, artist_aliases, loops
 import sloppak as sloppak_mod
 import drums as drums_mod
 import notation as notation_mod
@@ -5903,44 +5903,9 @@ def api_remove_wanted(wanted_id: int):
 
 
 # ── Loops API ────────────────────────────────────────────────────────────────
-
-@app.get("/api/loops")
-def list_loops(filename: str):
-    rows = meta_db.conn.execute(
-        "SELECT id, name, start_time, end_time FROM loops WHERE filename = ? ORDER BY start_time",
-        (filename,)
-    ).fetchall()
-    return [{"id": r[0], "name": r[1], "start": r[2], "end": r[3]} for r in rows]
-
-
-@app.post("/api/loops")
-def save_loop(data: dict):
-    filename = data.get("filename", "")
-    name = data.get("name", "").strip()
-    start = data.get("start")
-    end = data.get("end")
-    if not filename or start is None or end is None:
-        return {"error": "Missing fields"}
-    if not name:
-        count = meta_db.conn.execute(
-            "SELECT COUNT(*) FROM loops WHERE filename = ?", (filename,)
-        ).fetchone()[0]
-        name = f"Loop {count + 1}"
-    with meta_db._lock:
-        meta_db.conn.execute(
-            "INSERT INTO loops (filename, name, start_time, end_time) VALUES (?, ?, ?, ?)",
-            (filename, name, float(start), float(end))
-        )
-        meta_db.conn.commit()
-    return {"ok": True, "name": name}
-
-
-@app.delete("/api/loops/{loop_id}")
-def delete_loop(loop_id: int):
-    with meta_db._lock:
-        meta_db.conn.execute("DELETE FROM loops WHERE id = ?", (loop_id,))
-        meta_db.conn.commit()
-    return {"ok": True}
+# Mounted here, where these routes used to be defined (FastAPI matches in
+# registration order). Implementation in lib/routers/loops.py.
+app.include_router(loops.router)
 
 
 # ── Audio Effects Mapping API ───────────────────────────────────────────────

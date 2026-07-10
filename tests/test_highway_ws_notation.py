@@ -123,6 +123,9 @@ def make_client(tmp_path, monkeypatch):
         monkeypatch.setattr(server, "load_plugins", lambda *a, **kw: None)
         monkeypatch.setattr(server, "startup_scan", lambda: None)
         monkeypatch.setattr(server, "SLOPPAK_CACHE_DIR", tmp_path / "cache")
+        # ws_highway reads the cache dir through the appstate seam now.
+        import appstate as _appstate
+        monkeypatch.setattr(_appstate, "sloppak_cache_dir", tmp_path / "cache")
         return server
 
     (tmp_path / "dlc").mkdir()

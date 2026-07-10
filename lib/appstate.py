@@ -73,8 +73,20 @@ config_dir = None
 dlc_dir = None          # the DLC_DIR env value as a Path (Path("") if unset)
 dlc_dir_env = None      # the raw DLC_DIR env string, "" if unset — distinguishes
                         # "unset" from Path("")→"." (see dlc_paths._get_dlc_dir)
+# Cache/asset dirs. static_dir + sloppak_cache_dir are patched via
+# `setattr(server, …)` in a few tests, so a router reading them here needs those
+# setattr sites retargeted to `setattr(appstate, …)` in the same PR (ws_highway
+# retargets the 3 test_highway_ws_* SLOPPAK sites). config_dir-derived dirs are
+# reconfigured for free on a setenv+reimport.
+static_dir = None
+sloppak_cache_dir = None
+audio_cache_dir = None
 
-_SLOTS = frozenset({"meta_db", "audio_effect_mappings", "config_dir", "dlc_dir", "dlc_dir_env"})
+_SLOTS = frozenset({
+    "meta_db", "audio_effect_mappings",
+    "config_dir", "dlc_dir", "dlc_dir_env",
+    "static_dir", "sloppak_cache_dir", "audio_cache_dir",
+})
 
 
 def configure(**kwargs) -> None:

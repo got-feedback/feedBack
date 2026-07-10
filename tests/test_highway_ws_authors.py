@@ -16,6 +16,8 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from routers.ws_highway import _sanitize_authors
+
 
 # ── _sanitize_authors unit tests ────────────────────────────────────────────
 
@@ -35,7 +37,7 @@ def server_mod(monkeypatch, tmp_path):
 
 
 def test_sanitize_authors_valid(server_mod):
-    out = server_mod._sanitize_authors(
+    out = _sanitize_authors(
         {
             "authors": [
                 {"name": "Azure", "role": "charter", "email": "a@b.c", "url": "x"},
@@ -53,7 +55,7 @@ def test_sanitize_authors_valid(server_mod):
 
 
 def test_sanitize_authors_skips_malformed(server_mod):
-    out = server_mod._sanitize_authors(
+    out = _sanitize_authors(
         {
             "authors": [
                 {"name": ""},          # blank name → skipped
@@ -69,7 +71,7 @@ def test_sanitize_authors_skips_malformed(server_mod):
 
 @pytest.mark.parametrize("manifest", [None, {}, {"authors": None}, {"authors": "x"}, "nope"])
 def test_sanitize_authors_absent_or_nonlist(server_mod, manifest):
-    assert server_mod._sanitize_authors(manifest) == []
+    assert _sanitize_authors(manifest) == []
 
 
 # ── song_info WS integration ────────────────────────────────────────────────
@@ -118,6 +120,9 @@ def make_client(tmp_path, monkeypatch):
         monkeypatch.setattr(server, "load_plugins", lambda *a, **kw: None)
         monkeypatch.setattr(server, "startup_scan", lambda: None)
         monkeypatch.setattr(server, "SLOPPAK_CACHE_DIR", tmp_path / "cache")
+        # ws_highway reads the cache dir through the appstate seam now.
+        import appstate as _appstate
+        monkeypatch.setattr(_appstate, "sloppak_cache_dir", tmp_path / "cache")
         return server
 
     (tmp_path / "dlc").mkdir()

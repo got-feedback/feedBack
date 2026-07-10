@@ -82,10 +82,16 @@ static_dir = None
 sloppak_cache_dir = None
 audio_cache_dir = None
 
+# Injected callables (not values): server owns the impl + its state, routers call
+# through the seam. get_progression_content wraps a lazy content cache that stays
+# in server.py (its `setattr(server, "_progression_content")` test is untouched).
+get_progression_content = None
+
 _SLOTS = frozenset({
     "meta_db", "audio_effect_mappings",
     "config_dir", "dlc_dir", "dlc_dir_env",
     "static_dir", "sloppak_cache_dir", "audio_cache_dir",
+    "get_progression_content",
 })
 
 

@@ -11,6 +11,7 @@ import time
 import asyncio
 
 import httpx
+import demo_mode
 import pytest
 from fastapi.testclient import TestClient
 
@@ -120,12 +121,12 @@ def startup_harness(tmp_path, monkeypatch, isolate_logging):
 
     yield server, phases
 
-    server._DEMO_JANITOR_STOP.set()
-    thread = server._DEMO_JANITOR_THREAD
+    demo_mode._DEMO_JANITOR_STOP.set()
+    thread = demo_mode._DEMO_JANITOR_THREAD
     if thread is not None:
         thread.join(timeout=2)
-    server._DEMO_JANITOR_STARTED = False
-    server._DEMO_JANITOR_THREAD = None
+    demo_mode._DEMO_JANITOR_STARTED = False
+    demo_mode._DEMO_JANITOR_THREAD = None
     conn = getattr(getattr(server, "meta_db", None), "conn", None)
     if conn is not None:
         getattr(__import__("sys").modules.get("server"), "_join_background_db_threads", lambda: None)()
@@ -686,12 +687,12 @@ def test_startup_status_e2e_real_plugin_loader(tmp_path, monkeypatch, isolate_lo
             assert sentinel.status_code == 200
             assert sentinel.json() == {"ok": True}
     finally:
-        server._DEMO_JANITOR_STOP.set()
-        thread = server._DEMO_JANITOR_THREAD
+        demo_mode._DEMO_JANITOR_STOP.set()
+        thread = demo_mode._DEMO_JANITOR_THREAD
         if thread is not None:
             thread.join(timeout=2)
-        server._DEMO_JANITOR_STARTED = False
-        server._DEMO_JANITOR_THREAD = None
+        demo_mode._DEMO_JANITOR_STARTED = False
+        demo_mode._DEMO_JANITOR_THREAD = None
         conn = getattr(getattr(server, "meta_db", None), "conn", None)
         if conn is not None:
             getattr(__import__("sys").modules.get("server"), "_join_background_db_threads", lambda: None)()
@@ -777,12 +778,12 @@ def test_startup_status_endpoint_background_thread_path(tmp_path, monkeypatch, i
             # actually executed the sentinel — proves the main-loop handoff path ran.
             assert _route_setup_called, "route_setup_fn was never called; call_soon_threadsafe path was not exercised"
     finally:
-        server._DEMO_JANITOR_STOP.set()
-        thread = server._DEMO_JANITOR_THREAD
+        demo_mode._DEMO_JANITOR_STOP.set()
+        thread = demo_mode._DEMO_JANITOR_THREAD
         if thread is not None:
             thread.join(timeout=2)
-        server._DEMO_JANITOR_STARTED = False
-        server._DEMO_JANITOR_THREAD = None
+        demo_mode._DEMO_JANITOR_STARTED = False
+        demo_mode._DEMO_JANITOR_THREAD = None
         conn = getattr(getattr(server, "meta_db", None), "conn", None)
         if conn is not None:
             getattr(__import__("sys").modules.get("server"), "_join_background_db_threads", lambda: None)()
@@ -826,12 +827,12 @@ def test_startup_status_endpoint_background_thread_failure(tmp_path, monkeypatch
             assert data["phase"] == "error"
             assert _BG_ERROR in data["error"]
     finally:
-        server._DEMO_JANITOR_STOP.set()
-        thread = server._DEMO_JANITOR_THREAD
+        demo_mode._DEMO_JANITOR_STOP.set()
+        thread = demo_mode._DEMO_JANITOR_THREAD
         if thread is not None:
             thread.join(timeout=2)
-        server._DEMO_JANITOR_STARTED = False
-        server._DEMO_JANITOR_THREAD = None
+        demo_mode._DEMO_JANITOR_STARTED = False
+        demo_mode._DEMO_JANITOR_THREAD = None
         conn = getattr(getattr(server, "meta_db", None), "conn", None)
         if conn is not None:
             getattr(__import__("sys").modules.get("server"), "_join_background_db_threads", lambda: None)()

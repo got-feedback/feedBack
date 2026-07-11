@@ -16,6 +16,7 @@ Covers:
 import importlib
 import sys
 
+import demo_mode
 import pytest
 from fastapi.testclient import TestClient
 
@@ -50,14 +51,14 @@ def _cleanup(server, client):
     client.close()
     # Stop the demo-mode janitor thread (if started) so daemon threads don't
     # accumulate across tests.
-    server._DEMO_JANITOR_STOP.set()
-    thread = server._DEMO_JANITOR_THREAD
+    demo_mode._DEMO_JANITOR_STOP.set()
+    thread = demo_mode._DEMO_JANITOR_THREAD
     if thread is not None:
         thread.join(timeout=2)
-    server._DEMO_JANITOR_STARTED = False
-    server._DEMO_JANITOR_THREAD = None
-    with server._DEMO_JANITOR_HOOKS_LOCK:
-        server._DEMO_JANITOR_HOOKS.clear()
+    demo_mode._DEMO_JANITOR_STARTED = False
+    demo_mode._DEMO_JANITOR_THREAD = None
+    with demo_mode._DEMO_JANITOR_HOOKS_LOCK:
+        demo_mode._DEMO_JANITOR_HOOKS.clear()
     conn = getattr(getattr(server, "meta_db", None), "conn", None)
     if conn is not None:
         getattr(__import__("sys").modules.get("server"), "_join_background_db_threads", lambda: None)()
@@ -221,15 +222,15 @@ def test_register_demo_janitor_hook_is_callable(tmp_path, monkeypatch):
     server, client = _make_client(tmp_path, monkeypatch, demo=True)
     try:
         called = []
-        server.register_demo_janitor_hook(lambda: called.append(1))
+        demo_mode.register_demo_janitor_hook(lambda: called.append(1))
         # Manually invoke the registered hooks (simulating a janitor sweep).
-        for hook in list(server._DEMO_JANITOR_HOOKS):
+        for hook in list(demo_mode._DEMO_JANITOR_HOOKS):
             hook()
         assert 1 in called
     finally:
         # Clean up our test hook so it doesn't leak into other tests.
-        with server._DEMO_JANITOR_HOOKS_LOCK:
-            server._DEMO_JANITOR_HOOKS.clear()
+        with demo_mode._DEMO_JANITOR_HOOKS_LOCK:
+            demo_mode._DEMO_JANITOR_HOOKS.clear()
         _cleanup(server, client)
 
 
@@ -238,7 +239,7 @@ def test_register_demo_janitor_hook_rejects_non_callable(tmp_path, monkeypatch):
     server, client = _make_client(tmp_path, monkeypatch, demo=True)
     try:
         with pytest.raises(TypeError):
-            server.register_demo_janitor_hook("not a function")
+            demo_mode.register_demo_janitor_hook("not a function")
     finally:
         _cleanup(server, client)
 
@@ -251,7 +252,7 @@ def test_register_demo_janitor_hook_rejects_async_callable(tmp_path, monkeypatch
             pass
 
         with pytest.raises(TypeError, match="async"):
-            server.register_demo_janitor_hook(_async_hook)
+            demo_mode.register_demo_janitor_hook(_async_hook)
     finally:
         _cleanup(server, client)
 
@@ -264,7 +265,7 @@ def test_register_demo_janitor_hook_rejects_non_zero_arg_callable(tmp_path, monk
             pass
 
         with pytest.raises(TypeError, match="zero-argument"):
-            server.register_demo_janitor_hook(_needs_arg)
+            demo_mode.register_demo_janitor_hook(_needs_arg)
     finally:
         _cleanup(server, client)
 
@@ -276,10 +277,10 @@ def test_register_demo_janitor_hook_accepts_default_arg_callable(tmp_path, monke
         def _optional_arg(x=None):
             pass
 
-        server.register_demo_janitor_hook(_optional_arg)
+        demo_mode.register_demo_janitor_hook(_optional_arg)
     finally:
-        with server._DEMO_JANITOR_HOOKS_LOCK:
-            server._DEMO_JANITOR_HOOKS.clear()
+        with demo_mode._DEMO_JANITOR_HOOKS_LOCK:
+            demo_mode._DEMO_JANITOR_HOOKS.clear()
         _cleanup(server, client)
 
 
@@ -308,21 +309,21 @@ def test_register_demo_janitor_hook_in_plugin_context(tmp_path, monkeypatch):
         assert "register_demo_janitor_hook" in captured, (
             "register_demo_janitor_hook was not passed in the plugin context"
         )
-        assert captured["register_demo_janitor_hook"] is server.register_demo_janitor_hook
+        assert captured["register_demo_janitor_hook"] is demo_mode.register_demo_janitor_hook
 
     conn = getattr(getattr(server, "meta_db", None), "conn", None)
     if conn is not None:
         getattr(__import__("sys").modules.get("server"), "_join_background_db_threads", lambda: None)()
         conn.close()
     # Clean up janitor state so it doesn't bleed into other tests.
-    server._DEMO_JANITOR_STOP.set()
-    thread = server._DEMO_JANITOR_THREAD
+    demo_mode._DEMO_JANITOR_STOP.set()
+    thread = demo_mode._DEMO_JANITOR_THREAD
     if thread is not None:
         thread.join(timeout=2)
-    server._DEMO_JANITOR_STARTED = False
-    server._DEMO_JANITOR_THREAD = None
-    with server._DEMO_JANITOR_HOOKS_LOCK:
-        server._DEMO_JANITOR_HOOKS.clear()
+    demo_mode._DEMO_JANITOR_STARTED = False
+    demo_mode._DEMO_JANITOR_THREAD = None
+    with demo_mode._DEMO_JANITOR_HOOKS_LOCK:
+        demo_mode._DEMO_JANITOR_HOOKS.clear()
 
 
 

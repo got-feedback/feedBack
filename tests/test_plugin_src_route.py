@@ -138,3 +138,119 @@ def test_unready_plugin_src_is_404(client):
     c, _ = client
     plugins.LOADED_PLUGINS[0]["status"] = "installing"
     assert c.get(f"/api/plugins/{PLUGIN_ID}/src/main.js").status_code == 404
+
+
+# ── #879: the /g/<token>/ generation prefix ────────────────────────────────────
+#
+# A plugin ROLLBACK must actually re-evaluate a module plugin. ES modules are
+# evaluated once per URL per document, so re-inserting a <script type="module">
+# whose src the module map has already seen fires `load` without re-running the
+# body. Busting the ENTRY url alone does not help — screen.js is a one-line
+# `import './src/main.js'`, and a relative specifier resolves against the base URL
+# with the QUERY DROPPED, so a ?v= token never reaches the graph.
+#
+# Hence a token in the PATH: every relative import inherits it, at every depth,
+# with no import-specifier rewriting. These routes must serve the SAME bytes and
+# keep the SAME containment.
+
+def test_generation_prefix_serves_identical_screen_js(client):
+    c, _ = client
+    plain = c.get(f"/api/plugins/{PLUGIN_ID}/screen.js")
+    gen = c.get(f"/api/plugins/{PLUGIN_ID}/g/7/screen.js")
+    assert gen.status_code == 200
+    assert gen.content == plain.content
+    assert "import './src/main.js'" in gen.text
+
+
+def test_generation_prefix_serves_the_whole_module_graph(client):
+    """The point of the path token: a relative import from a /g/7/ entry resolves
+    to a /g/7/ URL, so the graph is fetched fresh — not just the entry."""
+    c, _ = client
+    main = c.get(f"/api/plugins/{PLUGIN_ID}/g/7/src/main.js")
+    assert main.status_code == 200
+    assert main.text == c.get(f"/api/plugins/{PLUGIN_ID}/src/main.js").text
+    # and one level deeper, which is where a query-string token would already have
+    # been lost twice over
+    nested = c.get(f"/api/plugins/{PLUGIN_ID}/g/7/src/util/x.js")
+    assert nested.status_code == 200
+    assert "export const x = 42" in nested.text
+
+
+def test_generation_token_is_opaque(client):
+    """Any token serves the same bytes — it exists only to vary the URL."""
+    c, _ = client
+    a = c.get(f"/api/plugins/{PLUGIN_ID}/g/1/src/main.js")
+    b = c.get(f"/api/plugins/{PLUGIN_ID}/g/999999/src/main.js")
+    assert a.status_code == b.status_code == 200
+    assert a.text == b.text
+
+
+def test_generation_prefix_does_not_widen_containment(client):
+    """The token is never joined into a path, so containment must be EXACTLY what the
+    un-prefixed route already gives. Asserted as parity rather than as a flat 404:
+    `../screen.js` legitimately 200s on BOTH, because the URL normalises to
+    /api/plugins/<id>/screen.js before routing ever happens — it never leaves the
+    plugin dir. Pinning an absolute expectation here would have encoded my guess
+    about the existing route instead of testing the thing that matters, which is
+    that /g/ changes nothing."""
+    c, _ = client
+    for bad in ("../screen.js", "../../etc/passwd", "..%2f..%2fetc%2fpasswd",
+                "..%5c..%5cwindows%5cwin.ini", "/etc/passwd"):
+        plain = c.get(f"/api/plugins/{PLUGIN_ID}/src/{bad}")
+        gen = c.get(f"/api/plugins/{PLUGIN_ID}/g/1/src/{bad}")
+        assert gen.status_code == plain.status_code, f"/g/ diverged on {bad!r}"
+        assert gen.content == plain.content, f"/g/ served different bytes for {bad!r}"
+        assert "root:" not in gen.text and "[extensions]" not in gen.text
+
+    # and the real traversals are genuinely rejected, on both
+    for bad in ("../../etc/passwd", "..%2f..%2fetc%2fpasswd"):
+        assert c.get(f"/api/plugins/{PLUGIN_ID}/g/1/src/{bad}").status_code == 404
+
+
+def test_generation_prefix_404s_for_unknown_plugin(client):
+    c, _ = client
+    assert c.get("/api/plugins/nope/g/1/screen.js").status_code == 404
+    assert c.get("/api/plugins/nope/g/1/src/main.js").status_code == 404
+
+
+def test_generation_prefix_serves_ASSETS_too(client):
+    """Codex [P2] on the first cut of this fix, and it was right.
+
+    The path token shifts the BASE URL, so everything a module resolves relatively moves
+    with it — not just imports. `new URL('../assets/worklet.js', import.meta.url)` from
+    /api/plugins/<id>/g/1/src/main.js resolves to /api/plugins/<id>/g/1/assets/worklet.js.
+    Mirroring only screen.js and src/ would have fixed imports and 404'd every asset,
+    worklet and wasm file the graph reaches. Hence a path REWRITE, so every plugin route
+    — present and future — works under the prefix."""
+    c, _ = client
+    plain = c.get(f"/api/plugins/{PLUGIN_ID}/assets/worklet.js")
+    gen = c.get(f"/api/plugins/{PLUGIN_ID}/g/1/assets/worklet.js")
+    assert plain.status_code == 200
+    assert gen.status_code == 200, "an asset reached relatively from a reloaded module graph 404'd"
+    assert gen.content == plain.content
+
+
+def test_generation_prefix_covers_every_plugin_route(client):
+    """The rewrite is generic, so this holds for routes nobody thought about — which is
+    the point. Any plugin route added later works under /g/ with no extra wiring."""
+    c, _ = client
+    for route in ("screen.js", "src/main.js", "src/util/x.js", "src/theme.css",
+                  "assets/worklet.js", "settings.html"):
+        plain = c.get(f"/api/plugins/{PLUGIN_ID}/{route}")
+        gen = c.get(f"/api/plugins/{PLUGIN_ID}/g/42/{route}")
+        assert gen.status_code == plain.status_code, f"/g/ diverged on {route}"
+        assert gen.content == plain.content, f"/g/ served different bytes for {route}"
+
+
+def test_generation_prefix_handles_non_ascii_filenames(client):
+    """Codex [P3] on the second cut. A plugin file named e.g. src/工具.js is perfectly
+    valid, and the middleware must not 500 on it — which an eager
+    raw_path.encode("latin-1") did, making the prefixed route LESS capable than the
+    plain one. raw_path is informational; Starlette routes on scope["path"]."""
+    c, tmp = client
+    (tmp / "src" / "工具.js").write_text("export const t = 1;\n")
+    plain = c.get(f"/api/plugins/{PLUGIN_ID}/src/工具.js")
+    gen = c.get(f"/api/plugins/{PLUGIN_ID}/g/3/src/工具.js")
+    assert plain.status_code == 200
+    assert gen.status_code == 200, "non-ASCII module path 500'd or 404'd under /g/"
+    assert gen.content == plain.content

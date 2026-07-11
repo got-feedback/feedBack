@@ -19,13 +19,19 @@ const path = require('node:path');
 const PLUGIN_LOADER_JS = path.join(__dirname, '..', '..', 'static', 'js', 'plugin-loader.js');
 const src = fs.readFileSync(PLUGIN_LOADER_JS, 'utf8');
 
-// Isolate the screen.js <script> injection block: from where its src is built
-// to where the element is appended.
+// Isolate the screen.js <script> injection block: from where its src is assigned to
+// where the element is appended.
+//
+// Anchored on the ASSIGNMENT, not on the URL literal. The URL is built in
+// _pluginScriptUrl() now (#879 — a rollback needs a fresh module URL), so the literal
+// '/api/plugins/${plugin.id}/screen.js' appears FURTHER DOWN the file than the block
+// that uses it, and slicing from it ran off the end of the injection block entirely.
+const SRC_ASSIGN = 'script.src = _pluginScriptUrl(';
 function injectionBlock() {
-    const start = src.indexOf('/api/plugins/${plugin.id}/screen.js');
-    assert.ok(start !== -1, 'screen.js injection src not found — loader moved?');
+    const start = src.indexOf(SRC_ASSIGN);
+    assert.ok(start !== -1, 'screen.js src assignment not found — loader moved?');
     const end = src.indexOf('document.body.appendChild(script)', start);
-    assert.ok(end !== -1, 'appendChild(script) not found after screen.js src');
+    assert.ok(end !== -1, 'appendChild(script) not found after the src assignment');
     return src.slice(start, end);
 }
 
@@ -52,7 +58,7 @@ test('the module type is gated, never set unconditionally', () => {
 
 test('the module guard sits before appendChild, after the src assignment', () => {
     const guardAt = src.indexOf('script.type = \'module\'');
-    const srcAt = src.indexOf('/api/plugins/${plugin.id}/screen.js');
+    const srcAt = src.indexOf(SRC_ASSIGN);
     const appendAt = src.indexOf('document.body.appendChild(script)', srcAt);
     assert.ok(guardAt > srcAt && guardAt < appendAt,
         'the module guard must live inside the screen.js injection block');

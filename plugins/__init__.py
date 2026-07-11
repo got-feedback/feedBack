@@ -6,6 +6,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -2383,6 +2384,53 @@ def register_plugin_api(app: FastAPI):
                     # same live-edit contract the src/ module graph relies on.
                     return _plugin_file_response(request, script_file, "application/javascript")
         return Response("", status_code=404)
+
+    # ── Module-graph cache busting (#879) ────────────────────────────────
+    #
+    # ES modules are evaluated ONCE PER URL PER DOCUMENT. Re-inserting a
+    # <script type="module"> whose src the module map has already seen fires
+    # `load` but does NOT re-run the body. So re-loading a plugin — a rollback,
+    # and (see below) an upgrade too — silently kept the OLD module live while
+    # the loader recorded success: a no-op that reported it worked.
+    #
+    # Busting the ENTRY url does not help. A module plugin's screen.js is a
+    # one-line `import './src/main.js'`, and a relative specifier resolves
+    # against the base URL WITH THE QUERY DROPPED — so a ?v= token never reaches
+    # the graph. Driving a real browser through install -> upgrade -> rollback and
+    # counting evaluations of src/main.js gives ONE. The upgrade re-runs the shim
+    # at its new ?v= URL; the shim imports './src/main.js'; that resolves to the
+    # same URL; the module map returns the already-evaluated old module.
+    #
+    # So the token goes in the PATH: /api/plugins/<id>/g/<n>/screen.js. Every
+    # relative import inherits it at every depth — for free, with no
+    # import-specifier rewriting (which could never see `import(expr)` anyway).
+    #
+    # WHY A PATH REWRITE AND NOT TWO MIRRORED ROUTES. The token shifts the base
+    # URL, so EVERYTHING a module resolves relatively moves with it — not just
+    # imports. `new URL('../assets/worklet.js', import.meta.url)` from
+    # /api/plugins/x/g/1/src/main.js resolves to /api/plugins/x/g/1/assets/... .
+    # Mirroring only screen.js and src/ would fix imports and 404 every asset,
+    # worklet and wasm file the graph reaches — and would silently break again the
+    # next time someone adds a plugin route. Stripping the segment before routing
+    # makes every plugin route, present and future, work under the prefix.
+    #
+    # The token is opaque: it is never joined into a filesystem path (and is gone
+    # by the time any handler runs), so containment still rests entirely on the
+    # same safe_join the un-prefixed routes use.
+    _GEN_PREFIX = re.compile(r"^(/api/plugins/[^/]+)/g/[^/]+(/.+)$")
+
+    @app.middleware("http")
+    async def _strip_plugin_generation_prefix(request: Request, call_next):
+        m = _GEN_PREFIX.match(request.scope.get("path", ""))
+        if m:
+            # Starlette routes on scope["path"] alone. raw_path is deliberately left
+            # ALONE: it is informational, and re-encoding the rewritten str back to
+            # bytes would have to guess a codec — `.encode("latin-1")` raises
+            # UnicodeEncodeError on a perfectly valid plugin file like src/工具.js,
+            # 500ing a request the un-prefixed route serves fine. Leaving raw_path as
+            # the client actually sent it is also simply more truthful for logs.
+            request.scope["path"] = m.group(1) + m.group(2)
+        return await call_next(request)
 
     @app.get("/api/plugins/{plugin_id}/settings.html")
     def plugin_settings_html(plugin_id: str):

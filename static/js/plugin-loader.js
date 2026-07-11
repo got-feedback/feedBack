@@ -654,7 +654,8 @@ export async function loadPlugins() {
                         // of a cached copy keyed only by path (matches the art
                         // URL ?v=mtime convention elsewhere in this file).
                         const v = encodeURIComponent(wantedVersion);
-                        script.src = `/api/plugins/${plugin.id}/screen.js${v ? `?v=${v}` : ''}`;
+                        const query = v ? `?v=${v}` : '';
+                        script.src = _pluginScriptUrl(plugin, wantedVersion, query);
                         // Module-migration (R0): a migrated plugin declares
                         // scriptType:"module" and its screen.js is `import
                         // './src/main.js'`. A <script type="module"> fires load
@@ -842,6 +843,56 @@ export async function checkPluginUpdates() {
     }
     btn.disabled = false;
     btn.textContent = 'Check for Updates';
+}
+
+// ── Module re-evaluation (#879) ─────────────────────────────────────────────
+//
+// ES modules are evaluated ONCE PER URL PER DOCUMENT. Re-inserting a
+// <script type="module"> whose src the module map has already seen fires `load` but
+// does NOT re-run the body. So a ROLLBACK — reloading a version already evaluated
+// this session — silently kept the OLD module live, while onload fired and
+// loadedScripts recorded the rollback as applied. A no-op that reported success.
+// (Upgrades were fine: a new version means a new ?v=, hence a new URL.)
+//
+// Busting the ENTRY url alone does NOT fix it. A module plugin's screen.js is a
+// one-line `import './src/main.js'`, and a relative specifier resolves against the
+// base URL WITH THE QUERY STRING DROPPED — so ?v= never reaches the graph, and
+// src/main.js (where the plugin actually lives) stays cached no matter what we hang
+// off screen.js.
+//
+// So the token goes in the PATH. From /api/plugins/x/g/7/screen.js, './src/main.js'
+// resolves to /api/plugins/x/g/7/src/main.js — every relative import in the graph
+// inherits it, at every depth, with no import-specifier rewriting (which could not
+// see `import(expr)` anyway). The server ignores the token and serves identical
+// bytes.
+//
+// ─── AND THE UPGRADE PATH WAS BROKEN TOO ────────────────────────────────────
+//
+// #879 says "upgrades are fine — a new version yields a new URL". That is true of
+// screen.js and FALSE of the plugin. Driving a real browser through
+// install(1.0.0) -> upgrade(1.1.0) -> rollback(1.0.0) and counting evaluations of
+// src/main.js gives ONE. Not two, not three: ONE. The upgrade re-evaluates the
+// one-line screen.js shim at its new ?v= URL, that shim imports './src/main.js',
+// that resolves to the same URL as before, and the module map hands back the
+// ALREADY-EVALUATED v1.0.0 module. The plugin's actual code never re-ran.
+//
+// So the generation token is not a rollback special case. EVERY re-load of a module
+// plugin needs it — the key is the plugin id, NOT id@version. Only the first load of
+// a given plugin in this document takes the stable URL, which is what keeps the
+// ETag/304 live-edit contract the R0 rails depend on.
+const _evaluatedModules = new Set();   // plugin ids whose module graph is live in this document
+let _moduleReloadSeq = 0;
+
+function _pluginScriptUrl(plugin, wantedVersion, query) {
+    const base = `/api/plugins/${plugin.id}/screen.js${query}`;
+    if (plugin.script_type !== 'module') return base;   // classic scripts always re-run
+    if (!_evaluatedModules.has(plugin.id)) {
+        _evaluatedModules.add(plugin.id);
+        return base;                                    // first load: stable URL, 304-able
+    }
+    // Re-load of a module plugin — upgrade OR rollback. Its graph is already in the
+    // module map, so it needs an entirely fresh path or nothing below screen.js re-runs.
+    return `/api/plugins/${plugin.id}/g/${++_moduleReloadSeq}/screen.js${query}`;
 }
 
 export async function updatePlugin(pluginId, btn) {

@@ -98,7 +98,10 @@ function region(src, needle, length = 1200) {
 
 test('plugin script hydration exposes the current plugin id for legacy registrations', () => {
     const src = source(PLUGIN_LOADER_JS);
-    const block = region(src, 'script.src = `/api/plugins/${plugin.id}/screen.js');
+    // Anchored on the ASSIGNMENT, not the URL literal: the URL is built in
+    // _pluginScriptUrl() now (#879 — a rollback needs a fresh module URL for the whole
+    // import graph), so the old literal no longer appears at the injection site.
+    const block = region(src, 'script.src = _pluginScriptUrl(');
     assert.match(block, /window\.feedBack\._loadingPluginId\s*=\s*plugin\.id/);
     assert.match(block, /delete\s+window\.feedBack\._loadingPluginId/);
 });

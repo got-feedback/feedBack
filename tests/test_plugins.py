@@ -46,56 +46,6 @@ def capture_logger(caplog, logger_name, level=logging.WARNING):
         logger.propagate = orig_propagate
 
 
-# Bare module names that this test module pre-populates into
-# sys.modules to simulate the bare-import path. Saved/restored by
-# the reset_plugin_state fixture so they don't leak to other test
-# files. Codex / Copilot review on PR for feedBack#33.
-_BARE_NAMES_USED = ("util", "extractor")
-
-
-@pytest.fixture()
-def reset_plugin_state(monkeypatch):
-    """Clear loader module-level state and restore on teardown.
-
-    Saves and restores:
-      * `plugins.LOADED_PLUGINS`
-      * any `plugin_*` keys we add to `sys.modules`
-      * the bare names this module simulates (`util`, `extractor`)
-      * `sys.path` — `plugins.load_plugins()` mutates it
-    Also unsets `FEEDBACK_PLUGINS_DIR` for the test's duration
-    (via monkeypatch) so a CI env that pre-sets it can't leak
-    real user plugins into a tmp_path-driven test. Per-module
-    locks are owned by the standard import system
-    (`importlib._bootstrap._module_locks`) and are not our
-    responsibility to reset.
-    """
-    monkeypatch.delenv("FEEDBACK_PLUGINS_DIR", raising=False)
-    plugins = importlib.import_module("plugins")
-    saved_loaded = list(plugins.LOADED_PLUGINS)
-    saved_pending = dict(plugins.PENDING_PLUGINS)
-    saved_modules = {k: v for k, v in sys.modules.items() if k.startswith("plugin_")}
-    saved_bare = {k: sys.modules[k] for k in _BARE_NAMES_USED if k in sys.modules}
-    saved_path = list(sys.path)
-    plugins.LOADED_PLUGINS.clear()
-    plugins.PENDING_PLUGINS.clear()
-    for k in list(sys.modules):
-        if k.startswith("plugin_") or k in _BARE_NAMES_USED:
-            del sys.modules[k]
-    try:
-        yield plugins
-    finally:
-        plugins.LOADED_PLUGINS.clear()
-        plugins.LOADED_PLUGINS.extend(saved_loaded)
-        plugins.PENDING_PLUGINS.clear()
-        plugins.PENDING_PLUGINS.update(saved_pending)
-        for k in list(sys.modules):
-            if k.startswith("plugin_") or k in _BARE_NAMES_USED:
-                del sys.modules[k]
-        sys.modules.update(saved_modules)
-        sys.modules.update(saved_bare)
-        sys.path[:] = saved_path
-
-
 def _make_plugin(plugin_root, plugin_id, *, sibling_files=None, routes_body=None):
     """Create a minimal plugin directory under `plugin_root`.
 

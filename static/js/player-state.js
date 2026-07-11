@@ -31,4 +31,12 @@ export const S = {
      * land where it was asked to (JUCE can clamp; HTML5 can round).
      */
     lastAudioTime: 0,
+
+    /**
+     * A resume request armed by playSong({ resume }) and consumed on song:ready.
+     * Written by app.js (playSong, and the song:ready listener that consumes it) and
+     * read by the resume-session module — so, like the two above, it cannot be a plain
+     * export.
+     */
+    pendingResume: null,
 };

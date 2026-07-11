@@ -98,6 +98,7 @@ running_version = None
 art_cache_dir = None
 song_pack_art_exists = None
 art_override_paths = None
+art_safe_name = None
 
 _SLOTS = frozenset({
     "meta_db", "audio_effect_mappings", "tuning_providers",
@@ -105,7 +106,7 @@ _SLOTS = frozenset({
     "static_dir", "sloppak_cache_dir", "audio_cache_dir",
     "get_progression_content", "builtin_diagnostic_filename",
     "running_version",
-    "art_cache_dir", "song_pack_art_exists", "art_override_paths",
+    "art_cache_dir", "song_pack_art_exists", "art_override_paths", "art_safe_name",
 })
 
 

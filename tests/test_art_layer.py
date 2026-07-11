@@ -8,6 +8,7 @@ here opens a socket, and the offline default is itself asserted.
 
 import importlib
 import enrichment
+from routers import art
 import io as _io
 import sys
 
@@ -122,7 +123,7 @@ def test_bad_upload_rejected(server, client):
 
 def test_art_url_fetches_and_overrides(server, client, monkeypatch):
     make_sloppak(server, "a.sloppak", with_cover=True)
-    monkeypatch.setattr(server, "_fetch_art_url", lambda url: png_bytes((9, 9, 9)))
+    monkeypatch.setattr(art, "_fetch_art_url", lambda url: png_bytes((9, 9, 9)))
     body = client.post("/api/song/a.sloppak/art/url",
                        json={"url": "https://example.com/cover.png"}).json()
     assert body == {"ok": True, "kind": "png"}
@@ -139,7 +140,7 @@ def test_art_url_validation(server, client, monkeypatch):
     # Oversize → 400 (the seam raises ValueError at the cap).
     def _huge(url):
         raise ValueError("image larger than 10 MB")
-    monkeypatch.setattr(server, "_fetch_art_url", _huge)
+    monkeypatch.setattr(art, "_fetch_art_url", _huge)
     assert client.post("/api/song/a.sloppak/art/url",
                        json={"url": "https://example.com/x.png"}).status_code == 400
 
@@ -303,7 +304,7 @@ def test_upload_rejects_unknown_song_and_oversize(server, client):
     assert server._art_override_paths("ghost.sloppak") == []
     # Oversize decoded payload → 400 (bounds the base64 upload path).
     make_sloppak(server, "a.sloppak")
-    huge = b64(b"\x00" * (server._ART_URL_MAX_BYTES + 1))
+    huge = b64(b"\x00" * (art._ART_URL_MAX_BYTES + 1))
     assert client.post("/api/song/a.sloppak/art/upload",
                        json={"image": huge}).status_code == 400
 
@@ -311,10 +312,10 @@ def test_upload_rejects_unknown_song_and_oversize(server, client):
 def test_fetch_art_url_blocks_internal_hosts(server):
     """The SSRF guard refuses loopback / link-local / private targets before
     any request is made (the real seam, not the faked one)."""
-    assert server._url_host_is_internal("http://127.0.0.1/x.png")
-    assert server._url_host_is_internal("http://localhost/x.png")
-    assert server._url_host_is_internal("http://169.254.169.254/latest/meta-data")
-    assert server._url_host_is_internal("http://10.0.0.5/x.png")
-    assert server._url_host_is_internal("http://[::1]/x.png")
-    assert server._url_host_is_internal("http://nonexistent.invalid/x.png")  # unresolvable → closed
-    assert not server._url_host_is_internal("http://93.184.216.34/x.png")    # public literal
+    assert art._url_host_is_internal("http://127.0.0.1/x.png")
+    assert art._url_host_is_internal("http://localhost/x.png")
+    assert art._url_host_is_internal("http://169.254.169.254/latest/meta-data")
+    assert art._url_host_is_internal("http://10.0.0.5/x.png")
+    assert art._url_host_is_internal("http://[::1]/x.png")
+    assert art._url_host_is_internal("http://nonexistent.invalid/x.png")  # unresolvable → closed
+    assert not art._url_host_is_internal("http://93.184.216.34/x.png")    # public literal

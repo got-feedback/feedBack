@@ -13,6 +13,7 @@ tests/test_art_layer.py.
 
 import importlib
 import enrichment
+from routers import art
 import io as _io
 import sys
 
@@ -252,7 +253,7 @@ def test_caa_candidates_capped_at_12(server, client, caa_index):
     caa_index.indexes["rel-big"] = {
         "images": [_img(300 + i, front=(i == 0)) for i in range(20)]}
     _match_row(server, "a.sloppak", release_id="rel-big")
-    assert len(_caa(_get(client))) == server._ART_PICKER_MAX_CAA == 12
+    assert len(_caa(_get(client))) == art._ART_PICKER_MAX_CAA == 12
 
 
 def test_demo_mode_blocks_candidates(server, client, monkeypatch):
@@ -342,9 +343,9 @@ def test_fetch_art_url_follows_redirects_validating_each_hop(server, monkeypatch
 
     monkeypatch.setattr(requests, "get", fake_get)
     monkeypatch.setattr(enrichment, "_enrich_network_enabled", lambda: True)
-    monkeypatch.setattr(server, "_url_host_is_internal",
+    monkeypatch.setattr(art, "_url_host_is_internal",
                         lambda u: (checked.append(u), False)[1])
-    data = server._fetch_art_url("https://coverartarchive.example/release/x/front-500")
+    data = art._fetch_art_url("https://coverartarchive.example/release/x/front-500")
     assert data == b"IMGDATA"
     assert fetched == ["https://coverartarchive.example/release/x/front-500",
                        "https://archive.example/img.png"]
@@ -356,10 +357,10 @@ def test_fetch_art_url_blocks_redirect_to_internal(server, monkeypatch):
     monkeypatch.setattr(requests, "get", lambda url, **kw: _FakeResp(
         302, {"Location": "http://internal.example/x.png"}))
     monkeypatch.setattr(enrichment, "_enrich_network_enabled", lambda: True)
-    monkeypatch.setattr(server, "_url_host_is_internal",
+    monkeypatch.setattr(art, "_url_host_is_internal",
                         lambda u: "internal" in u)
     with pytest.raises(ValueError):
-        server._fetch_art_url("https://public.example/x.png")
+        art._fetch_art_url("https://public.example/x.png")
 
 
 def test_fetch_art_url_redirect_budget(server, monkeypatch):
@@ -367,6 +368,6 @@ def test_fetch_art_url_redirect_budget(server, monkeypatch):
     monkeypatch.setattr(requests, "get", lambda url, **kw: _FakeResp(
         307, {"Location": "https://public.example/next.png"}))
     monkeypatch.setattr(enrichment, "_enrich_network_enabled", lambda: True)
-    monkeypatch.setattr(server, "_url_host_is_internal", lambda u: False)
+    monkeypatch.setattr(art, "_url_host_is_internal", lambda u: False)
     with pytest.raises(enrichment.EnrichTransportError):
-        server._fetch_art_url("https://public.example/x.png")
+        art._fetch_art_url("https://public.example/x.png")

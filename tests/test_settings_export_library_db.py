@@ -15,6 +15,7 @@ this file pins the additive `core_server_files` section:
 
 import base64
 import importlib
+from routers import settings as settings_router
 import sqlite3
 import sys
 from pathlib import Path
@@ -118,7 +119,7 @@ def test_import_stages_db_restore_without_touching_live_db(client, server_mod, t
 
     payload = _valid_db_bytes(tmp_path, name="incoming.db", marker="restored")
     r = client.post("/api/settings/import", json={
-        "schema": server_mod.SETTINGS_BUNDLE_SCHEMA,
+        "schema": settings_router.SETTINGS_BUNDLE_SCHEMA,
         "server_config": {},
         "core_server_files": {
             "web_library.db": {"encoding": "base64",
@@ -143,7 +144,7 @@ def test_import_rejects_corrupt_db_with_valid_magic_header(client, server_mod, t
     # fail to open the bad restore.
     corrupt = b"SQLite format 3\x00" + b"\xff" * 200
     r = client.post("/api/settings/import", json={
-        "schema": server_mod.SETTINGS_BUNDLE_SCHEMA,
+        "schema": settings_router.SETTINGS_BUNDLE_SCHEMA,
         "server_config": {},
         "core_server_files": {
             "web_library.db": {"encoding": "base64",
@@ -158,7 +159,7 @@ def test_import_rejects_non_sqlite_db_payload(client, server_mod, tmp_path):
     # A truncated / wrong file staged as the restore would brick startup —
     # reject anything lacking the SQLite magic header, before touching disk.
     r = client.post("/api/settings/import", json={
-        "schema": server_mod.SETTINGS_BUNDLE_SCHEMA,
+        "schema": settings_router.SETTINGS_BUNDLE_SCHEMA,
         "server_config": {},
         "core_server_files": {
             "web_library.db": {"encoding": "base64",
@@ -171,7 +172,7 @@ def test_import_rejects_non_sqlite_db_payload(client, server_mod, tmp_path):
 
 def test_import_writes_custom_art_immediately(client, server_mod, tmp_path):
     r = client.post("/api/settings/import", json={
-        "schema": server_mod.SETTINGS_BUNDLE_SCHEMA,
+        "schema": settings_router.SETTINGS_BUNDLE_SCHEMA,
         "server_config": {},
         "core_server_files": {
             "playlist_covers/7.png": {"encoding": "base64",
@@ -186,7 +187,7 @@ def test_import_writes_custom_art_immediately(client, server_mod, tmp_path):
 def test_import_core_path_traversal_rejected(client, server_mod, tmp_path):
     secret = tmp_path.parent / "escape.txt"
     r = client.post("/api/settings/import", json={
-        "schema": server_mod.SETTINGS_BUNDLE_SCHEMA,
+        "schema": settings_router.SETTINGS_BUNDLE_SCHEMA,
         "server_config": {},
         "core_server_files": {
             "../escape.txt": {"encoding": "base64",
@@ -201,7 +202,7 @@ def test_import_core_undeclared_path_skipped_not_fatal(client, server_mod, tmp_p
     # A relpath outside the core allowlist is a warn-and-skip, not a refusal —
     # the rest of the bundle still applies.
     r = client.post("/api/settings/import", json={
-        "schema": server_mod.SETTINGS_BUNDLE_SCHEMA,
+        "schema": settings_router.SETTINGS_BUNDLE_SCHEMA,
         "server_config": {},
         "core_server_files": {
             "audio_cache/x.ogg": {"encoding": "base64",
@@ -289,7 +290,7 @@ def test_full_db_backup_restore_round_trip(client, server_mod, tmp_path):
 def test_export_fails_hard_when_db_snapshot_unavailable(client, server_mod, monkeypatch):
     # A backup that silently omits the library DB is a data-loss trap — the
     # export must error rather than hand back an incomplete-looking bundle.
-    monkeypatch.setattr(server_mod, "_snapshot_library_db", lambda: None)
+    monkeypatch.setattr(settings_router, "_snapshot_library_db", lambda: None)
     r = client.get("/api/settings/export")
     assert r.status_code == 500
     assert "library database" in r.json()["error"].lower()
@@ -299,16 +300,16 @@ def test_failed_import_disarms_staged_db_restore(client, server_mod, tmp_path, m
     # If a later write in phase 2 fails, the request 500s — but a staged DB
     # restore must NOT survive to swap in on the next restart.
     payload = _valid_db_bytes(tmp_path, name="incoming.db")
-    real_write = server_mod._atomic_write_file
+    real_write = settings_router._atomic_write_file
 
     def boom(target, data):
         if target.name == "config.json":          # last write of the commit
             raise OSError("disk full")
         return real_write(target, data)
 
-    monkeypatch.setattr(server_mod, "_atomic_write_file", boom)
+    monkeypatch.setattr(settings_router, "_atomic_write_file", boom)
     r = client.post("/api/settings/import", json={
-        "schema": server_mod.SETTINGS_BUNDLE_SCHEMA,
+        "schema": settings_router.SETTINGS_BUNDLE_SCHEMA,
         "server_config": {},
         "core_server_files": {
             "web_library.db": {"encoding": "base64",

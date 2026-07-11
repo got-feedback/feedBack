@@ -11,6 +11,7 @@ is exercised separately in `test_plugins.py`.
 
 import base64
 import importlib
+from routers import settings as settings_router
 import json
 import os
 import sys
@@ -478,7 +479,7 @@ def test_normalize_export_paths_consistency(server_mod, tmp_path):
         # Wraps `_validate_relpath` to assert it doesn't raise the
         # hard-failure ValueErrors. _UndeclaredFile would mean the
         # allowlist is wrong, not that the relpath shape is bad.
-        server_mod._validate_relpath(rel, cleaned, tmp_path)
+        settings_router._validate_relpath(rel, cleaned, tmp_path)
 
 
 # ── Atomic write: unique tmp + cleanup on failure ───────────────────────────
@@ -502,7 +503,7 @@ def test_atomic_write_cleans_up_tmp_on_failure(server_mod, tmp_path, monkeypatch
 
     for _ in range(2):
         with pytest.raises(OSError):
-            server_mod._atomic_write_file(target, b"payload")
+            settings_router._atomic_write_file(target, b"payload")
 
     # Both attempts cleaned up. No .tmp.import residue means the
     # mkstemp + finally-unlink pattern held even across failures.
@@ -512,7 +513,7 @@ def test_atomic_write_cleans_up_tmp_on_failure(server_mod, tmp_path, monkeypatch
 
     # Restoring real replace, the function should still work end-to-end.
     monkeypatch.setattr(server_mod.os, "replace", real_replace)
-    server_mod._atomic_write_file(target, b"payload")
+    settings_router._atomic_write_file(target, b"payload")
     assert target.read_bytes() == b"payload"
     assert list(tmp_path.glob("*.tmp.import")) == []
 
@@ -764,7 +765,7 @@ def test_atomic_write_closes_fd_when_fdopen_fails(server_mod, tmp_path, monkeypa
     monkeypatch.setattr(server_mod.os, "fdopen", boom_fdopen)
 
     with pytest.raises(OSError, match="simulated EMFILE"):
-        server_mod._atomic_write_file(target, b"payload")
+        settings_router._atomic_write_file(target, b"payload")
 
     # fd was closed (so it didn't leak), and the temp file mkstemp
     # created was removed (so it doesn't litter / lock on Windows).

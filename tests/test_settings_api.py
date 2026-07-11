@@ -10,6 +10,7 @@ shadow the config.json dlc_dir fallback.
 """
 
 import importlib
+from routers import settings as settings_router
 import json
 import sys
 
@@ -32,13 +33,13 @@ class _DirectSettingsClient:
     def get(self, path):
         if path != "/api/settings":
             raise ValueError(f"unsupported path: {path}")
-        return _DirectResponse(self._server.get_settings())
+        return _DirectResponse(settings_router.get_settings())
 
     def post(self, path, json):
         if path == "/api/settings":
-            return _DirectResponse(self._server.save_settings(json))
+            return _DirectResponse(settings_router.save_settings(json))
         if path == "/api/settings/reset":
-            return _DirectResponse(self._server.reset_settings(json))
+            return _DirectResponse(settings_router.reset_settings(json))
         raise ValueError(f"unsupported path: {path}")
 
     def close(self):
@@ -643,7 +644,7 @@ def test_achievements_enabled_persists_and_validates(api_client, tmp_path):
 
 def test_achievements_enabled_is_resettable(server_module):
     """The flag is in the resettable allow-list so a Reset clears it to default."""
-    assert "achievements_enabled" in server_module._RESETTABLE_SETTINGS_KEYS
+    assert "achievements_enabled" in settings_router._RESETTABLE_SETTINGS_KEYS
 
 
 def test_skip_startup_tasks_drives_startup_to_complete(api_client):

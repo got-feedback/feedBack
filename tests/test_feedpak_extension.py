@@ -14,6 +14,7 @@ back-compat for `.sloppak` libraries or stop accepting the new `.feedpak`:
 from __future__ import annotations
 
 import importlib
+from routers import settings as settings_router
 import io
 import sys
 import zipfile
@@ -242,7 +243,7 @@ def test_settings_dlc_count_includes_both_suffixes(tmp_path, settings_server):
     (dlc / "c.FEEDPAK").write_bytes(b"")   # case-insensitive (suffix.lower())
     (dlc / "notes.txt").write_bytes(b"")   # ignored
 
-    result = settings_server.save_settings({"dlc_dir": str(dlc)})
+    result = settings_router.save_settings({"dlc_dir": str(dlc)})
 
     assert "error" not in result, result
     # save_settings joins its notices into a single ``message`` string.

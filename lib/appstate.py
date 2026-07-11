@@ -65,6 +65,12 @@ audio_effect_mappings = None
 # stable object mutated in place via register()/unregister() — injected here by
 # reference so routers read the same registry plugins populate.
 tuning_providers = None
+# The library-provider registry instance + the local provider, constructed in
+# server.py (LocalLibraryProvider needs meta_db) and injected by reference. The
+# classes live in lib/library_registry.py; plugins register their own providers
+# through the registry via plugin_context.
+library_providers = None
+local_library_provider = None
 
 # Config paths. server.py derives these from the environment (fresh on every
 # import, so the ~49 pop-and-reimport fixtures keep working) and injects them
@@ -113,6 +119,7 @@ scan_status = None
 
 _SLOTS = frozenset({
     "meta_db", "audio_effect_mappings", "tuning_providers",
+    "library_providers", "local_library_provider",
     "config_dir", "dlc_dir", "dlc_dir_env",
     "static_dir", "sloppak_cache_dir", "audio_cache_dir",
     "get_progression_content", "builtin_diagnostic_filename",

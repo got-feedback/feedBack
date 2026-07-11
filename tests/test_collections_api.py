@@ -7,6 +7,7 @@ result, not stored songs.
 """
 
 import importlib
+import library_registry
 import sys
 
 import pytest
@@ -133,7 +134,7 @@ def test_collection_tolerates_corrupt_persisted_rules(client, server_mod):
         ('{"artist": [], "sort": [], "tunings": ["Drop D"]}', cid),
     )
     server_mod.meta_db.conn.commit()
-    server_mod._sync_collection_provider(server_mod.meta_db.get_collection(cid))
+    library_registry._sync_collection_provider(server_mod.meta_db.get_collection(cid))
 
     r = client.get("/api/library", params={"provider": f"collection:{cid}"})
     assert r.status_code == 200                          # no 500/503 from bad rules

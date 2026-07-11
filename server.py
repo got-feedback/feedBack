@@ -10,7 +10,7 @@ import sys
 import tempfile
 import shutil
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from logging_setup import configure_logging
 from env_compat import getenv_compat
@@ -19,30 +19,26 @@ configure_logging()
 log = logging.getLogger("feedBack.server")
 
 from fastapi import Body, FastAPI, UploadFile, File, HTTPException
-from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from safepath import safe_join
 from appconfig import _load_config
 from tunings import (
     DEFAULT_REFERENCE_PITCH, DEFAULT_TUNINGS,
-    apply_reference_pitch, normalize_instrument_profile,
-    tuning_name,
+    apply_reference_pitch, tuning_name,
 )
 # The library metadata cache. `MetadataDB` and the query helpers it owns live in
 # their own module; the `meta_db` singleton below stays here. The private names
 # are re-imported because callers outside the DB layer still use them.
-from metadata_db import (
-    MetadataDB,
-    _effective_keyset_sort,
-    _tuning_group_key_sql,
-    next_library_cursor,
-)
+from metadata_db import MetadataDB
 # The audio-effect routing index. Same shape as metadata_db: the class lives in
 # its own module, the `audio_effect_mappings` singleton below stays here.
 from audio_effects_db import AudioEffectsMappingDB
-from reqfields import _clean_str
+from library_registry import (  # registry classes + collection lifecycle moved to lib (R3)
+    LibraryProviderRegistry, LocalLibraryProvider,
+    _safe_art_redirect_url, _sync_collection_provider,
+)
 from dlc_paths import _get_dlc_dir, _resolve_dlc_path
 # The router seam. Imported as a module (never `from appstate import ...`) so
 # `appstate.configure(...)` below publishes into the same namespace routers read.
@@ -55,6 +51,7 @@ import enrichment
 from routers import art as art_router
 from routers import settings as settings_router
 from routers import song as song_router
+from routers import library as library_router
 import sloppak as sloppak_mod
 import loosefolder as loosefolder_mod
 # Pure text-matching engine for MusicBrainz enrichment (P8): denoise/score/
@@ -330,7 +327,6 @@ def _env_flag(name: str) -> bool:
     return (getenv_compat(name, "") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-_TUNING_GROUP_KEY_SQL = _tuning_group_key_sql("songs")
 
 
 meta_db = MetadataDB(CONFIG_DIR)
@@ -352,340 +348,32 @@ appstate.configure(
 )
 
 
-class LocalLibraryProvider:
-    id = "local"
-    label = "My Library"
-    kind = "local"
-    capabilities = (
-        "library.read",
-        "art.read",
-        "song.play",
-        "favorite.write",
-        "metadata.write",
-    )
-
-    def __init__(self, db: MetadataDB):
-        self._db = db
-
-    def query_page(self, **kwargs) -> tuple[list[dict], int]:
-        return self._db.query_page(**kwargs)
-
-    def query_artists(self, **kwargs) -> tuple[list[dict], int]:
-        return self._db.query_artists(**kwargs)
-
-    def query_albums(self, **kwargs) -> tuple[list[dict], int]:
-        return self._db.query_albums(**kwargs)
-
-    def query_stats(self, **kwargs) -> dict:
-        return self._db.query_stats(**kwargs)
-
-    def tuning_names(self) -> dict:
-        # Group custom tunings on their raw offsets so distinct ones stay
-        # distinct (tuning_name collapses them all to "Custom Tuning"); named
-        # tunings keep grouping by name (stable across the rescan boundary, no
-        # offsets/name split). `key` is the value the client sends back as the
-        # filter selector — equal to the name for named tunings, the offsets
-        # string for customs; offsets also feed the client's custom-pill label.
-        with self._db._lock:
-            rows = self._db.conn.execute(
-                f"SELECT tuning_name, {_TUNING_GROUP_KEY_SQL} AS gkey, "
-                "MIN(tuning_sort_key), COUNT(*), MIN(tuning_offsets) "
-                "FROM songs WHERE title != '' AND COALESCE(tuning_name, '') != '' "
-                "GROUP BY gkey COLLATE NOCASE "
-                "ORDER BY ABS(COALESCE(MIN(tuning_sort_key), 0)), "
-                "COALESCE(MIN(tuning_sort_key), 0) ASC, "
-                "tuning_name COLLATE NOCASE"
-            ).fetchall()
-        return {
-            "tunings": [
-                {"name": name, "key": gkey, "offsets": offs or "",
-                 "sort_key": int(sk or 0), "count": count}
-                for name, gkey, sk, count, offs in rows
-            ],
-        }
-
-    async def get_art(self, song_id: str):
-        return await art_router.get_song_art(song_id)
 
 
-class LibraryProviderRegistry:
-    # Methods required per declared capability — only validated when the
-    # provider advertises the corresponding capability so action-only providers
-    # (e.g. art.read + song.sync without library.read) don't need to implement
-    # unused stubs.
-    _CAPABILITY_METHODS: ClassVar[dict[str, tuple[str, ...]]] = {
-        "library.read": ("query_page", "query_artists", "query_stats", "tuning_names"),
-        "art.read": ("get_art",),
-        "song.sync": ("sync_song",),
-    }
-    _ID_RE: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-
-    def __init__(self):
-        self._providers: dict[str, object] = {}
-        # Capabilities inferred at registration for legacy providers that omit
-        # the `capabilities` field.  Merged with provider_capabilities() so that
-        # runtime capability checks see the complete effective capability set.
-        self._inferred_caps: dict[str, set[str]] = {}
-        self._owner_plugin_ids: dict[str, str] = {}
-        self._lock = threading.RLock()
-
-    def register(self, provider: object, *, replace: bool = False, owner_plugin_id: str | None = None) -> object:
-        provider_id = self.provider_id(provider)
-        if not self._ID_RE.match(provider_id):
-            raise ValueError(
-                "library provider id must start with an alphanumeric character "
-                "and contain only letters, digits, _, ., :, or -"
-            )
-        if not self.provider_label(provider):
-            raise ValueError("library provider label must be a non-empty string")
-        # Use declared-only caps during validation — never include stale inferred
-        # caps from a previous provider registered under the same id (replace=True).
-        caps = self._declared_capabilities(provider)
-        # Backward compatibility: providers that predate explicit capability
-        # declarations may omit `capabilities` entirely. If the browse methods
-        # are all present, infer `library.read` so they still work unchanged.
-        # If capabilities are absent but the browse surface is also absent,
-        # raise a clear error rather than letting the provider register and
-        # then fail on every API call with a late 501.
-        inferred: set[str] = set()
-        if not caps:
-            browse_methods = self._CAPABILITY_METHODS["library.read"]
-            if all(callable(self.provider_method(provider, m)) for m in browse_methods):
-                # Legacy provider without explicit capabilities — infer library.read
-                # from the presence of all browse methods.  Store in _inferred_caps
-                # so that runtime capability checks see the full effective set.
-                inferred = {"library.read"}
-                caps = inferred
-            else:
-                raise TypeError(
-                    f"library provider {provider_id!r} must declare at least one capability "
-                    f"(or implement the {browse_methods!r} browse methods for backward compatibility)"
-                )
-        for cap, methods in self._CAPABILITY_METHODS.items():
-            if cap not in caps:
-                continue
-            for method_name in methods:
-                if not callable(self.provider_method(provider, method_name)):
-                    raise TypeError(f"library provider {provider_id!r} declares {cap!r} but is missing callable {method_name}()")
-        with self._lock:
-            if provider_id == "local" and provider_id in self._providers and self._providers[provider_id] is not provider:
-                raise ValueError("the local library provider cannot be replaced")
-            if provider_id in self._providers and not replace:
-                raise ValueError(f"library provider {provider_id!r} is already registered")
-            self._providers[provider_id] = provider
-            # owner_plugin_id is attribution that flows into the browser
-            # capability participant id. The scoped register_library_provider
-            # wrappers force it to the trusted loading plugin id, so the spoof
-            # vector is closed there. Here we only normalize: trim and require a
-            # non-empty string. We deliberately do NOT apply the provider-id
-            # grammar (_ID_RE) — plugin ids aren't constrained to it at load
-            # time, so that would silently drop attribution for valid plugins.
-            owner = owner_plugin_id.strip() if isinstance(owner_plugin_id, str) else ""
-            owner = owner or None
-            if owner:
-                self._owner_plugin_ids[provider_id] = owner
-            else:
-                self._owner_plugin_ids.pop(provider_id, None)
-            if inferred:
-                self._inferred_caps[provider_id] = inferred
-            else:
-                self._inferred_caps.pop(provider_id, None)
-        return provider
-
-    def unregister(self, provider_id: str) -> bool:
-        if provider_id == "local":
-            raise ValueError("the local library provider cannot be unregistered")
-        with self._lock:
-            self._inferred_caps.pop(provider_id, None)
-            self._owner_plugin_ids.pop(provider_id, None)
-            return self._providers.pop(provider_id, None) is not None
-
-    def get(self, provider_id: str = "local") -> object | None:
-        with self._lock:
-            return self._providers.get(provider_id or "local")
-
-    def list(self) -> list[dict]:
-        with self._lock:
-            providers = list(self._providers.values())
-        return [self.describe(provider) for provider in providers]
-
-    def describe(self, provider: object) -> dict:
-        provider_id = self.provider_id(provider)
-        with self._lock:
-            owner_plugin_id = self._owner_plugin_ids.get(provider_id)
-        return {
-            "id": provider_id,
-            "label": self.provider_label(provider),
-            "kind": self.provider_field(provider, "kind", "local" if provider_id == "local" else "remote"),
-            "capabilities": sorted(self.provider_capabilities(provider)),
-            "owner_plugin_id": owner_plugin_id,
-            "default": provider_id == "local",
-        }
-
-    def provider_field(self, provider: object, name: str, default=None):
-        if isinstance(provider, dict):
-            return provider.get(name, default)
-        return getattr(provider, name, default)
-
-    def provider_id(self, provider: object) -> str:
-        provider_id = self.provider_field(provider, "id", "")
-        if not isinstance(provider_id, str) or not provider_id:
-            raise ValueError("library provider id must be a non-empty string")
-        return provider_id
-
-    def provider_label(self, provider: object) -> str:
-        label = self.provider_field(provider, "label", self.provider_field(provider, "name", ""))
-        if not isinstance(label, str):
-            return ""
-        return label.strip()
-
-    def _declared_capabilities(self, provider: object) -> set[str]:
-        """Return only the capabilities explicitly declared on the provider object."""
-        raw = self.provider_field(provider, "capabilities", ())
-        if raw is None:
-            raw = ()
-        if isinstance(raw, str):
-            raw = (raw,) if raw else ()
-        return {str(cap) for cap in raw if cap}
-
-    def provider_capabilities(self, provider: object) -> set[str]:
-        # Guard against a common plugin authoring mistake: passing a single string
-        # instead of a list/tuple. Iterating a string produces individual characters,
-        # none of which would match a valid capability name.
-        declared = self._declared_capabilities(provider)
-        # Merge with any capabilities inferred at registration time for legacy
-        # providers that omit the `capabilities` field but implement browse methods.
-        provider_id = self.provider_id(provider)
-        with self._lock:
-            inferred = self._inferred_caps.get(provider_id, set())
-        return declared | inferred
-
-    def provider_method(self, provider: object, name: str):
-        if isinstance(provider, dict):
-            return provider.get(name)
-        return getattr(provider, name, None)
 
 
 library_providers = LibraryProviderRegistry()
 _local_library_provider = LocalLibraryProvider(meta_db)
 library_providers.register(_local_library_provider)
+# Publish the registry + local provider to the seam for routers/library.py. The
+# registry stays server-owned (plugins register through plugin_context, and the
+# pop-and-reimport fixtures rebuild it under a fresh meta_db).
+appstate.configure(
+    library_providers=library_providers,
+    local_library_provider=_local_library_provider,
+)
 
 
-# Keys `_library_filter_args` (and a smart collection's stored `rules`) accept.
-_LIBRARY_FILTER_PARAM_KEYS = frozenset((
-    "q", "favorites", "format", "artist", "album",
-    "arrangements_has", "arrangements_lacks", "stems_has", "stems_lacks",
-    "has_lyrics", "tunings",
-))
-# Rules mirror the raw /api/library query params (so the provider can feed them
-# straight through `_library_filter_args`, and the frontend can build a rule from
-# the same query string it already constructs). Multi-value filters are CSV
-# strings; `favorites` is 0/1; the rest are plain strings.
-_RULE_CSV_KEYS = frozenset((
-    "tunings", "arrangements_has", "arrangements_lacks", "stems_has", "stems_lacks",
-))
-_RULE_STR_KEYS = frozenset(("q", "format", "artist", "album", "has_lyrics", "sort"))
 
 
-def _sanitize_collection_rules(raw) -> dict:
-    """Normalize rules to the raw query-param format, keeping only known keys. A
-    list for a multi-value filter is joined to CSV; `favorites` becomes 0/1.
-    Unknown keys are dropped so a rule survives a filter-vocab change rather than
-    500-ing. Applied at API ingress AND when a provider loads a persisted row, so
-    a hand-edited / imported bad value (e.g. an int where a string is expected,
-    or a list for `sort`) can never crash a query."""
-    if not isinstance(raw, dict):
-        return {}
-    out: dict = {}
-    for k, v in raw.items():
-        if k in _RULE_CSV_KEYS:
-            if isinstance(v, list):
-                vals = [str(x) for x in v if isinstance(x, (str, int)) and not isinstance(x, bool)]
-            elif isinstance(v, str):
-                vals = [s for s in (p.strip() for p in v.split(",")) if s]
-            else:
-                continue
-            if vals:
-                out[k] = ",".join(vals)
-        elif k == "favorites":
-            if v:
-                out[k] = 1
-        elif k in _RULE_STR_KEYS:
-            if isinstance(v, (str, int)) and not isinstance(v, bool):
-                s = str(v).strip()
-                if s:
-                    out[k] = s
-    return out
 
 
-class SmartCollectionProvider:
-    """A saved library filter, surfaced as a source (#636 item 2). Browse/stats
-    delegate to the local DB with the collection's stored `rules` applied — so
-    selecting it in the v3 source picker shows exactly that filtered slice with
-    the whole Songs UI (paging, stats, A–Z rail, art) for free. P1: the rules
-    ARE the query (live in-collection search is a P2 nicety). The matched songs
-    are local rows, so `kind="local"` keeps the client's play/art paths on the
-    local (not remote-sync) branch and art delegates straight through."""
-    kind = "local"
-    capabilities = ("library.read", "art.read")
-
-    def __init__(self, collection: dict, local: "LocalLibraryProvider"):
-        self._local = local
-        self.update(collection)
-
-    def update(self, collection: dict) -> None:
-        self.id = f"collection:{collection['id']}"
-        self.collection_id = collection["id"]
-        self.label = collection.get("name") or "Collection"
-        # Re-sanitize on load: persisted JSON may predate the current vocab or
-        # have been hand-edited; never let a bad value reach a query.
-        self._rules = _sanitize_collection_rules(collection.get("rules") or {})
-
-    def _filter_kwargs(self) -> dict:
-        return _library_filter_args(**{k: v for k, v in self._rules.items()
-                                       if k in _LIBRARY_FILTER_PARAM_KEYS})
-
-    def _sort(self, fallback: str) -> str:
-        # A collection may pin its own sort (e.g. "recently added"); query_page
-        # falls back safely for an unknown value, so no validation needed here.
-        return self._rules.get("sort") or fallback
-
-    def query_page(self, *, page=0, size=24, sort="artist", direction="asc",
-                   naming_mode="legacy", **_ignore):
-        return self._local._db.query_page(
-            page=page, size=size, sort=self._sort(sort), direction=direction,
-            naming_mode=naming_mode, **self._filter_kwargs())
-
-    def query_artists(self, *, letter="", page=0, size=50, naming_mode="legacy", **_ignore):
-        return self._local._db.query_artists(
-            letter=letter, page=page, size=size, naming_mode=naming_mode,
-            **self._filter_kwargs())
-
-    def query_albums(self, *, page=0, size=120, naming_mode="legacy", **_ignore):
-        return self._local._db.query_albums(
-            page=page, size=size, naming_mode=naming_mode, **self._filter_kwargs())
-
-    def query_stats(self, *, sort="artist", want_sort_letters=False,
-                    naming_mode="legacy", **_ignore):
-        return self._local._db.query_stats(
-            sort=self._sort(sort), want_sort_letters=want_sort_letters,
-            naming_mode=naming_mode, **self._filter_kwargs())
-
-    def tuning_names(self):
-        return self._local.tuning_names()
-
-    async def get_art(self, song_id: str):
-        return await self._local.get_art(song_id)
 
 
-def _sync_collection_provider(collection: dict) -> None:
-    """Register (or replace) the provider for one collection."""
-    library_providers.register(
-        SmartCollectionProvider(collection, _local_library_provider), replace=True)
+# ── Library + collections routes → routers/library.py (R3) ──────────────────
+app.include_router(library_router.router)
 
 
-def _unregister_collection_provider(pid: int) -> None:
-    library_providers.unregister(f"collection:{pid}")
 
 
 # Boot scan: surface every saved collection as a source.
@@ -752,184 +440,22 @@ def unregister_tuning_provider(provider_id: str) -> None:
     tuning_providers.unregister(provider_id)
 
 
-def _get_library_provider(provider: str = "local") -> object:
-    library_provider = library_providers.get(provider or "local")
-    if library_provider is None:
-        raise HTTPException(status_code=404, detail=f"Unknown library provider: {provider}")
-    return library_provider
 
 
-def _require_library_provider_capability(provider: object, capability: str) -> None:
-    if capability in library_providers.provider_capabilities(provider):
-        return
-    provider_id = library_providers.provider_id(provider)
-    raise HTTPException(
-        status_code=501,
-        detail=f"Library provider {provider_id!r} does not declare capability {capability!r}",
-    )
 
 
-_OPTIONAL_NEW_PROVIDER_KWARGS = ("naming_mode", "sort", "want_sort_letters", "after",
-                                 "mastery", "match_states")
 
 
-def _filter_provider_kwargs(method: object, kwargs: dict) -> dict:
-    """Drop kwargs that the method's signature does not declare.
-
-    Provides backward-compat for third-party library providers whose
-    query_page/query_artists/query_stats methods were written before
-    naming_mode was added — calling them with the extra kwarg would
-    raise TypeError and return a 500 to the client.
-
-    When ``inspect.signature`` cannot introspect the method (rare: C
-    extensions / built-ins / exotic callables), fall back to stripping
-    only the kwargs we know were added later — older providers won't
-    accept them, anything else stays so the call still works.
-    """
-    try:
-        sig = inspect.signature(method)  # type: ignore[arg-type]
-        for p in sig.parameters.values():
-            if p.kind == inspect.Parameter.VAR_KEYWORD:
-                return kwargs  # method accepts **kwargs, pass everything
-        return {k: v for k, v in kwargs.items() if k in sig.parameters}
-    except (ValueError, TypeError):
-        return {k: v for k, v in kwargs.items() if k not in _OPTIONAL_NEW_PROVIDER_KWARGS}
 
 
-def _call_library_provider(provider: object, method_name: str, **kwargs) -> Any:
-    method = library_providers.provider_method(provider, method_name)
-    if not callable(method):
-        provider_id = library_providers.provider_id(provider)
-        raise HTTPException(
-            status_code=501,
-            detail=f"Library provider {provider_id!r} does not support {method_name}",
-        )
-    try:
-        return method(**_filter_provider_kwargs(method, kwargs))
-    except HTTPException:
-        raise
-    except Exception as exc:
-        provider_id = library_providers.provider_id(provider)
-        # A provider with an explicit kind="local" is treated as local even if
-        # its id is not "local" (e.g. a kind="local" plugin variant). Otherwise
-        # fall back to provider_id comparison so providers that omit `kind` are
-        # still wrapped correctly — the safe default for unknown providers is to
-        # surface an offline message rather than leaking raw exceptions.
-        provider_kind = str(library_providers.provider_field(provider, "kind", "") or "")
-        if provider_kind:
-            is_remote = provider_kind not in ("", "local")
-        else:
-            is_remote = provider_id != "local"
-        if is_remote:
-            detail = f"This source appears to be offline ({provider_id})."
-            message = str(exc).strip()
-            if message:
-                detail = f"{detail} {message}"
-            raise HTTPException(status_code=503, detail=detail) from exc
-        raise
 
 
-def _is_async_callable(obj: object) -> bool:
-    """Return True if obj is an async function or a callable object with an async __call__.
-
-    ``inspect.iscoroutinefunction`` only recognises bare coroutine functions; it returns
-    False for class instances whose ``__call__`` method is defined as ``async def``.
-    Checking both handles the common plugin pattern of wrapping an async method in a
-    callable object.
-    """
-    if inspect.iscoroutinefunction(obj):
-        return True
-    _call = getattr(obj, "__call__", None)
-    return _call is not None and inspect.iscoroutinefunction(_call)
 
 
-async def _call_library_provider_async(provider: object, method_name: str, **kwargs) -> Any:
-    method = library_providers.provider_method(provider, method_name)
-    if _is_async_callable(method):
-        # Async provider method — call directly on the event loop.
-        try:
-            return await method(**_filter_provider_kwargs(method, kwargs))
-        except HTTPException:
-            raise
-        except Exception as exc:
-            provider_id = library_providers.provider_id(provider)
-            provider_kind = str(library_providers.provider_field(provider, "kind", "") or "")
-            if provider_kind:
-                is_remote = provider_kind not in ("", "local")
-            else:
-                is_remote = provider_id != "local"
-            if is_remote:
-                detail = f"This source appears to be offline ({provider_id})."
-                message = str(exc).strip()
-                if message:
-                    detail = f"{detail} {message}"
-                raise HTTPException(status_code=503, detail=detail) from exc
-            raise
-    # Synchronous provider method — run in a threadpool so the event loop stays free.
-    return await run_in_threadpool(_call_library_provider, provider, method_name, **kwargs)
 
 
-def _safe_art_redirect_url(url: str) -> str | None:
-    """Return the URL if it is safe to redirect to (http/https only), else None."""
-    from urllib.parse import urlparse
-    if not url or not isinstance(url, str):
-        return None
-    try:
-        parsed = urlparse(url)
-        if parsed.scheme.lower() not in ("http", "https"):
-            return None
-        if not parsed.hostname:
-            return None
-        return url
-    except Exception:
-        return None
 
 
-def _library_art_response(result: Any) -> Response:
-    if result is None:
-        raise HTTPException(status_code=404, detail="Library provider returned no art")
-    if isinstance(result, Response):
-        return result
-    if isinstance(result, (bytes, bytearray, memoryview)):
-        return Response(content=bytes(result), media_type="image/png")
-    if isinstance(result, str):
-        safe_url = _safe_art_redirect_url(result)
-        if safe_url is not None:
-            return RedirectResponse(safe_url)
-        # If the string looks like a URL (contains a scheme separator) but
-        # didn't pass the http/https check, refuse it rather than treating
-        # it as a filesystem path — a provider returning ftp:// or file://
-        # should get a 400, not a 500 from FileResponse failing on a URL.
-        if "://" in result:
-            raise HTTPException(
-                status_code=400,
-                detail="Library provider returned an unsupported URL scheme for art",
-            )
-        if not Path(result).is_file():
-            raise HTTPException(status_code=404, detail="Library provider returned an unreadable art path")
-        return FileResponse(result)
-    if isinstance(result, Path):
-        if not result.is_file():
-            raise HTTPException(status_code=404, detail="Library provider returned an unreadable art path")
-        return FileResponse(str(result))
-    if isinstance(result, dict):
-        url = result.get("url") or result.get("art_url") or result.get("artUrl")
-        if isinstance(url, str) and url:
-            safe_url = _safe_art_redirect_url(url)
-            if safe_url is None:
-                raise HTTPException(status_code=400, detail="Library provider returned an unsafe art URL")
-            return RedirectResponse(safe_url)
-        path = result.get("path") or result.get("file")
-        if isinstance(path, (str, Path)):
-            media_type = result.get("media_type") or result.get("content_type")
-            if not Path(path).is_file():
-                raise HTTPException(status_code=404, detail="Library provider returned an unreadable art path")
-            return FileResponse(str(path), media_type=media_type)
-        content = result.get("content") or result.get("bytes")
-        if isinstance(content, (bytes, bytearray, memoryview)):
-            media_type = result.get("media_type") or result.get("content_type") or "image/png"
-            return Response(content=bytes(content), media_type=media_type)
-    raise HTTPException(status_code=500, detail="Library provider returned unsupported art data")
 
 
 
@@ -2737,130 +2263,18 @@ appstate.configure(
 
 # ── Library API ───────────────────────────────────────────────────────────────
 
-def _split_csv(raw: str) -> list[str]:
-    """Parse a comma-separated query-string list. Empty / whitespace-only
-    entries are dropped so `arrangements_has=` (no value) and
-    `arrangements_has=,` both mean 'no filter'."""
-    if not raw:
-        return []
-    return [s.strip() for s in raw.split(",") if s.strip()]
 
 
-def _parse_has_lyrics(raw: str) -> int | None:
-    """Tri-state parse for has_lyrics. `1` → require, `0` → exclude,
-    anything else (including empty) → no filter."""
-    if raw == "1":
-        return 1
-    if raw == "0":
-        return 0
-    return None
 
 
-def _library_filter_args(q: str = "", favorites: int = 0, format: str = "",
-                         artist: str = "", album: str = "",
-                         arrangements_has: str = "", arrangements_lacks: str = "",
-                         stems_has: str = "", stems_lacks: str = "",
-                         has_lyrics: str = "", tunings: str = "") -> dict:
-    fmt = format if format in ("archive", "sloppak", "loose") else ""
-    return {
-        "q": q,
-        "favorites_only": bool(favorites),
-        "format_filter": fmt,
-        "artist_filter": (artist or "").strip(),
-        "album_filter": (album or "").strip(),
-        "arrangements_has": _split_csv(arrangements_has),
-        "arrangements_lacks": _split_csv(arrangements_lacks),
-        "stems_has": _split_csv(stems_has),
-        "stems_lacks": _split_csv(stems_lacks),
-        "has_lyrics": _parse_has_lyrics(has_lyrics),
-        "tunings": _split_csv(tunings),
-    }
 
 
-@app.get("/api/library/providers")
-def list_library_providers():
-    """List registered library providers."""
-    return {"providers": library_providers.list()}
 
 
-@app.get("/api/library/providers/{provider_id}/songs/{song_id:path}/art")
-async def get_library_provider_song_art(provider_id: str, song_id: str):
-    """Return album art for a song owned by a library provider."""
-    library_provider = _get_library_provider(provider_id)
-    _require_library_provider_capability(library_provider, "art.read")
-    result = await _call_library_provider_async(library_provider, "get_art", song_id=song_id)
-    return _library_art_response(result)
 
 
-@app.post("/api/library/providers/{provider_id}/songs/{song_id:path}/sync")
-async def sync_library_provider_song(provider_id: str, song_id: str):
-    """Ask a provider to sync a remote song into the local library/cache."""
-    library_provider = _get_library_provider(provider_id)
-    _require_library_provider_capability(library_provider, "song.sync")
-    result = await _call_library_provider_async(library_provider, "sync_song", song_id=song_id)
-    if result is None:
-        return {"ok": True}
-    if isinstance(result, dict):
-        return result
-    return {"ok": True, "result": result}
 
 
-@app.get("/api/library")
-async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "artist",
-                       dir: str = "asc", favorites: int = 0, format: str = "",
-                       artist: str = "", album: str = "",
-                       arrangements_has: str = "", arrangements_lacks: str = "",
-                       stems_has: str = "", stems_lacks: str = "",
-                       has_lyrics: str = "", tunings: str = "", provider: str = "local",
-                       mastery: str = "", tags: str = "", user_difficulty: str = "",
-                       match: str = "", genre: str = "", after: str = "", group: int = 0,
-                       naming_mode: str = "legacy"):
-    """Paginated library search through the selected library provider.
-
-    `after` is an opaque keyset cursor (feedBack#636 item 3): pass back the
-    `next_cursor` from the previous response to fetch the next page with a
-    WHERE-seek instead of OFFSET. Providers that don't support it ignore it and
-    page by OFFSET, so the client can always fall back."""
-    size = min(size, 100)
-    library_provider = _get_library_provider(provider)
-    _require_library_provider_capability(library_provider, "library.read")
-    # Only the true local provider keysets: it's the one whose effective sort is
-    # exactly the request `sort`. A smart collection may pin its own sort and
-    # remote providers don't keyset — both must page by OFFSET, so never hand
-    # them a cursor (a mismatched one would mis-seek).
-    is_local = getattr(library_provider, "id", "") == "local"
-    songs, total = await _call_library_provider_async(
-        library_provider,
-        "query_page",
-        page=page,
-        size=size,
-        sort=sort,
-        direction=dir,
-        after=((after or None) if is_local else None),
-        group=bool(group),
-        naming_mode=naming_mode,
-        mastery=_split_csv(mastery),
-        tags_has=_split_csv(tags),
-        user_difficulty_in=_split_csv(user_difficulty),
-        match_states=_split_csv(match),
-        genre=_split_csv(genre),
-        **_library_filter_args(
-            q=q, favorites=favorites, format=format,
-            artist=artist, album=album,
-            arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
-            stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings,
-        ),
-    )
-    # The cursor to resume after this page (effective sort folds in dir=desc).
-    next_cursor = (next_library_cursor(_effective_keyset_sort(sort, dir), songs[-1])
-                   if (is_local and songs) else None)
-    # Drop the private raw-title stash query_page attached for the cursor — it's
-    # an internal keyset detail, not part of the card payload.
-    for s in songs:
-        s.pop("_sort_title", None)
-    return {"songs": songs, "total": total, "page": page, "size": size,
-            "next_cursor": next_cursor}
 
 
 # ── Multi-chart work grouping API (P5b) ──────────────────────────────────────
@@ -2881,137 +2295,14 @@ app.include_router(library_extras.router)
 app.include_router(chart.router)
 
 
-@app.get("/api/library/albums")
-async def list_library_albums(q: str = "", page: int = 0, size: int = 120,
-                              favorites: int = 0, format: str = "",
-                              artist: str = "", album: str = "",
-                              arrangements_has: str = "", arrangements_lacks: str = "",
-                              stems_has: str = "", stems_lacks: str = "",
-                              has_lyrics: str = "", tunings: str = "", mastery: str = "",
-                              match: str = "", genre: str = "",
-                              provider: str = "local"):
-    """Album-condensed browse: distinct (artist, album) groups with a track count
-    and a representative cover song. Paged by album. Same filters as /api/library."""
-    size = min(size, 500)
-    library_provider = _get_library_provider(provider)
-    _require_library_provider_capability(library_provider, "library.read")
-    albums, total = await _call_library_provider_async(
-        library_provider, "query_albums",
-        page=page, size=size, mastery=_split_csv(mastery),
-        match_states=_split_csv(match), genre=_split_csv(genre),
-        **_library_filter_args(
-            q=q, favorites=favorites, format=format, artist=artist, album=album,
-            arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
-            stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings,
-        ),
-    )
-    return {"albums": albums, "total": total, "page": page, "size": size}
 
 
-@app.get("/api/library/artists")
-async def list_artists(letter: str = "", q: str = "", favorites: int = 0, page: int = 0,
-                       size: int = 50, format: str = "",
-                       artist: str = "", album: str = "",
-                       arrangements_has: str = "", arrangements_lacks: str = "",
-                       stems_has: str = "", stems_lacks: str = "",
-                       has_lyrics: str = "", tunings: str = "", provider: str = "local",
-                       naming_mode: str = "legacy"):
-    """Get artists grouped by letter with albums and songs (for tree view)."""
-    size = min(size, 100)
-    library_provider = _get_library_provider(provider)
-    _require_library_provider_capability(library_provider, "library.read")
-    artists, total = await _call_library_provider_async(
-        library_provider,
-        "query_artists",
-        letter=letter,
-        page=page,
-        size=size,
-        naming_mode=naming_mode,
-        **_library_filter_args(
-            q=q, favorites=favorites, format=format,
-            artist=artist, album=album,
-            arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
-            stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings,
-        ),
-    )
-    return {"artists": artists, "total_artists": total, "page": page, "size": size}
 
 
-@app.get("/api/library/stats")
-async def library_stats(favorites: int = 0, q: str = "", format: str = "",
-                        artist: str = "", album: str = "",
-                        arrangements_has: str = "", arrangements_lacks: str = "",
-                        stems_has: str = "", stems_lacks: str = "",
-                        has_lyrics: str = "", tunings: str = "", provider: str = "local",
-                        match: str = "",
-                        sort: str = "artist", sort_letters: int = 0,
-                        group: int = 0, naming_mode: str = "legacy"):
-    """Aggregate stats for the UI. Accepts the same filter params as
-    /api/library so the letter bar mirrors the active grid filter set.
-    `sort` selects the column the jump rail's `sort_letters` keys on;
-    `sort_letters=1` opts into that breakdown (the rail), so non-rail
-    callers skip the extra per-letter aggregate. `group=1` counts works not
-    charts (mirrors the grouped grid)."""
-    library_provider = _get_library_provider(provider)
-    _require_library_provider_capability(library_provider, "library.read")
-    return await _call_library_provider_async(
-        library_provider,
-        "query_stats",
-        naming_mode=naming_mode,
-        sort=sort,
-        want_sort_letters=bool(sort_letters),
-        group=bool(group),
-        # The match facet rides the stats call too — the A–Z rail's letter
-        # counts must agree with the grid under the facet or its cumulative
-        # seek + sizer geometry break.
-        match_states=_split_csv(match),
-        **_library_filter_args(
-            q=q, favorites=favorites, format=format,
-            artist=artist, album=album,
-            arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
-            stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings,
-        ),
-    )
 
 
-@app.get("/api/library/genres")
-def library_genres(provider: str = "local"):
-    """Distinct non-empty genres for the filter facet.
-
-    Genres are a local-library facet: they're populated from the feedpak
-    `genres` field at scan time and live in the local meta DB. Local-backed
-    providers (the local library and its smart collections, kind="local")
-    share that DB, so they surface the same set. Remote providers don't
-    expose genres here, so return an empty facet for them — the client then
-    hides the filter rather than offering local genres that don't apply to
-    the remote grid. Mirrors the local/remote gating used elsewhere for
-    provider calls (see `_call_library_provider`)."""
-    library_provider = _get_library_provider(provider)
-    kind = str(library_providers.provider_field(library_provider, "kind", "") or "")
-    is_remote = kind not in ("", "local") if kind else provider != "local"
-    if is_remote:
-        return {"genres": []}
-    with meta_db._lock:
-        g = meta_db._effective_genre_expr()
-        rows = meta_db.conn.execute(
-            f"SELECT g FROM (SELECT DISTINCT ({g}) AS g FROM songs) "
-            "WHERE g IS NOT NULL AND g != '' ORDER BY g COLLATE NOCASE"
-        ).fetchall()
-    return {"genres": [r[0] for r in rows]}
 
 
-@app.get("/api/library/tuning-names")
-async def list_tuning_names(provider: str = "local"):
-    """Distinct tuning names present in the library, with per-tuning
-    counts. Powers the tuning multi-select. Sorted by `tuning_sort_key`
-    so names appear in the same musical order the sort uses
-    (feedBack#22) — E Standard first, then nearest neighbors."""
-    library_provider = _get_library_provider(provider)
-    _require_library_provider_capability(library_provider, "library.read")
-    return await _call_library_provider_async(library_provider, "tuning_names")
 
 
 
@@ -3177,28 +2468,6 @@ app.include_router(shop.router)
 
 
 
-@app.get("/api/library/practice-suggestions")
-def api_practice_suggestions(limit: int = 8):
-    """Growth-edge 'practice next' shelf (P3): attempted-but-not-mastered songs
-    ranked by difficulty-appropriateness × mastery-proximity, joined to song
-    metadata. Replaces the recency-only 'Keep practicing' shelf ordering. Local
-    library only — reads local practice stats."""
-    from urllib.parse import quote
-    out = []
-    for r in meta_db.growth_edge_suggestions(limit):
-        meta = meta_db.conn.execute(
-            "SELECT title, artist, tuning_name FROM songs WHERE filename = ?",
-            (r["filename"],),
-        ).fetchone()
-        title, artist, tuning_name = meta if meta else (None, None, None)
-        out.append({
-            **r,
-            "title": title or r["filename"],
-            "artist": artist or "",
-            "tuning_name": tuning_name or "",
-            "art_url": f"/api/song/{quote(r['filename'])}/art",
-        })
-    return out
 
 
 
@@ -3212,48 +2481,12 @@ app.include_router(playlists.router)
 # ── Smart collections API (feedBack#636 item 2) ───────────────────────────────
 # (rule schema + `_sanitize_collection_rules` are defined with the provider.)
 
-@app.get("/api/collections")
-def api_list_collections():
-    """Smart/dynamic collections (saved live library filters)."""
-    return {"collections": meta_db.list_collections()}
 
 
-@app.post("/api/collections")
-def api_create_collection(data: dict):
-    """Create a collection from a name + a set of library filter rules. It
-    immediately appears as a source in the library provider picker."""
-    if not isinstance(data, dict):
-        return JSONResponse({"error": "body must be an object"}, status_code=400)
-    name = _clean_str(data.get("name"))
-    if not name:
-        return JSONResponse({"error": "name required"}, status_code=400)
-    col = meta_db.create_collection(name, _sanitize_collection_rules(data.get("rules")))
-    _sync_collection_provider(col)
-    return {"ok": True, "collection": col}
 
 
-@app.put("/api/collections/{pid}")
-def api_update_collection(pid: int, data: dict):
-    """Rename a collection and/or replace its rules."""
-    if not isinstance(data, dict):
-        return JSONResponse({"error": "body must be an object"}, status_code=400)
-    name = _clean_str(data.get("name")) or None
-    rules = _sanitize_collection_rules(data["rules"]) if "rules" in data else None
-    col = meta_db.update_collection(pid, name=name, rules=rules)
-    if col is None:
-        return JSONResponse({"error": "collection not found"}, status_code=404)
-    _sync_collection_provider(col)
-    return {"ok": True, "collection": col}
 
 
-@app.delete("/api/collections/{pid}")
-def api_delete_collection(pid: int):
-    """Delete a collection and unregister its provider."""
-    if not meta_db.is_collection(pid):
-        return JSONResponse({"error": "collection not found"}, status_code=404)
-    meta_db.delete_playlist(pid)
-    _unregister_collection_provider(pid)
-    return {"ok": True}
 
 
 

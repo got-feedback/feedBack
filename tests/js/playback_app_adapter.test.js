@@ -5,6 +5,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
+// SPLIT. _installPlaybackTransportAdapter stayed in app.js — it reads loopA/loopB from
+// ./js/loops.js, and loops.js imports transport, so moving it would close a cycle.
+// _waitForSongReady went with the rest of the seek machinery.
+const TRANSPORT_JS = path.join(__dirname, '..', '..', 'static', 'js', 'transport.js');
 
 function extractFunction(src, signature) {
     const start = src.indexOf(signature);
@@ -54,7 +58,7 @@ function loadReadyHelper(sandbox, src) {
 }
 
 test('_waitForSongReady rejects a ready event from a different audio generation', async () => {
-    const src = fs.readFileSync(APP_JS, 'utf8');
+    const src = fs.readFileSync(TRANSPORT_JS, 'utf8');
     const sandbox = buildReadySandbox();
     loadReadyHelper(sandbox, src);
 
@@ -72,7 +76,7 @@ test('playback adapter scopes startTime readiness and validates seek targets', (
     const src = fs.readFileSync(APP_JS, 'utf8');
     const fn = extractFunction(src, 'function _installPlaybackTransportAdapter()');
 
-    assert.match(fn, /const expectedSeekGen\s*=\s*_audioSeekGen\s*\+\s*1;/);
+    assert.match(fn, /const expectedSeekGen\s*=\s*audioSeekGen\(\)\s*\+\s*1;/);
     assert.match(fn, /_waitForSongReady\(expectedSeekGen\)/);
     assert.match(fn, /const seconds\s*=\s*Number\(time\);/);
     assert.match(fn, /!Number\.isFinite\(seconds\)\s*\|\|\s*seconds\s*<\s*0/);

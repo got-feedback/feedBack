@@ -27,6 +27,7 @@
 // layer that catches it on the paths a smoke test never runs.
 import { audio } from './audio-el.js';
 import { esc } from './dom.js';
+import { _audioDuration, _audioTime, audioSeekGen } from './transport.js';
 import { host } from './host.js';
 
 export function _sectionPracticeBarContains(el) {
@@ -85,7 +86,7 @@ export function _setSectionPracticeMode(on, opts = {}) {
         if (opts.defaultWholeOn) {
             _sectionPracticeWholeSection = true;
         }
-        _updateSectionPracticeHighlight(host._audioTime());
+        _updateSectionPracticeHighlight(_audioTime());
         if (opts.defaultWholeOn) {
             _syncSectionPracticePieceUi();
         }
@@ -104,7 +105,7 @@ export function _setSectionPracticeMode(on, opts = {}) {
         _sectionPracticeSelected = -1;
         _sectionPracticeWholeSection = false;
         _sectionPracticeSavedPartIndex = 0;
-        _updateSectionPracticeHighlight(host._audioTime());
+        _updateSectionPracticeHighlight(_audioTime());
         if (!opts.skipClearLoop && (host.loopA() !== null || host.loopB() !== null)) {
             host.clearLoop();
         }
@@ -129,7 +130,7 @@ function _sectionPracticeHighway() {
 }
 
 function _sectionPracticeDuration() {
-    const d = host._audioDuration();
+    const d = _audioDuration();
     if (d && Number.isFinite(d) && d > 0) return d;
     const cd = window.feedBack?.currentSong?.duration;
     return (cd && Number.isFinite(cd) && cd > 0) ? cd : 0;
@@ -914,7 +915,7 @@ export function renderSectionPracticeBar() {
     // matching one; run it before the piece UI so that reflects the result.
     _syncSectionPracticeFromLoop();
     _syncSectionPracticePieceUi();
-    _updateSectionPracticeHighlight(host._audioTime());
+    _updateSectionPracticeHighlight(_audioTime());
 }
 
 export async function onSectionParentClick(parentIdx) {
@@ -927,7 +928,7 @@ export async function onSectionParentClick(parentIdx) {
     _sectionPracticeSavedPartIndex = 0;
     _sectionPracticeWholeSection = true;
     _syncSectionPracticePieceUi();
-    _updateSectionPracticeHighlight(host._audioTime());
+    _updateSectionPracticeHighlight(_audioTime());
     if (_sectionPracticeActiveParentRange() || _sectionPracticeRanges.length) {
         await practiceSection(0, { whole: true });
     }
@@ -1019,7 +1020,7 @@ function _blurSectionPracticeFocusIfNeeded() {
 
 export async function practiceSection(index, opts = {}) {
     const requestGen = ++_sectionPracticeRequestGen;
-    const seekGen = host._audioSeekGen();
+    const seekGen = audioSeekGen();
     const loopGen = host._loopMutationGen();
     const whole = !!opts.whole;
     const r = _sectionPracticeResolveLoopTarget(index, opts);
@@ -1045,7 +1046,7 @@ export async function practiceSection(index, opts = {}) {
     let ok = false;
     for (let attempt = 0; attempt < 5; attempt++) {
         // A newer click or a song/arrangement change supersedes this retry.
-        if (requestGen !== _sectionPracticeRequestGen || seekGen !== host._audioSeekGen() || loopGen !== host._loopMutationGen()) return;
+        if (requestGen !== _sectionPracticeRequestGen || seekGen !== audioSeekGen() || loopGen !== host._loopMutationGen()) return;
         try {
             // skipSectionSync: this function owns the section-practice state and
             // applies it below under the request-gen guard, so a stale retry
@@ -1055,7 +1056,7 @@ export async function practiceSection(index, opts = {}) {
             // after its internal seek await, so a stale loop is never armed.
             ok = await host.setLoop(start, end, {
                 skipSectionSync: true,
-                commitGuard: () => requestGen === _sectionPracticeRequestGen && seekGen === host._audioSeekGen() && loopGen === host._loopMutationGen(),
+                commitGuard: () => requestGen === _sectionPracticeRequestGen && seekGen === audioSeekGen() && loopGen === host._loopMutationGen(),
             });
         } catch (err) {
             ok = false;
@@ -1064,7 +1065,7 @@ export async function practiceSection(index, opts = {}) {
         await new Promise(res => setTimeout(res, 60 + attempt * 90));
     }
     // Re-check after the awaited retries before applying any loop/count-in state.
-    if (requestGen !== _sectionPracticeRequestGen || seekGen !== host._audioSeekGen() || loopGen !== host._loopMutationGen()) return;
+    if (requestGen !== _sectionPracticeRequestGen || seekGen !== audioSeekGen() || loopGen !== host._loopMutationGen()) return;
 
     if (ok) {
         _sectionPracticeWholeSection = whole;
@@ -1073,7 +1074,7 @@ export async function practiceSection(index, opts = {}) {
             _sectionPracticeSavedPartIndex = index;
         }
         _blurSectionPracticeFocusIfNeeded();
-        _updateSectionPracticeHighlight(host._audioTime());
+        _updateSectionPracticeHighlight(_audioTime());
         host.startCountIn({ immediate: true });
     } else {
         _setSectionPracticeMode(false, { skipClearLoop: true });
@@ -1120,7 +1121,7 @@ export function _syncSectionPracticeFromLoop() {
     } else if (_sectionPracticeMode) {
         _setSectionPracticeMode(false, { skipClearLoop: true });
     }
-    _updateSectionPracticeHighlight(host._audioTime());
+    _updateSectionPracticeHighlight(_audioTime());
 }
 
 function _sectionPracticeIndexAtTime(t) {

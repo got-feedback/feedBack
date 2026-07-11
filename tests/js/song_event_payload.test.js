@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
+const APP_JS = path.join(__dirname, '..', '..', 'static', 'js', 'transport.js');
 
 function extractFunction(src, signature) {
     const start = src.indexOf(signature);
@@ -129,11 +129,24 @@ test('every song:play/pause/ended emit uses _songEventPayload', () => {
     );
 });
 
+// CENSUS over the WHOLE frontend, not one file. This test counts call/emit sites, and the
+// carve keeps moving them between app.js and static/js/*.js — point it at a single file
+// and the count silently shrinks as code leaves, which reads as "someone deleted an emit"
+// (or, worse, passes while genuinely missing sites). Read every source that can hold one.
+function allFrontendSources() {
+    const jsDir = path.join(__dirname, '..', '..', 'static', 'js');
+    const parts = [fs.readFileSync(path.join(__dirname, '..', '..', 'static', 'app.js'), 'utf8')];
+    for (const f of fs.readdirSync(jsDir).sort()) {
+        if (f.endsWith('.js')) parts.push(fs.readFileSync(path.join(jsDir, f), 'utf8'));
+    }
+    return parts.join('\n');
+}
+
 test('there are at least 8 song:* emit sites threaded through the helper', () => {
     // Sanity-check that the helper actually got wired everywhere. If the
     // count drops, someone removed an emit (regression) or refactored an
     // event away (intentional — this test then needs updating).
-    const src = fs.readFileSync(APP_JS, 'utf8');
+    const src = allFrontendSources();
     const matches = src.match(/(?:window\.feedBack|\w+)\.emit\(\s*['"]song:(play|pause|ended)['"][^)]*\)/g) || [];
     assert.ok(
         matches.length >= 8,

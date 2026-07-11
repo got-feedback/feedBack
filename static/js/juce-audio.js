@@ -24,7 +24,7 @@
 // See ./host.js: reading an unwired hook THROWS, and tests/js/host_contract.test.js
 // fails CI if the hooks used here and the hooks app.js wires ever drift apart.
 import { audio } from './audio-el.js';
-import { host } from './host.js';
+import { _audioSeek, _songEventPayload, jucePlayer, setPlayButtonState } from './transport.js';
 import { setSpeed } from './player-controls.js';
 import { S } from './player-state.js';
 
@@ -199,23 +199,23 @@ import { S } from './player-state.js';
             // transport off a stale `wasPlaying` snapshot would resume a song
             // the user just paused. Only start it if playback is still wanted.
             if (S.isPlaying) {
-                const started = await host.jucePlayer().play();
+                const started = await jucePlayer.play();
                 if (started === false) {
                     if (!_isStale(songAudio) && S.isPlaying) {
                         try { await audio.play(); } catch (_) { /* ignore */ }
                     }
-                    throw new Error('host.jucePlayer().play() failed (transient transport start)');
+                    throw new Error('jucePlayer.play() failed (transient transport start)');
                 }
             }
             if (_isStale(songAudio)) {
                 // Song changed while JUCE was spinning up — undo and bail.
-                await host.jucePlayer().pause().catch(() => {});
+                await jucePlayer.pause().catch(() => {});
                 return 'stale';
             }
             if (window.jucePlayer) {
-                host.jucePlayer()._dur = dur;
-                host.jucePlayer()._pos = pos;
-                host.jucePlayer()._pollAt = performance.now();
+                jucePlayer._dur = dur;
+                jucePlayer._pos = pos;
+                jucePlayer._pollAt = performance.now();
             }
             window._juceMode = true;
             window._juceAudioUrl = url;
@@ -270,7 +270,7 @@ import { S } from './player-state.js';
     async function _switchJuceToHtml5(songAudio) {
         const url = songAudio.url;
         const wasPlaying = S.isPlaying;
-        const pos = (window.jucePlayer ? host.jucePlayer().currentTime : 0) || 0;
+        const pos = (window.jucePlayer ? jucePlayer.currentTime : 0) || 0;
         window.feedBack?.playback?.recordRouteChange?.({
             routeKind: 'browser-media',
             state: 'switching',
@@ -296,7 +296,7 @@ import { S } from './player-state.js';
         };
         let _resumeScheduled = false;
         try {
-            await host.jucePlayer().pause().catch(() => {});
+            await jucePlayer.pause().catch(() => {});
             if (_isStale(songAudio)) return;           // song changed mid-pause
             window._juceMode = false;
             window._juceAudioUrl = null;
@@ -875,18 +875,18 @@ export let _resetJuceAudioShimChain = function () {};
         const seekTime = batch.seekTime;
         if (wantsPause && seekTime !== undefined) {
             enqueue(async (gen) => {
-                const r = await host._audioSeek(seekTime, 'audio-element-shim');
+                const r = await _audioSeek(seekTime, 'audio-element-shim');
                 if (!r.completed) return; // seek cancelled by teardown
                 if (gen !== _juceShimGen) return;
                 if (!forUpcomingPlay) {
-                    await host.jucePlayer().pause();
+                    await jucePlayer.pause();
                     if (gen !== _juceShimGen) return;
                     S.isPlaying = false;
-                    host.setPlayButtonState(false);
+                    setPlayButtonState(false);
                     const sm = window.feedBack;
                     if (sm) {
                         sm.isPlaying = false;
-                        sm.emit('song:pause', host._songEventPayload());
+                        sm.emit('song:pause', _songEventPayload());
                     }
                 }
                 audio.dispatchEvent(new Event('seeked'));
@@ -895,21 +895,21 @@ export let _resetJuceAudioShimChain = function () {};
         }
         if (wantsPause) {
             enqueue(async (gen) => {
-                await host.jucePlayer().pause();
+                await jucePlayer.pause();
                 if (gen !== _juceShimGen) return;
                 S.isPlaying = false;
-                host.setPlayButtonState(false);
+                setPlayButtonState(false);
                 const sm = window.feedBack;
                 if (sm) {
                     sm.isPlaying = false;
-                    sm.emit('song:pause', host._songEventPayload());
+                    sm.emit('song:pause', _songEventPayload());
                 }
             });
             return;
         }
         if (seekTime !== undefined) {
             enqueue(async (gen) => {
-                const r = await host._audioSeek(seekTime, 'audio-element-shim');
+                const r = await _audioSeek(seekTime, 'audio-element-shim');
                 if (!r.completed) return; // seek cancelled by teardown
                 if (gen !== _juceShimGen) return;
                 audio.dispatchEvent(new Event('seeked'));
@@ -937,7 +937,7 @@ export let _resetJuceAudioShimChain = function () {};
 
     Object.defineProperty(audio, 'currentTime', {
         get() {
-            if (window._juceMode) return host.jucePlayer().currentTime;
+            if (window._juceMode) return jucePlayer.currentTime;
             return ctDesc.get.call(this);
         },
         set(v) {
@@ -975,14 +975,14 @@ export let _resetJuceAudioShimChain = function () {};
         if (window._juceMode) {
             if (_juceShimBatch != null) flushJuceShimBatchNow({ forUpcomingPlay: true });
             const p = enqueue(async (gen) => {
-                const started = await host.jucePlayer().play();
+                const started = await jucePlayer.play();
                 if (gen !== _juceShimGen || !started) return;
                 S.isPlaying = true;
-                host.setPlayButtonState(true);
+                setPlayButtonState(true);
                 const sm = window.feedBack;
                 if (sm) {
                     sm.isPlaying = true;
-                    const payload = host._songEventPayload();
+                    const payload = _songEventPayload();
                     sm.emit('song:play', payload);
                     sm.emit('song:resume', payload);
                 }

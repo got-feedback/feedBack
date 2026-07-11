@@ -127,34 +127,17 @@ import {
     toggleSectionPracticePopover,
 } from './js/section-practice.js';
 import { configureHost } from './js/host.js';
+// The playback transport. These used to BE app.js — they are imported back now, and the
+// four modules that reached for them through the host seam import them directly instead.
+import {
+    setPlayButtonState, jucePlayer, _audioTime, _audioDuration, _songEventPayload,
+    _markPlaybackPaused, _markPlaybackResumed, _emitPlaybackStopped, _emitSongPositionChanged,
+    _waitForSongReady, _resetAudioSeekState, _audioSeek, togglePlay, seekBy, audioSeekGen,
+} from './js/transport.js';
 
 
 // Demo analytics — real impl set by demo.js; no-op in normal builds
 window.feedBackDemoTrack = window.feedBackDemoTrack ?? null;
-
-// Sync the play/pause button's icon and accessible state in one place so
-// screen readers, tooltips, and aria-pressed stay aligned with playback.
-// Updates the existing <img> child's src in place rather than rewriting
-// innerHTML, so any future children (fallback label, loading spinner, …)
-// survive state changes.
-function setPlayButtonState(isPlaying) {
-    const btn = document.getElementById('btn-play');
-    if (!btn) return;
-    const label = isPlaying ? 'Pause' : 'Play';
-    const icon = isPlaying ? 'pause' : 'play';
-    let img = btn.querySelector('img.button-icon-svg');
-    if (!img) {
-        img = document.createElement('img');
-        img.className = 'button-icon-svg';
-        img.alt = '';
-        img.setAttribute('aria-hidden', 'true');
-        btn.appendChild(img);
-    }
-    img.src = `/static/svg/${icon}.svg`;
-    btn.setAttribute('aria-label', label);
-    btn.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
-    btn.title = label;
-}
 
 // ── Global keyboard shortcuts ─────────────────────────────────────────────
 //
@@ -3502,20 +3485,6 @@ function retuneSong(filename, title, tuning, target) {
     };
 }
 
-// ── Player ───────────────────────────────────────────────────────────────
-// `audio` now lives in ./js/audio-el.js so carved-out modules can reach the
-// player without importing app.js back (which would close a cycle). Same
-// element, same handle, same lookup — just imported instead of declared here.
-let _lastSongPositionEventAt = 0;
-
-function _emitSongPositionChanged(time, duration) {
-    const now = Date.now();
-    if (now - _lastSongPositionEventAt < 250) return;
-    _lastSongPositionEventAt = now;
-    const payload = (typeof _songEventPayload === 'function') ? _songEventPayload() : { time };
-    window.feedBack.emit('song:position-changed', Object.assign(payload, { duration }));
-}
-
 function _applyPreservePitch(el) {
     if (!el) return;
     if ('preservesPitch' in el) el.preservesPitch = true;
@@ -3529,94 +3498,6 @@ _applyPreservePitch(audio);
 // through the JUCE backing track player instead of the HTML5 <audio> element.
 window._juceMode = false;
 window._juceAudioUrl = null;
-const jucePlayer = {
-    _timer: null,
-    _pos: 0,
-    _dur: 0,
-    _pollAt: 0,    // performance.now() when _pos was last set
-    _polling: false,
-    _speed: 1,
-    get currentTime() {
-        if (!this._polling) return this._pos;
-        // Interpolate between IPC polls so highway motion is smooth at 60fps
-        // Scale by _speed so at 0.7x the interpolated clock advances 0.7s/s
-        const elapsed = (performance.now() - this._pollAt) / 1000;
-        return Math.min(this._pos + elapsed * this._speed, this._dur > 0 ? this._dur : Infinity);
-    },
-    get duration() { return this._dur; },
-    async play() {
-        try {
-            await window.feedBackDesktop.audio.startBacking();
-        } catch (err) {
-            console.warn('[jucePlayer] startBacking failed:', err);
-            return false;
-        }
-        this._startPolling();
-        return true;
-    },
-    async pause() {
-        // Snapshot the interpolated position before stopping the poll so
-        // _pos stays at the visible pause point rather than jumping back
-        // to the last raw IPC sample (which can be up to 100ms behind).
-        this._pos = this.currentTime;
-        this._pollAt = performance.now();
-        this._stopPolling();
-        try {
-            await window.feedBackDesktop.audio.stopBacking();
-        } catch (err) {
-            console.warn('[jucePlayer] stopBacking failed:', err);
-        }
-    },
-    async seek(s) {
-        const prev = this._pos;
-        this._pos = s;
-        this._pollAt = performance.now();
-        try {
-            await window.feedBackDesktop.audio.seekBacking(s);
-        } catch (err) {
-            console.warn('[jucePlayer] seekBacking failed:', err);
-            this._pos = prev;
-            this._pollAt = performance.now();
-        }
-    },
-    _startPolling() {
-        this._stopPolling();
-        this._polling = true;
-        this._pollAt = performance.now();
-        const self = this;
-        function scheduleNext() {
-            self._timer = setTimeout(async () => {
-                if (!self._polling) return;
-                try {
-                    self._pos = await window.feedBackDesktop.audio.getBackingPosition();
-                    self._pollAt = performance.now();
-                    _emitSongPositionChanged(self.currentTime, self.duration || null);
-                } catch (err) {
-                    console.warn('[jucePlayer] position poll failed:', err);
-                } finally {
-                    if (self._polling) scheduleNext();
-                }
-            }, 100);
-        }
-        scheduleNext();
-    },
-    _stopPolling() {
-        this._polling = false;
-        if (this._timer) { clearTimeout(this._timer); this._timer = null; }
-    },
-    setRate(rate) {
-        this._pos = this.currentTime;
-        this._pollAt = performance.now();
-        this._speed = rate;
-    },
-    async stop() {
-        await this.pause();
-        this._pos = 0;
-        this._dur = 0;
-        this._pollAt = 0;
-        this._speed = 1;
-    },
-};
 window.jucePlayer = jucePlayer;
 
 // ── Engine start/stop → re-route song audio (HTML5 ⇄ JUCE) ──────────────────
@@ -3650,141 +3531,6 @@ window.addEventListener('unhandledrejection', (e) => {
 
 
 
-function _audioTime() { return window._juceMode ? jucePlayer.currentTime : audio.currentTime; }
-function _audioDuration() { return window._juceMode ? jucePlayer.duration : audio.duration; }
-// Canonical payload for song:play/song:pause/song:ended. Plugins anchor
-// their own clocks against `perfNow` (a monotonic timestamp at the same
-// moment audio reports `audioT`) so they don't have to chase the chart
-// clock with a follow-up call. `time` is kept as an alias for `audioT`
-// because pre-existing plugins read e.detail.time.
-function _songEventPayload() {
-    const audioT = _audioTime();
-    return {
-        time: audioT,
-        audioT,
-        chartT: highway.getTime(),
-        perfNow: performance.now(),
-    };
-}
-
-function _markPlaybackPaused() {
-    S.isPlaying = false;
-    setPlayButtonState(false);
-    if (window.feedBack) {
-        window.feedBack.isPlaying = false;
-        window.feedBack.emit('song:pause', _songEventPayload());
-    }
-}
-
-function _markPlaybackResumed() {
-    S.isPlaying = true;
-    setPlayButtonState(true);
-    if (window.feedBack) {
-        window.feedBack.isPlaying = true;
-        const payload = _songEventPayload();
-        window.feedBack.emit('song:play', payload);
-        window.feedBack.emit('song:resume', payload);
-    }
-}
-
-function _emitPlaybackStopped(time, screen = 'playback-command') {
-    if (window.feedBack) window.feedBack.emit('song:stop', { time: time || 0, screen });
-}
-
-function _waitForSongReady(expectedSeekGen, timeoutMs = 10000) {
-    if (!window.feedBack || typeof window.feedBack.on !== 'function') return Promise.resolve(false);
-    return new Promise(resolve => {
-        let timer = null;
-        const done = value => {
-            if (timer !== null) clearTimeout(timer);
-            window.feedBack.off('song:ready', onReady);
-            resolve(value);
-        };
-        const onReady = () => done(expectedSeekGen == null || expectedSeekGen === _audioSeekGen);
-        window.feedBack.on('song:ready', onReady);
-        timer = setTimeout(() => done(false), timeoutMs);
-    });
-}
-// Serializes seeks so concurrent callers (e.g. user ⏪ during a loop wrap)
-// don't interleave their from/to reads — each call captures `from` only
-// once the previous seek + emit have completed. The generation token
-// lets session teardown invalidate queued seeks so they don't run against
-// the new player and emit a stale song:seek.
-let _audioSeekChain = Promise.resolve();
-let _audioSeekGen = 0;
-function _resetAudioSeekState() {
-    // Bump the generation — in-flight chain callbacks see the mismatch on
-    // their next guard check and short-circuit (no emit, no further state
-    // mutation by us). Don't reset the chain head: new seeks must still
-    // queue behind the in-flight old seek's IPC so two `jucePlayer.seek()`
-    // calls can't race in the JUCE backing engine. The queue drains
-    // quickly because each subsequent old-gen step bails on the first
-    // guard the moment its predecessor resolves.
-    _audioSeekGen++;
-}
-// Time-box the JUCE IPC so a single hung seek can't block the global
-// _audioSeekChain forever (which would freeze every subsequent reposition
-// path: seekBy, loop-wrap, jump-fix, shimmed audio.currentTime).
-const _JUCE_SEEK_TIMEOUT_MS = 2000;
-function _juceSeekWithTimeout(s) {
-    let timer;
-    const seekP = jucePlayer.seek(s);
-    const timeoutP = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('JUCE seek timed out')), _JUCE_SEEK_TIMEOUT_MS);
-    });
-    // Clear the timer once the race settles either way; without this the
-    // pending timeout keeps the event loop alive (and eventually rejects
-    // an unawaited promise) even after a successful seek.
-    return Promise.race([seekP, timeoutP]).finally(() => clearTimeout(timer));
-}
-// Resolves to `{ completed, from, to }`:
-//   - completed: true if the seek ran to completion and emitted song:seek;
-//                false if cancelled by a teardown gen bump (or threw).
-//   - from: chart clock just before the seek (NaN on cancel before from-read).
-//   - to:   verified post-seek clock (NaN on cancel/throw).
-// Callers that fire follow-up work after the seek (count-in, arrangement
-// restore, etc.) should check `completed` so they don't act on a torn-down
-// session. Callers that need the actual landed position (because JUCE may
-// clamp or HTML5 may snap to the seekable range) should read `to` rather
-// than re-using the requested `s`.
-async function _audioSeek(s, reason) {
-    // Single funnel for every audio repositioning. Emits song:seek so
-    // plugins (notedetect detection-suppression during seek transients,
-    // practice-journal segment tracking) can react to any chart-time
-    // jump regardless of which UI path triggered it. `reason` is a
-    // free-form short string ('seek-by', 'loop-wrap', 'loop-set',
-    // 'arrangement-restore', 'jump-fix') so subscribers can filter.
-    const gen = _audioSeekGen;
-    _audioSeekChain = _audioSeekChain.then(async () => {
-        if (gen !== _audioSeekGen) return { completed: false, from: NaN, to: NaN };
-        const from = _audioTime();
-        if (window._juceMode) await _juceSeekWithTimeout(s);
-        else audio.currentTime = s;
-        if (gen !== _audioSeekGen) return { completed: false, from, to: NaN };
-        // Read the verified post-seek position rather than the requested `s`
-        // so plugins observe the actual clock — JUCE may clamp or roll back,
-        // and HTML5 may snap to the nearest seekable range.
-        const to = _audioTime();
-        // Sync the jump-fix tracker so the next 60Hz tick doesn't see a
-        // legitimate far seek (e.g. saved-loop jump > 30s) as a browser
-        // bug and revert it.
-        S.lastAudioTime = to;
-        // Sync the chart clock too so any song:* emit fired right after
-        // _audioSeek resolves (e.g. the auto-resume song:play in
-        // changeArrangement) sees an in-sync chartT via _songEventPayload.
-        // Without this, chartT lags by one 60Hz tick after a seek.
-        if (typeof highway !== 'undefined' && highway && typeof highway.setTime === 'function') {
-            highway.setTime(to);
-        }
-        window.feedBack.emit('song:seek', { from, to, reason: reason || null });
-        return { completed: true, from, to };
-    }).catch((err) => {
-        // Don't let one failed seek poison subsequent ones.
-        console.warn('[_audioSeek]', err);
-        return { completed: false, from: NaN, to: NaN };
-    });
-    return _audioSeekChain;
-}
 let currentFilename = '';
 
 // Plugin context API — lightweight event bus for plugin integration
@@ -3934,7 +3680,7 @@ function _installPlaybackTransportAdapter() {
             try { decodeURIComponent(playbackFilename); }
             catch (_) { playbackFilename = encodeURIComponent(filename); }
             const shouldSeekStart = Number.isFinite(Number(args && args.startTime));
-            const expectedSeekGen = _audioSeekGen + 1;
+            const expectedSeekGen = audioSeekGen() + 1;
             const ready = shouldSeekStart ? _waitForSongReady(expectedSeekGen) : null;
             await playSong(playbackFilename, args && args.arrangement, { bridge: false });
             const becameReady = ready ? await ready : true;
@@ -4792,73 +4538,6 @@ async function changeArrangement(index) {
     }
 }
 
-// Per-attempt counter for HTML5 audio.play() invocations. Bumped on
-// every play branch entry so a slow rejection from attempt N can't
-// clobber the UI of a newer attempt N+1 within the same session.
-let _playAttemptGen = 0;
-
-async function togglePlay() {
-    if (window._juceMode) {
-        if (S.isPlaying) {
-            await jucePlayer.pause();
-            S.isPlaying = false;
-            setPlayButtonState(false);
-            window.feedBack.isPlaying = false;
-            window.feedBack.emit('song:pause', _songEventPayload());
-        } else {
-            const started = await jucePlayer.play();
-            if (!started) return; // startBacking() failed — IPC error already logged
-            S.isPlaying = true;
-            setPlayButtonState(true);
-            window.feedBack.isPlaying = true;
-            const payload = _songEventPayload();
-            window.feedBack.emit('song:play', payload);
-            window.feedBack.emit('song:resume', payload);
-        }
-        return;
-    }
-    if (S.isPlaying) {
-        audio.pause(); S.isPlaying = false;
-        setPlayButtonState(false);
-    } else {
-        // Flip the UI optimistically before awaiting the play() Promise so
-        // a quick second click during a slow start (buffering, device
-        // wake, etc.) still enters the pause branch above. Two stale-
-        // resolution guards:
-        //   - _audioSeekGen: bumped in showScreen() teardown and
-        //     playSong(), so a rejection from a torn-down session can't
-        //     touch new-session UI. Survives same-URL reloads.
-        //   - _playAttemptGen: bumped on every play branch entry, so
-        //     within a single session a slow rejection from attempt N
-        //     can't clobber a faster attempt N+1 (Play → Pause → Play).
-        const sessionGen = _audioSeekGen;
-        const attempt = ++_playAttemptGen;
-        S.isPlaying = true;
-        setPlayButtonState(true);
-        try {
-            await audio.play();
-        } catch (err) {
-            if (sessionGen !== _audioSeekGen) return;
-            if (attempt !== _playAttemptGen) return;
-            // An engine reroute (HTML5 -> JUCE) deliberately pauses the <audio>
-            // element mid-migration, which rejects this in-flight play() with an
-            // AbortError even though playback continues on the JUCE transport.
-            // The reroute owns isPlaying / the button while it runs (same guard
-            // the <audio> 'play'/'pause' listeners use); resetting here would
-            // leave the button showing Play while the song keeps playing — the
-            // "two clicks to pause on the first song after a fresh load" bug.
-            if (window._juceRerouteInProgress) return;
-            console.error('[app] audio.play() rejected:', err);
-            S.isPlaying = false;
-            setPlayButtonState(false);
-        }
-    }
-}
-
-async function seekBy(s) {
-    await _audioSeek(Math.max(0, _audioTime() + s), 'seek-by');
-}
-
 // Restart the current song from the beginning (or from loop A when an A–B
 // loop is armed). Uses the canonical _audioSeek funnel only — never touches
 // audio.currentTime directly and never reloads via playSong().
@@ -5021,7 +4700,7 @@ function _openExitConfirm() {
     // resumes only what we paused (wasPlaying), and only if the same song is
     // still live on the player — guarding a teardown/seek/end behind the prompt.
     _cancelCountIn();
-    const _resumeGen = _audioSeekGen;
+    const _resumeGen = audioSeekGen();
     const _wasPlaying = S.isPlaying;
     if (_wasPlaying) Promise.resolve(togglePlay()).catch(() => {});
     const overlay = document.createElement('div');
@@ -5074,7 +4753,7 @@ function _openExitConfirm() {
         // the same live song on the player (not torn down / ended / seeked away
         // behind the modal). If the user was already paused, leave them paused.
         if (_wasPlaying && !S.isPlaying &&
-            _audioSeekGen === _resumeGen &&
+            audioSeekGen() === _resumeGen &&
             document.querySelector('.screen.active')?.id === 'player') {
             Promise.resolve(togglePlay()).catch(() => {});
         }
@@ -6582,19 +6261,13 @@ async function checkScanAndLoad() {
 // tests/js/host_contract.test.js fails CI if this list and the host.* uses under
 // static/js/ ever drift apart.
 configureHost({
-    _audioTime,
-    _audioDuration,
     formatTime,
-    setPlayButtonState,
-    _songEventPayload,
-    togglePlay,
     handleSliderInput,
     playSong,
     // count-in is a module now, so section-practice reaches it through the seam too —
     // these are simply count-in's own exports, handed across.
     startCountIn,
     _cancelCountIn,
-    _audioSeek,
     _updateEditRegionBtn,
     // section-practice reaches the loop module through the seam, not by importing it:
     // loops imports section-practice (clearLoop drops its selection), so the reverse
@@ -6604,14 +6277,12 @@ configureHost({
     clearLoop,
     // Read-only getters. The module only ever READS these reassigned scalars, so no
     // state container is needed. loopA/loopB/_loopMutationGen are owned by
-    // ./js/loops.js now and imported here as live bindings; _audioSeekGen and
-    // currentFilename are still app.js's.
+    // ./js/loops.js now and imported here as live bindings; currentFilename is still
+    // app.js's.
     loopA: () => loopA,
     loopB: () => loopB,
     _loopMutationGen: () => _loopMutationGen,
-    _audioSeekGen: () => _audioSeekGen,
     currentFilename: () => currentFilename,
-    jucePlayer: () => jucePlayer,
 });
 
 Object.assign(window, {

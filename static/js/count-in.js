@@ -20,7 +20,7 @@
 // See ./host.js: reading an unwired hook THROWS, and tests/js/host_contract.test.js
 // fails CI if the hooks used here and the hooks app.js wires ever drift apart.
 import { audio } from './audio-el.js';
-import { host } from './host.js';
+import { _audioSeek, _songEventPayload, jucePlayer, setPlayButtonState, togglePlay } from './transport.js';
 import { loopA, loopB, setLoop } from './loops.js';
 import { S } from './player-state.js';
 
@@ -182,7 +182,7 @@ export async function startCountIn(opts = {}) {
     const gen = _countInGen;
     const immediate = !!opts.immediate;
     if (window._juceMode) {
-        await host.jucePlayer().pause().catch((err) => console.error('[app] host.jucePlayer().pause error in count-in:', err));
+        await jucePlayer.pause().catch((err) => console.error('[app] jucePlayer.pause error in count-in:', err));
     } else {
         audio.pause();
     }
@@ -225,7 +225,7 @@ export async function startCountIn(opts = {}) {
             // Rewind done — set final position and start count.
             // Await the JUCE seek so the engine has repositioned before
             // we start the click track (HTML5 path is synchronous).
-            host._audioSeek(loopA, 'loop-wrap').then((r) => {
+            _audioSeek(loopA, 'loop-wrap').then((r) => {
                 if (gen !== _countInGen) return; // teardown during seek
                 // Abort the loop restart in two cases:
                 //   1. Cancelled (player torn down): don't beginCount on a
@@ -247,10 +247,10 @@ export async function startCountIn(opts = {}) {
                     _countingIn = false;
                     if (S.isPlaying) {
                         S.isPlaying = false;
-                        host.setPlayButtonState(false);
+                        setPlayButtonState(false);
                         if (window.feedBack) {
                             window.feedBack.isPlaying = false;
-                            window.feedBack.emit('song:pause', host._songEventPayload());
+                            window.feedBack.emit('song:pause', _songEventPayload());
                         }
                     }
                     return;
@@ -282,21 +282,21 @@ export async function startCountIn(opts = {}) {
                 hideCountOverlay();
                 _countingIn = false;
                 if (window._juceMode) {
-                    host.jucePlayer().play().then((started) => {
+                    jucePlayer.play().then((started) => {
                         if (gen !== _countInGen) return; // teardown during play start
                         if (!started) return;
                         S.isPlaying = true;
-                        host.setPlayButtonState(true);
+                        setPlayButtonState(true);
                         window.feedBack.isPlaying = true;
-                        const payload = host._songEventPayload();
+                        const payload = _songEventPayload();
                         window.feedBack.emit('song:play', payload);
                         window.feedBack.emit('song:resume', payload);
-                    }).catch((err) => console.error('[app] host.jucePlayer().play error:', err));
+                    }).catch((err) => console.error('[app] jucePlayer.play error:', err));
                 } else {
                     audio.play().then(() => {
                         if (gen !== _countInGen) return;
                         S.isPlaying = true;
-                        host.setPlayButtonState(true);
+                        setPlayButtonState(true);
                     }).catch((err) => {
                         if (gen !== _countInGen) return;
                         // An engine reroute's deliberate pause aborts this play()
@@ -307,7 +307,7 @@ export async function startCountIn(opts = {}) {
                         // started if the Promise rejected.
                         console.error('[app] audio.play() rejected after count-in:', err);
                         S.isPlaying = false;
-                        host.setPlayButtonState(false);
+                        setPlayButtonState(false);
                     });
                 }
                 return;
@@ -333,7 +333,7 @@ export async function startSongCountIn() {
     // bumps it and every delayed callback below bails.
     const gen = _countInGen;
     if (window._juceMode) {
-        await host.jucePlayer().pause().catch((err) => console.error('[app] host.jucePlayer().pause error in song count-in:', err));
+        await jucePlayer.pause().catch((err) => console.error('[app] jucePlayer.pause error in song count-in:', err));
     } else {
         audio.pause();
     }
@@ -352,7 +352,7 @@ export async function startSongCountIn() {
             _countingIn = false;
             // Hand off to the normal play path — togglePlay() flips isPlaying,
             // updates the button, and emits song:play/resume for plugins.
-            Promise.resolve(host.togglePlay()).catch((err) => console.warn('[app] play after count-in failed:', err));
+            Promise.resolve(togglePlay()).catch((err) => console.warn('[app] play after count-in failed:', err));
             return;
         }
         showCountOverlay(count);

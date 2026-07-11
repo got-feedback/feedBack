@@ -19,6 +19,7 @@
 // See ./host.js: reading an unwired hook THROWS, and tests/js/host_contract.test.js
 // fails CI if the hooks used here and the hooks app.js wires ever drift apart.
 import { esc, uiPrompt } from './dom.js';
+import { _audioSeek, _audioTime } from './transport.js';
 import { host } from './host.js';
 import {
     _setSectionPracticeMode,
@@ -39,14 +40,14 @@ export let loopB = null;
 export let _loopMutationGen = 0;
 
 export function setLoopStart() {
-    loopA = host._audioTime();
+    loopA = _audioTime();
     document.getElementById('btn-loop-a').className = 'px-3 py-1.5 bg-green-900/50 rounded-lg text-xs text-green-300 transition';
     updateLoopUI();
 }
 
 export function setLoopEnd() {
     if (loopA === null) return;
-    loopB = host._audioTime();
+    loopB = _audioTime();
     if (loopB <= loopA) { loopB = null; return; }
     document.getElementById('btn-loop-b').className = 'px-3 py-1.5 bg-green-900/50 rounded-lg text-xs text-green-300 transition';
     updateLoopUI();
@@ -72,7 +73,7 @@ export function clearLoop(options) {
     document.getElementById('loop-label').textContent = '';
     document.getElementById('saved-loops').value = '';
     resetSelection();
-    _updateSectionPracticeHighlight(host._audioTime());
+    _updateSectionPracticeHighlight(_audioTime());
     if (hadLoop && emitTransportEvent && typeof window !== 'undefined') {
         window.feedBack?.playback?.transportEvent?.('loop-cleared', {
             requesterId: 'core.loop',
@@ -125,7 +126,7 @@ export async function setLoop(a, b, options) {
     // Don't arm loopA/loopB before the seek lands — the 60Hz tick's wrap
     // detector (`ct >= loopB`) would trigger startCountIn against
     // half-applied state.
-    const r = await host._audioSeek(aNum, 'loop-set');
+    const r = await _audioSeek(aNum, 'loop-set');
     if (!r.completed || Math.abs(r.to - aNum) > 0.05) return false;
     // Caller-owned staleness gate, re-checked after the awaited seek and before
     // we commit loopA/loopB. practiceSection() passes this so a superseded retry

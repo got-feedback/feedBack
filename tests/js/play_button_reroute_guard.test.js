@@ -18,7 +18,7 @@ const vm = require('node:vm');
 
 const { extractFunction } = require('./test_utils');
 
-const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
+const APP_JS = path.join(__dirname, '..', '..', 'static', 'js', 'transport.js');
 const SRC = fs.readFileSync(APP_JS, 'utf8');
 const TOGGLE_PLAY_SRC = extractFunction(SRC, 'async function togglePlay(');
 

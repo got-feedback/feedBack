@@ -54,6 +54,7 @@ function makeFakeContext(sampleRate = 48000) {
             this.mediaStreamSource = stream;
             return { connect() {}, disconnect() {} };
         },
+        close() { this.closed = true; return Promise.resolve(); },
     };
     return ctx;
 }
@@ -229,6 +230,22 @@ test('exclusive output + loopback available → engages without any song loaded'
     assert.ok(stream.__stopped.includes('video'), 'unused video track stopped');
     assert.equal(sb.__createdContexts.at(-1)?.mediaStreamSource, stream, 'loopback stream captured');
     assert.equal(sb.__calls.setPageMuted.length, 0, 'suppress constraint honoured — no page mute');
+});
+
+test('loopback context is closed on disengage (no orphaned tap worklet)', async () => {
+    let excl = true;
+    const stream = makeLoopbackStream();
+    const sb = makeSandbox({ exclusive: () => excl, displayMedia: () => Promise.resolve(stream) });
+
+    await sb.window._reevaluateRendererBus();          // engage loopback
+    const lbCtx = sb.__createdContexts.at(-1);
+    assert.equal(lbCtx?.mediaStreamSource, stream, 'loopback engaged');
+    assert.notEqual(lbCtx.closed, true, 'context live while engaged');
+
+    excl = false;
+    await sb.window._reevaluateRendererBus();          // disengage
+    assert.equal(lbCtx.closed, true, 'loopback context closed on disengage');
+    assert.ok(stream.__stopped.includes('audio'), 'capture stream stopped');
 });
 
 test('loopback preferred over stems when both available', async () => {

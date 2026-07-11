@@ -5468,7 +5468,9 @@ window.addEventListener('unhandledrejection', (e) => {
             throw new Error('no loopback audio track');
         }
         try {
-            _lbCtx = _lbCtx || new AudioContext();
+            // Fresh context per session (not reused) so teardown's close()
+            // fully releases the tap worklet node — see _teardownLoopback.
+            _lbCtx = new AudioContext();
             if (_lbCtx.state !== 'running') await _lbCtx.resume().catch(() => {});
             const source = _lbCtx.createMediaStreamSource(stream);
             const tap = _makeTap(_lbCtx);
@@ -5495,6 +5497,13 @@ window.addEventListener('unhandledrejection', (e) => {
         if (_lbTap) _lbTap.active = false;
         if (_lbStream) for (const t of _lbStream.getTracks()) t.stop();
         _lbStream = null; _lbTap = null;
+        // Close the capture context so its tap worklet node is released. The
+        // context is per-session (not reused): without this, each exclusive⇄
+        // shared switch orphaned a live worklet on a long-lived context.
+        if (_lbCtx) {
+            try { await _lbCtx.close(); } catch (_) { /* already closed */ }
+            _lbCtx = null;
+        }
         if (_lbPageMuted && typeof api.setPageMuted === 'function') {
             try { await api.setPageMuted(false); } catch (_) { /* engine gone */ }
         }
@@ -5615,24 +5624,6 @@ window.addEventListener('unhandledrejection', (e) => {
                     + ' juceMode=' + !!window._juceMode
                     + ' elementSong=' + elementSong
                     + ' loopbackUnavailable=' + _loopbackUnavailable
-                    + ' want=' + want + ' mode=' + _mode;
-                if (d !== window._lastRendererBusDecision) {
-                    window._lastRendererBusDecision = d;
-                    console.log('[asio-diag] renderer-bus:', d);
-                }
-            }
-
-
-            // [asio-diag] full decision vector, change-gated (500ms poll —
-            // steady state must not flood the buffer). This is the feeder-side
-            // counterpart of the watcher's [feedpak-route] decision line: it
-            // shows WHY the bus did or didn't engage (exclusive predicate,
-            // stems graph presence, native transport ownership, element song).
-            if (window._asioDiagEnabled?.()) {
-                const d = 'running=' + running + ' exclusive=' + exclusive
-                    + ' stems=' + !!stems + ' songAudio=' + !!songAudio
-                    + ' juceMode=' + !!window._juceMode
-                    + ' elementSong=' + elementSong
                     + ' want=' + want + ' mode=' + _mode;
                 if (d !== window._lastRendererBusDecision) {
                     window._lastRendererBusDecision = d;

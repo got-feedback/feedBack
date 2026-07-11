@@ -15,9 +15,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const src = fs.readFileSync(path.join(__dirname, '..', '..', 'static', 'app.js'), 'utf8');
+// _installSectionPracticeDismiss was carved out of app.js into its own module (R3a).
+const src = fs.readFileSync(path.join(__dirname, '..', '..', 'static', 'js', 'section-practice.js'), 'utf8');
 const m = src.match(/function _installSectionPracticeDismiss\s*\(\)\s*\{[\s\S]*?\n\}/);
-assert.ok(m, '_installSectionPracticeDismiss() not found in static/app.js');
+assert.ok(m, '_installSectionPracticeDismiss() not found in static/js/section-practice.js');
 const body = m[0];
 
 test('the outside-click dismiss binds in the CAPTURE phase', () => {

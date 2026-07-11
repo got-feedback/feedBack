@@ -44,10 +44,18 @@ function buildSandbox() {
     const seekCalls = [];
     const sectionPracticeModeCalls = [];
     const transportEvents = [];
+    // clearLoop() used to zero section-practice's three selection scalars by hand.
+    // They now live in static/js/section-practice.js, which owns them, so clearLoop
+    // calls its exported resetSelection() instead. This is a SPY, not a stub — the
+    // test below still asserts the reset happens, it just asserts it through the
+    // seam rather than by reaching into someone else's state.
+    const resetSelectionCalls = [];
     const sandbox = {
         seekCalls,
         sectionPracticeModeCalls,
         transportEvents,
+        resetSelectionCalls,
+        resetSelection: () => resetSelectionCalls.push(true),
         // Mutable state (declared as `var` in eval prelude so it lives on
         // the sandbox global and the extracted functions can read/write).
         // The actual values are set below.
@@ -201,7 +209,7 @@ test('setLoop rejects b <= a', async () => {
     await assert.rejects(() => sandbox.__setLoop(10, 5), /b > a/);
 });
 
-test('clearLoop resets loopA/loopB to null', async () => {
+test('clearLoop resets loopA/loopB to null (and asks section-practice to drop its selection)', async () => {
     const src = fs.readFileSync(APP_JS, 'utf8');
     const sandbox = buildSandbox();
     loadFunctions(sandbox, src);
@@ -211,6 +219,11 @@ test('clearLoop resets loopA/loopB to null', async () => {
     const { loopA, loopB } = sandbox.__getLoop();
     assert.equal(loopA, null);
     assert.equal(loopB, null);
+    assert.equal(
+        sandbox.resetSelectionCalls.length, 1,
+        'clearLoop must ask section-practice to drop its selection (it used to zero the '
+        + 'scalars by hand; the module owns them now)',
+    );
     assert.equal(sandbox.sectionPracticeModeCalls.length, 1);
     assert.equal(sandbox.sectionPracticeModeCalls[0].on, false);
     // Field-wise: vm-context objects break deepStrictEqual across realms.

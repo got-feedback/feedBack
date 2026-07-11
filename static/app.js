@@ -1,6 +1,8 @@
 import {
     bootstrapPluginsAndUi,
+    checkPluginUpdates,
     loadPlugins,
+    updatePlugin,
 } from './js/plugin-loader.js';
 import {
     _autoMatchViz,
@@ -33,6 +35,10 @@ import {
     parseRawTuningOffsets,
     songTuningContext,
 } from './js/tuning-display.js';
+import {
+    exportSettings,
+    importSettings,
+} from './js/settings-io.js';
 
 // Demo analytics — real impl set by demo.js; no-op in normal builds
 window.feedBackDemoTrack = window.feedBackDemoTrack ?? null;
@@ -3101,153 +3107,6 @@ async function _postSetting(key, value) {
     }
 }
 
-// ── Settings export / import (feedBack#113) ─────────────────────────────────
-//
-// Bundles server config + every localStorage key + opted-in plugin server
-// files into a single JSON file.
-//
-// Apply semantics — phased, NOT all-or-nothing across the two stores:
-//   1. Server first (/api/settings/import). Phase-1 validation guards
-//      the whole bundle; phase-2 disk commit is per-file but ordered
-//      so a mid-apply failure surfaces a `partial` field. A server
-//      failure short-circuits before any localStorage write, so the
-//      browser side stays untouched on validation refusals.
-//   2. localStorage second, only after the server returns ok. Applied
-//      as a MERGE (no clear): bundled keys overwrite, locally-present
-//      keys absent from the bundle are preserved (so a plugin
-//      installed after the export keeps its first-run defaults).
-//      A localStorage exception here (quota / private mode) is
-//      surfaced verbatim — server state is already committed and we
-//      don't pretend the import was clean.
-//
-// In short: the server side is atomic in phase 1 and surface-partial in
-// phase 2; the localStorage side is best-effort merge after server
-// success. Failures are reported, never silenced.
-
-async function exportSettings() {
-    const status = document.getElementById('backup-status');
-    status.textContent = 'Exporting...';
-    try {
-        const resp = await fetch('/api/settings/export');
-        if (!resp.ok) {
-            status.textContent = `Export failed (HTTP ${resp.status})`;
-            return;
-        }
-        const bundle = await resp.json();
-        // Layer in the browser's localStorage. Use the standard Storage
-        // iteration API (length + key(i)) rather than Object.keys —
-        // Object.keys on a Storage instance is not deterministic across
-        // browsers and can both miss entries and include non-entry
-        // properties depending on the implementation. Keys are preserved
-        // verbatim as strings; that's how localStorage stores them, and
-        // round-trip fidelity matters more than re-typing values that
-        // were never typed in the first place.
-        const localStorageData = {};
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key === null) continue;
-            const value = localStorage.getItem(key);
-            if (value !== null) localStorageData[key] = value;
-        }
-        bundle.local_storage = localStorageData;
-
-        // Trigger download via blob + temporary <a download>. We honor the
-        // server's Content-Disposition filename when present, otherwise
-        // fall back to a date-stamped default.
-        let filename = 'feedBack-settings.json';
-        const disposition = resp.headers.get('Content-Disposition');
-        if (disposition) {
-            const match = /filename="([^"]+)"/.exec(disposition);
-            if (match) filename = match[1];
-        }
-        const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        status.textContent = `Exported ${filename}`;
-    } catch (e) {
-        status.textContent = `Export failed: ${e.message}`;
-    }
-}
-
-async function importSettings(file) {
-    if (!file) return;
-    const status = document.getElementById('backup-status');
-    if (!confirm('Import will overwrite settings present in the bundle (server config, browser preferences, and opted-in plugin data) and reload the page. Settings not in the bundle (e.g. from plugins installed after the export) are preserved. Continue?')) {
-        status.textContent = 'Import cancelled';
-        return;
-    }
-    let bundle;
-    try {
-        bundle = JSON.parse(await file.text());
-    } catch (e) {
-        status.textContent = `Import failed: not valid JSON (${e.message})`;
-        return;
-    }
-
-    status.textContent = 'Importing...';
-    let resp, data;
-    try {
-        resp = await fetch('/api/settings/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bundle),
-        });
-        data = await resp.json();
-    } catch (e) {
-        status.textContent = `Import failed: ${e.message}`;
-        return;
-    }
-    // Two failure shapes to surface: our own validation handler
-    // returns `{ok: false, error: "..."}`, but if the body fails
-    // FastAPI's request-level validation (e.g. top-level value is
-    // an array, not an object), the response is the framework's
-    // `{detail: ...}` shape with no `ok` key. `resp.ok` distinguishes
-    // both from success without depending on which path produced
-    // the failure.
-    if (!resp.ok || data.ok === false) {
-        let msg = data.error;
-        if (!msg && data.detail) {
-            msg = typeof data.detail === 'string'
-                ? data.detail
-                : JSON.stringify(data.detail);
-        }
-        status.textContent = `Import failed: ${msg || `HTTP ${resp.status}`}`;
-        return;
-    }
-
-    // Server applied successfully. Now apply the localStorage portion as
-    // a MERGE (not clear+restore): keys in the bundle overwrite, keys
-    // present locally but absent from the bundle are preserved. This
-    // matters when a plugin was installed *after* the export — wiping
-    // its localStorage would erase first-run defaults the plugin set on
-    // load, leaving it in a worse state than before the import. The
-    // tradeoff is that orphan keys from removed plugins or renamed key
-    // schemes also linger; cleaning those up is the user's job.
-    const ls = bundle.local_storage;
-    if (ls && typeof ls === 'object') {
-        try {
-            for (const [key, value] of Object.entries(ls)) {
-                if (typeof value === 'string') localStorage.setItem(key, value);
-            }
-        } catch (e) {
-            // Quota exceeded / private mode etc. Server side already
-            // committed, so we surface the partial state rather than
-            // pretending it succeeded.
-            status.textContent = `Server applied, but localStorage write failed: ${e.message}`;
-            return;
-        }
-    }
-
-    const warnings = (data.warnings || []).join('; ');
-    status.textContent = warnings ? `Imported with warnings: ${warnings}. Reloading...` : 'Imported. Reloading...';
-    setTimeout(() => location.reload(), 800);
-}
 
 
 async function uploadSongs(fileList) {
@@ -3497,58 +3356,6 @@ async function fullRescanLibrary() {
     }, 1000);
 }
 
-// ── Plugin Updates ───────────────────────────────────────────────────────
-async function checkPluginUpdates() {
-    const btn = document.getElementById('btn-check-updates');
-    const status = document.getElementById('updates-status');
-    const list = document.getElementById('plugin-updates-list');
-    btn.disabled = true;
-    btn.textContent = 'Checking...';
-    status.textContent = '';
-    list.innerHTML = '';
-    try {
-        const resp = await fetch('/api/plugins/updates');
-        const data = await resp.json();
-        const updates = data.updates || {};
-        const keys = Object.keys(updates);
-        if (keys.length === 0) {
-            status.textContent = 'All plugins are up to date.';
-        } else {
-            status.textContent = `${keys.length} update${keys.length > 1 ? 's' : ''} available`;
-            for (const id of keys) {
-                const u = updates[id];
-                const row = document.createElement('div');
-                row.className = 'flex items-center gap-3 bg-dark-700 rounded-lg px-4 py-2';
-                row.innerHTML = `
-                    <span class="text-sm text-gray-300 flex-1">${u.name} <span class="text-xs text-gray-500">(${u.behind} commit${u.behind > 1 ? 's' : ''} behind — ${u.local} → ${u.remote})</span></span>
-                    <button onclick="updatePlugin('${id}', this)" class="bg-accent/20 hover:bg-accent/30 text-accent-light px-3 py-1 rounded-lg text-xs transition">Update</button>`;
-                list.appendChild(row);
-            }
-        }
-    } catch (e) {
-        status.textContent = 'Failed to check for updates.';
-    }
-    btn.disabled = false;
-    btn.textContent = 'Check for Updates';
-}
-
-async function updatePlugin(pluginId, btn) {
-    btn.disabled = true;
-    btn.textContent = 'Updating...';
-    try {
-        const resp = await fetch(`/api/plugins/${pluginId}/update`, { method: 'POST' });
-        const data = await resp.json();
-        if (data.ok) {
-            btn.textContent = 'Updated — restart to apply';
-            btn.className = 'bg-green-900/30 text-green-400 px-3 py-1 rounded-lg text-xs';
-        } else {
-            btn.textContent = 'Failed';
-            btn.title = data.error || '';
-        }
-    } catch (e) {
-        btn.textContent = 'Error';
-    }
-}
 
 // ── Plugin functions loaded dynamically from plugin screen.js files ──────
 // (searchCF, installCF, loginCF, searchUG, buildFromUG, etc.)

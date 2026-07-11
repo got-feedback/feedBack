@@ -7,7 +7,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SONGS_JS = path.join(__dirname, '..', '..', 'static', 'v3', 'songs.js');
-const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
+// The tuning-display helpers were carved out of app.js into their own module (R3a).
+const APP_JS = path.join(__dirname, '..', '..', 'static', 'js', 'tuning-display.js');
 
 function extractBlock(src, startMarker) {
     const start = src.indexOf(startMarker);
@@ -27,14 +28,14 @@ function extractBlock(src, startMarker) {
 
 function loadTuningHelpers() {
     const src = fs.readFileSync(APP_JS, 'utf8');
-    const start = src.indexOf('function _looksLikeRawTuningOffsets(');
-    const endMarker = 'window.feedBack.parseRawTuningOffsets = parseRawTuningOffsets;';
-    const end = src.indexOf(endMarker);
-    if (start === -1 || end === -1) throw new Error('tuning helpers not found');
+    // The module is nothing BUT the tuning helpers now, so there is no block to
+    // slice out — take it whole. `export` is stripped so the vm sandbox can still
+    // evaluate it as a plain script (the window.* contract lives in app.js).
+    const body = src.replace(/^export /gm, '');
     const sandbox = { window: { feedBack: {} }, exports: {} };
     vm.createContext(sandbox);
     vm.runInContext(
-        src.slice(start, end + endMarker.length) + '\n'
+        body + '\n'
         + 'exports.displayTuningName = displayTuningName;\n'
         + 'exports.displayTuningTargets = displayTuningTargets;\n'
         + 'exports.parseRawTuningOffsets = parseRawTuningOffsets;',

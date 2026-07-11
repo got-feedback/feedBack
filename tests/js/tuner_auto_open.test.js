@@ -7,20 +7,23 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
+// The tuning-display helpers were carved out of app.js into their own module (R3a);
+// the autoplay-gate test below still reads app.js.
+const TUNING_JS = path.join(__dirname, '..', '..', 'static', 'js', 'tuning-display.js');
 const TUNER_SCREEN_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'screen.js');
 const TUNING_UTILS_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'utils', 'tuning-utils.js');
 const TUNER_UI_JS = path.join(__dirname, '..', '..', 'plugins', 'tuner', 'utils', 'ui.js');
 
 function loadTuningHelpers() {
-    const src = fs.readFileSync(APP_JS, 'utf8');
-    const start = src.indexOf('function isBassArrangement(');
-    const endMarker = 'window.feedBack.parseRawTuningOffsets = parseRawTuningOffsets;';
-    const end = src.indexOf(endMarker);
-    if (start === -1 || end === -1) throw new Error('tuning helper block not found in app.js');
+    const src = fs.readFileSync(TUNING_JS, 'utf8');
+    // The module is nothing BUT the tuning helpers now, so there is no block to
+    // slice out — take it whole. `export` is stripped so the vm sandbox can still
+    // evaluate it as a plain script (the window.* contract lives in app.js).
+    const body = src.replace(/^export /gm, '');
     const sandbox = { window: { feedBack: {} }, exports: {} };
     vm.createContext(sandbox);
     vm.runInContext(
-        src.slice(start, end + endMarker.length),
+        body,
         sandbox
     );
     return sandbox.window.feedBack;

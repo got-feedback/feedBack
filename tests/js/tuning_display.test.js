@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
+// The tuning-display helpers were carved out of app.js into their own module (R3a).
+const APP_JS = path.join(__dirname, '..', '..', 'static', 'js', 'tuning-display.js');
 const HIGHWAY_JS = path.join(__dirname, '..', '..', 'static', 'highway.js');
 const V3_HTML = path.join(__dirname, '..', '..', 'static', 'v3', 'index.html');
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 
+import builtin_content
 import pytest
 
 
@@ -21,15 +22,15 @@ def server_mod(tmp_path, monkeypatch, isolate_logging):
 def _source(server_mod):
     return (
         server_mod._feedBack_server_root()
-        / server_mod._BUILTIN_STARTER_SOURCES[0][1]
+        / builtin_content.BUILTIN_STARTER_SOURCES[0][1]
     )
 
 
 def _dest(server_mod, dlc):
     return (
         dlc
-        / server_mod._BUILTIN_STARTER_SUBDIR
-        / server_mod._BUILTIN_STARTER_SOURCES[0][0]
+        / builtin_content.BUILTIN_STARTER_SUBDIR
+        / builtin_content.BUILTIN_STARTER_SOURCES[0][0]
     )
 
 
@@ -41,12 +42,12 @@ def test_seed_creates_starter_content_and_marker(tmp_path, server_mod):
     if not source.is_file():
         pytest.skip(f"starter source not present in checkout: {source}")
 
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
 
     dest = _dest(server_mod, dlc)
     assert dest.is_file()
     assert dest.stat().st_size == source.stat().st_size
-    assert (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).is_file()
+    assert (server_mod.CONFIG_DIR / builtin_content.STARTER_SEED_MARKER).is_file()
 
 
 def test_seed_preserves_source_mtime(tmp_path, server_mod):
@@ -58,7 +59,7 @@ def test_seed_preserves_source_mtime(tmp_path, server_mod):
     if not source.is_file():
         pytest.skip(f"starter source not present in checkout: {source}")
 
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
 
     assert _dest(server_mod, dlc).stat().st_mtime_ns == source.stat().st_mtime_ns
 
@@ -78,7 +79,7 @@ def test_seed_runs_only_once_and_respects_deletion(tmp_path, server_mod):
     if not source.is_file():
         pytest.skip(f"starter source not present in checkout: {source}")
 
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
     dest = _dest(server_mod, dlc)
     assert dest.is_file()
 
@@ -86,7 +87,7 @@ def test_seed_runs_only_once_and_respects_deletion(tmp_path, server_mod):
     dest.unlink()
 
     # A subsequent launch must not re-seed it.
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
     assert not dest.exists()
 
 
@@ -98,15 +99,15 @@ def test_seed_deferred_until_dlc_configured(tmp_path, server_mod):
         pytest.skip(f"starter source not present in checkout: {source}")
 
     # dlc is None and DLC_DIR unset -> _get_dlc_dir() returns None.
-    server_mod._seed_builtin_starter_content(None)
-    assert not (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).exists()
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), None)
+    assert not (server_mod.CONFIG_DIR / builtin_content.STARTER_SEED_MARKER).exists()
 
     # Now a DLC is configured: the deferred seed runs.
     dlc = tmp_path / "dlc"
     dlc.mkdir()
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
     assert _dest(server_mod, dlc).is_file()
-    assert (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).is_file()
+    assert (server_mod.CONFIG_DIR / builtin_content.STARTER_SEED_MARKER).is_file()
 
 
 def test_seed_refuses_symlinked_seed_directory(tmp_path, server_mod):
@@ -119,13 +120,13 @@ def test_seed_refuses_symlinked_seed_directory(tmp_path, server_mod):
 
     outside_dir = tmp_path / "outside"
     outside_dir.mkdir()
-    (dlc / server_mod._BUILTIN_STARTER_SUBDIR).symlink_to(outside_dir)
+    (dlc / builtin_content.BUILTIN_STARTER_SUBDIR).symlink_to(outside_dir)
 
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
 
     assert list(outside_dir.iterdir()) == []
     # An incomplete seed must NOT write the marker, so a later launch retries.
-    assert not (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).exists()
+    assert not (server_mod.CONFIG_DIR / builtin_content.STARTER_SEED_MARKER).exists()
 
 
 def test_seed_never_overwrites_an_existing_user_file(tmp_path, server_mod):
@@ -140,11 +141,11 @@ def test_seed_never_overwrites_an_existing_user_file(tmp_path, server_mod):
     dest.write_bytes(b"user's own edited pack")
     _os.utime(dest, (1_000_000, 1_000_000))  # far older than the bundled source
 
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
 
     assert dest.read_bytes() == b"user's own edited pack"  # untouched
     # counted as already-present, so the one-time seed considers itself done
-    assert (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).is_file()
+    assert (server_mod.CONFIG_DIR / builtin_content.STARTER_SEED_MARKER).is_file()
 
 
 def test_seed_does_not_mark_when_destination_is_a_directory(tmp_path, server_mod):
@@ -160,10 +161,10 @@ def test_seed_does_not_mark_when_destination_is_a_directory(tmp_path, server_mod
     bogus.parent.mkdir(parents=True, exist_ok=True)
     bogus.mkdir()  # user (or junk) placed a directory where the pack goes
 
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
 
     assert bogus.is_dir()  # untouched
-    assert not (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).exists()
+    assert not (server_mod.CONFIG_DIR / builtin_content.STARTER_SEED_MARKER).exists()
 
 
 def test_seed_does_not_mark_when_source_missing(tmp_path, server_mod, monkeypatch):
@@ -172,15 +173,15 @@ def test_seed_does_not_mark_when_source_missing(tmp_path, server_mod, monkeypatc
     dlc = tmp_path / "dlc"
     dlc.mkdir()
     monkeypatch.setattr(
-        server_mod,
-        "_BUILTIN_STARTER_SOURCES",
+        builtin_content,
+        "BUILTIN_STARTER_SOURCES",
         [("missing.feedpak", "content/starter/does-not-exist.feedpak")],
     )
 
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
 
-    assert not (dlc / server_mod._BUILTIN_STARTER_SUBDIR / "missing.feedpak").exists()
-    assert not (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).exists()
+    assert not (dlc / builtin_content.BUILTIN_STARTER_SUBDIR / "missing.feedpak").exists()
+    assert not (server_mod.CONFIG_DIR / builtin_content.STARTER_SEED_MARKER).exists()
 
 
 def test_every_starter_source_file_is_present(server_mod):
@@ -190,7 +191,7 @@ def test_every_starter_source_file_is_present(server_mod):
     the checkout is clean, so "on disk" == committed."""
     root = server_mod._feedBack_server_root()
     missing = [
-        rel for _, rel in server_mod._BUILTIN_STARTER_SOURCES
+        rel for _, rel in builtin_content.BUILTIN_STARTER_SOURCES
         if not (root / rel).is_file()
     ]
     assert not missing, f"listed starter sources missing on disk: {missing}"
@@ -199,18 +200,18 @@ def test_every_starter_source_file_is_present(server_mod):
 def test_seed_lands_every_listed_starter_pack(tmp_path, server_mod):
     """A real seed run copies every listed pack into starter/ and marks done."""
     root = server_mod._feedBack_server_root()
-    for _, rel in server_mod._BUILTIN_STARTER_SOURCES:
+    for _, rel in builtin_content.BUILTIN_STARTER_SOURCES:
         if not (root / rel).is_file():
             pytest.skip(f"starter source not present in checkout: {rel}")
 
     dlc = tmp_path / "dlc"
     dlc.mkdir()
-    server_mod._seed_builtin_starter_content(dlc)
+    builtin_content.seed_builtin_starter_content(server_mod._feedBack_server_root(), dlc)
 
-    for dest_name, _ in server_mod._BUILTIN_STARTER_SOURCES:
-        dest = dlc / server_mod._BUILTIN_STARTER_SUBDIR / dest_name
+    for dest_name, _ in builtin_content.BUILTIN_STARTER_SOURCES:
+        dest = dlc / builtin_content.BUILTIN_STARTER_SUBDIR / dest_name
         assert dest.is_file(), f"pack not seeded: {dest_name}"
-    assert (server_mod.CONFIG_DIR / server_mod._STARTER_SEED_MARKER).is_file()
+    assert (server_mod.CONFIG_DIR / builtin_content.STARTER_SEED_MARKER).is_file()
 
 
 def test_no_unlisted_starter_pack_on_disk(server_mod):
@@ -220,7 +221,7 @@ def test_no_unlisted_starter_pack_on_disk(server_mod):
     main before being wired up. In CI the checkout is clean, so this flags any
     stray/committed pack that isn't listed."""
     root = server_mod._feedBack_server_root()
-    listed = {rel for _, rel in server_mod._BUILTIN_STARTER_SOURCES}
+    listed = {rel for _, rel in builtin_content.BUILTIN_STARTER_SOURCES}
     if not listed:
         pytest.skip("no starter sources declared")
     content_dir = (root / next(iter(listed))).parent  # all sources share this dir

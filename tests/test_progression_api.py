@@ -5,6 +5,7 @@ import importlib
 import json
 import sys
 
+import builtin_content
 import pytest
 from fastapi.testclient import TestClient
 
@@ -192,7 +193,7 @@ def test_low_accuracy_play_does_not_complete_gated_challenge(client):
 
 
 def test_diagnostic_at_100_completes_calibration(client, server):
-    diag = server._builtin_diagnostic_filename()
+    diag = builtin_content.builtin_diagnostic_filename()
     # A near-miss leaves calibration pending.
     _scored_play(client, filename=diag, accuracy=0.97, score=500)
     assert client.get("/api/progression").json()["onboarding"]["calibration_status"] == "pending"
@@ -207,7 +208,7 @@ def test_diagnostic_play_does_not_feed_challenges_or_quests(client, server):
     # The calibration run is a perfect guitar play — it must yield rank 1
     # EXACTLY, advancing neither the guitar path nor the daily song quest.
     client.post("/api/progression/paths", json={"add": ["guitar"]})
-    r = _scored_play(client, filename=server._builtin_diagnostic_filename(),
+    r = _scored_play(client, filename=builtin_content.builtin_diagnostic_filename(),
                      accuracy=1.0, score=500)
     summary = r.json()["progression"]
     assert summary["calibration_completed"] is True
@@ -228,7 +229,7 @@ def test_pathless_diagnostic_run_still_completes_calibration(client, server):
     run is an earned achievement and must count even before any path is
     selected (e.g. a pre-progression profile playing the diagnostic as a
     hardware test) — yielding a valid pathless rank-1 state."""
-    _scored_play(client, filename=server._builtin_diagnostic_filename(),
+    _scored_play(client, filename=builtin_content.builtin_diagnostic_filename(),
                  accuracy=1.0, score=500)
     data = client.get("/api/progression").json()
     assert data["onboarding"]["calibration_status"] == "completed"
@@ -240,7 +241,7 @@ def test_diagnostic_upgrades_skipped_without_rank_change(client, server):
     client.post("/api/progression/paths", json={"add": ["guitar"]})
     r = client.post("/api/progression/onboarding", json={"action": "skip"})
     assert r.json()["onboarding"]["calibration_status"] == "skipped"
-    _scored_play(client, filename=server._builtin_diagnostic_filename(), accuracy=1.0, score=500)
+    _scored_play(client, filename=builtin_content.builtin_diagnostic_filename(), accuracy=1.0, score=500)
     data = client.get("/api/progression").json()
     assert data["onboarding"]["calibration_status"] == "completed"
     assert data["mastery_rank"] == 1

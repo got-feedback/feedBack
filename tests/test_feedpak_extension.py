@@ -82,7 +82,7 @@ def test_is_sloppak_rejects_other_suffixes(name):
 # ── 2. _background_scan discovery glob (DLC scan) ────────────────────────────
 
 @pytest.fixture()
-def scan_server(tmp_path, monkeypatch, isolate_logging):
+def scan_server(tmp_path, monkeypatch, isolate_logging, reset_scan_state):
     """Fresh server import with the background scan forced in-process.
 
     Mirrors tests/test_settings_api.py::scan_module — the production scan uses
@@ -94,8 +94,13 @@ def scan_server(tmp_path, monkeypatch, isolate_logging):
     monkeypatch.delenv("DLC_DIR", raising=False)
     sys.modules.pop("server", None)
     mod = importlib.import_module("server")
+    # The scanner is lib/scan.py now (R3b). Patch it THERE — `mod` (server) re-imports
+    # per-test, but `scan` stays cached in sys.modules, so this is the same module object
+    # server calls into. That it still works is the point of the late-bound appstate
+    # reads: scan picks up the fresh CONFIG_DIR without being re-imported itself.
+    import scan as scan_mod
     monkeypatch.setattr(
-        mod, "_make_scan_executor",
+        scan_mod, "_make_scan_executor",
         lambda: concurrent.futures.ThreadPoolExecutor(max_workers=4),
     )
     yield mod
@@ -125,7 +130,7 @@ def test_background_scan_discovers_both_suffixes(tmp_path, scan_server):
         return {"title": f.name, "artist": "", "album": ""}
 
     with mock.patch("scan_worker._extract_meta_for_file", new=mock_extract):
-        scan_server._background_scan()
+        importlib.import_module("scan").background_scan()
 
     assert "new.feedpak" in seen
     assert "legacy.sloppak" in seen

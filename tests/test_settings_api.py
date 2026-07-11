@@ -429,11 +429,11 @@ def test_get_dlc_dir_ignores_nonexistent_config_dir(tmp_path, server_module):
 # ── library scan fixtures ────────────────────────────────────────────────────
 
 @pytest.fixture()
-def scan_module(tmp_path, monkeypatch, isolate_logging):
+def scan_module(tmp_path, monkeypatch, isolate_logging, reset_scan_state):
     """Import server with CONFIG_DIR and DLC_DIR isolated in tmp_path.
 
     The background scan uses a `spawn` ProcessPoolExecutor in production
-    (see server._make_scan_executor), whose workers run in fresh
+    (see scan._make_scan_executor), whose workers run in fresh
     interpreters that an in-process mock.patch() can't reach. Override it
     with an in-process ThreadPoolExecutor so these tests can mock metadata
     extraction (on scan_worker, where the worker resolves it) and observe
@@ -444,8 +444,13 @@ def scan_module(tmp_path, monkeypatch, isolate_logging):
     monkeypatch.delenv("DLC_DIR", raising=False)
     sys.modules.pop("server", None)
     mod = importlib.import_module("server")
+    # The scanner is lib/scan.py now (R3b). Patch it THERE — `mod` (server) re-imports
+    # per-test, but `scan` stays cached in sys.modules, so this is the same module object
+    # server calls into. That it still works is the point of the late-bound appstate
+    # reads: scan picks up the fresh CONFIG_DIR without being re-imported itself.
+    import scan as scan_mod
     monkeypatch.setattr(
-        mod, "_make_scan_executor",
+        scan_mod, "_make_scan_executor",
         lambda: concurrent.futures.ThreadPoolExecutor(max_workers=4),
     )
     yield mod
@@ -485,11 +490,11 @@ def test_is_first_scan_true_when_all_songs_unscanned(tmp_path, scan_module):
     def mock_extract(f, dlc):
         # Capture the scan status on the first call (during the scanning phase)
         if not captured_status:
-            captured_status.update(scan_module._scan_status)
+            captured_status.update(importlib.import_module("scan").status())
         return {"title": f.name, "artist": "", "album": ""}
 
     with mock.patch("scan_worker._extract_meta_for_file", new=mock_extract):
-        scan_module._background_scan()
+        importlib.import_module("scan").background_scan()
 
     assert captured_status.get("is_first_scan") is True
 
@@ -514,11 +519,11 @@ def test_is_first_scan_false_when_some_songs_cached(tmp_path, scan_module):
 
     def mock_extract(f, dlc):
         if not captured_status:
-            captured_status.update(scan_module._scan_status)
+            captured_status.update(importlib.import_module("scan").status())
         return {"title": f.name, "artist": "", "album": ""}
 
     with mock.patch("scan_worker._extract_meta_for_file", new=mock_extract):
-        scan_module._background_scan()
+        importlib.import_module("scan").background_scan()
 
     assert captured_status.get("is_first_scan") is False
 

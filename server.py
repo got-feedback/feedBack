@@ -45,6 +45,7 @@ from dlc_paths import _get_dlc_dir, _resolve_dlc_path
 # Lives in lib/ because that is the one core dir every packaging path copies.
 import appstate
 import builtin_content
+import scan
 # Extracted route modules. They import `appstate`, never `server` — one-way graph.
 from routers import audio_effects, artist_aliases, loops, playlists, ws_highway, chart, wanted, library_extras, shop, progression, profile, stats, version, diagnostics
 from routers import tunings as tunings_router
@@ -519,8 +520,8 @@ def _stat_for_cache(f: Path) -> tuple[float, int]:
         if inner:
             # Tolerate files vanishing between glob() and stat() —
             # otherwise a concurrent edit/move in DLC_DIR can let an
-            # OSError bubble out of _background_scan(), killing the
-            # scan thread while `_scan_status["running"]` stays true.
+            # OSError bubble out of scan.background_scan(), killing the
+            # scan thread while `scan.status()["running"]` stays true.
             stats = []
             for p in inner:
                 try:
@@ -533,8 +534,6 @@ def _stat_for_cache(f: Path) -> tuple[float, int]:
     return st.st_mtime, st.st_size
 
 
-_SCAN_STATUS_INIT = {"running": False, "stage": "idle", "total": 0, "done": 0, "current": "", "error": None, "is_first_scan": False, "added": 0, "removed": 0}
-_scan_status = dict(_SCAN_STATUS_INIT)
 
 _STARTUP_STATUS_INIT = {
     "running": True,
@@ -605,45 +604,6 @@ def _get_startup_status():
         return dict(_startup_status)
 
 
-def _make_scan_executor():
-    """Build the executor for the background metadata scan.
-
-    A `spawn` ProcessPoolExecutor in production. `spawn` (not the platform
-    default) is mandatory: _background_scan runs on a non-main daemon
-    thread, and forking a multithreaded process from a non-main thread can
-    deadlock on locks held by other threads at fork time (the default on
-    Linux). `spawn` boots a clean interpreter that imports only scan_worker
-    (+ its pure lib deps) to unpickle the worker — never this module — so
-    workers don't re-run server.py's import-time side effects (reopening
-    SQLite, attaching a second RotatingFileHandler, re-registering routes).
-
-    Tests monkeypatch this to a ThreadPoolExecutor so the scan runs
-    in-process and metadata extraction can be mocked.
-    """
-    mp_ctx = multiprocessing.get_context("spawn")
-    # Default to one worker per core so CPU-bound metadata parsing uses the
-    # whole machine (the point of moving to processes).
-    # FEEDBACK_MAX_SCAN_WORKERS (set by the Desktop launcher to cap memory
-    # usage on low-RAM machines — e.g. 8 GB M2 MacBook Air) takes priority;
-    # SCAN_MAX_WORKERS is a legacy override for Docker/bare installs.
-    # A malformed override falls back to the core count rather than crashing.
-    try:
-        max_workers = int(
-            getenv_compat("FEEDBACK_MAX_SCAN_WORKERS")
-            or os.environ.get("SCAN_MAX_WORKERS")
-            or (os.cpu_count() or 1)
-        )
-    except ValueError:
-        max_workers = os.cpu_count() or 1
-    # ProcessPoolExecutor raises ValueError on Windows when max_workers > 61
-    # (the WaitForMultipleObjects handle limit), so clamp there — otherwise
-    # a high-core Windows host can't construct the pool and the scan never
-    # starts.
-    if sys.platform == "win32":
-        max_workers = min(max_workers, 61)
-    return concurrent.futures.ProcessPoolExecutor(
-        max_workers=max(1, max_workers), mp_context=mp_ctx,
-    )
 
 
 
@@ -699,167 +659,9 @@ appstate.configure(
 
 
 
-def _background_scan():
-    """Scan the library and cache song metadata on startup. Uses a process pool to bypass the GIL for CPU-bound metadata parsing.
-
-    Never sets `_scan_status["running"] = False` — ownership of that flag
-    lives in `_scan_runner` so a `_kick_scan()` racing this function's
-    terminal write cannot observe a stale False and start a second runner.
-    """
-    global _scan_status
-    _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "listing"}
-
-    # Load config once so both the DLC-dir lookup and the platform filter
-    # read from the same snapshot, avoiding a redundant parse of config.json.
-    _cfg = _load_config(CONFIG_DIR / "config.json") or _default_settings()
-    dlc = _get_dlc_dir(_cfg)
-    if not dlc:
-        _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "idle", "error": "DLC folder not configured"}
-        log.warning("Scan: no DLC folder configured")
-        return
-
-    builtin_content.seed_builtin_diagnostic_sloppaks(_feedBack_server_root(), dlc)
-    builtin_content.seed_builtin_starter_content(_feedBack_server_root(), dlc)
-
-    # Listing can fail on macOS without Full Disk Access, or on Docker if the
-    # path isn't shared. Report the failure explicitly rather than silently
-    # appearing to scan nothing.
-    try:
-        # Generated-content sloppaks that the highway WS must resolve by path
-        # but that are NOT library songs. Two conventions share this carve-out:
-        #   - tutorials-builtin/  — lesson drills seeded by the tutorials plugin
-        #     (see plugins/tutorials/routes.py::_seed_builtin_packs).
-        #   - minigames-builtin/  — exercise charts generated on demand by
-        #     minigame plugins (e.g. Chord Sprint writes alternating-chord
-        #     drills here). Cached/reused per exercise, never browsed.
-        # Both are kept out of the scan; _resolve_dlc_path still loads them by
-        # path for playback.
-        def _is_excluded_from_library(p: Path) -> bool:
-            return "tutorials-builtin" in p.parts or "minigames-builtin" in p.parts
-        # Sloppaks: match both file (zip) and directory form, across both the
-        # `.feedpak` and legacy `.sloppak` suffixes.
-        _cands = sorted(p for ext in sloppak_mod.SONG_EXTS for p in dlc.rglob(f"*{ext}"))
-        sloppaks = [f for f in _cands
-                    if sloppak_mod.is_sloppak(f)
-                    and not _is_excluded_from_library(f)]
-
-        # Loose song folders: any directory containing a non-preview *.wem + *.xml.
-        # Skip directories that are actually sloppak bundles — those are
-        # already in `sloppaks`; the dispatcher's sloppak-first precedence
-        # would route them to the sloppak path anyway, but adding them
-        # here would inflate the scan queue and over-count the total.
-        loose_songs = []
-        seen_loose = set()
-        sloppak_dirs = {p for p in sloppaks if p.is_dir()}
-        for wem in sorted(dlc.rglob("*.wem")):
-            if "preview" in wem.stem.lower():
-                continue
-            if _is_excluded_from_library(wem):
-                continue
-            d = wem.parent
-            if d in sloppak_dirs or d.name.lower().endswith(sloppak_mod.SONG_EXTS):
-                continue
-            if d not in seen_loose and loosefolder_mod.is_loose_song(d):
-                loose_songs.append(d)
-                seen_loose.add(d)
-    except PermissionError as e:
-        msg = (f"Permission denied reading {dlc}. "
-               "On macOS: grant Full Disk Access to the app in System Settings → Privacy & Security. "
-               "With Docker: share this path in Docker Desktop → Settings → Resources → File Sharing.")
-        log.error("Scan failed: %s (%s)", msg, e)
-        _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "error", "error": msg}
-        return
-    except OSError as e:
-        log.error("Scan failed listing %s: %s", dlc, e)
-        _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "error", "error": f"Unable to list {dlc}: {e}"}
-        return
-
-    all_songs = sloppaks + loose_songs
-    log.info("Scan: listed %d sloppaks and %d loose folders in %s",
-             len(sloppaks), len(loose_songs), dlc)
-
-    current_files = {_relpath(f, dlc) for f in all_songs}
-
-    # Clean up stale DB entries. delete_missing reports both deltas (rows pruned
-    # + genuinely-new files) so the scan can surface an added/removed summary.
-    _delta = meta_db.delete_missing(current_files)
-    removed, added = _delta["removed"], _delta["added"]
-    if removed:
-        log.info("Removed %d stale DB entries", removed)
-
-    # Figure out which need scanning
-    to_scan = []
-    for f in all_songs:
-        # Skip entries that vanish or become unreadable between listing
-        # and stat. Without this, one concurrent move/delete in DLC_DIR
-        # would crash the scan thread and leave `_scan_status["running"]`
-        # stuck true with no path to recover.
-        try:
-            mtime, size = _stat_for_cache(f)
-        except OSError as e:
-            log.debug("scan: skipping %s (%s)", f, e)
-            continue
-        cache_key = _relpath(f, dlc)
-        try:
-            cached = meta_db.get(cache_key, mtime, size)
-        except Exception as e:
-            # Keep scanning even if a single metadata lookup fails.
-            # The file will be re-scanned and cache repaired by put().
-            log.warning("scan cache lookup failed for %s: %s", cache_key, e)
-            cached = None
-        if not cached:
-            to_scan.append((f, mtime, size, dlc))
-        elif cached.get("arrangements") and any(
-            "smart_name" not in a for a in cached["arrangements"]
-        ):
-            # Row was scanned before smart naming was introduced — force a
-            # rescan so the DB picks up authoritative path flags from the
-            # manifest JSON and stores correct smart_name values. Don't
-            # re-queue rows where smart_name is explicitly null: the writer
-            # only emits that when compute_smart_names truly can't classify
-            # the arrangement (e.g. a name outside the recognised set with
-            # zero path flags), so rescanning would produce the same null
-            # forever and never converge.
-            to_scan.append((f, mtime, size, dlc))
-
-    if not to_scan:
-        _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "complete", "added": added, "removed": removed}
-        log.info("Scan: nothing new to scan (%d songs, all cached)", len(all_songs))
-        return
-
-    # Refine: all discovered songs need scanning → treat as first-time import
-    # (covers moved DLC folder / fully-stale DB as well as a genuinely empty DB).
-    is_first_scan = bool(all_songs) and len(to_scan) == len(all_songs)
-    _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "scanning", "total": len(to_scan),
-                    "is_first_scan": is_first_scan}
-    log.info("Library: %d sloppaks + %d loose folders, %d cached, %d to scan",
-             len(sloppaks), len(loose_songs), len(all_songs) - len(to_scan), len(to_scan))
-
-    with _make_scan_executor() as executor:
-        futures = {executor.submit(_scan_one, item): item[0].name for item in to_scan}
-        for future in concurrent.futures.as_completed(futures):
-            fname = futures[future]
-            try:
-                name, mtime, size, meta = future.result()
-                meta_db.put(name, mtime, size, meta)
-            except Exception as e:
-                log.warning("scan failed for %s: %s", fname, e)
-            _scan_status["done"] += 1
-            _scan_status["current"] = fname
-
-    log.info("Scan complete: %d songs cached", len(to_scan))
-    _scan_status = {**_SCAN_STATUS_INIT, "running": True, "stage": "complete", "added": added, "removed": removed}
 
 
-_scan_kick_lock = threading.Lock()
-_scan_rescan_pending = False
 
-# Handles to the running scan / enrichment worker threads. Both use the shared
-# MetadataDB connection, so teardown/shutdown MUST join them before closing that
-# connection — a daemon thread mid-query on a closed SQLite conn is a native
-# use-after-free that segfaults the process (seen flaky in CI). Set by
-# _kick_scan / _kick_enrich; joined by _join_background_db_threads().
-_scan_thread: threading.Thread | None = None
 
 
 def _join_background_db_threads(timeout: float = 30.0) -> None:
@@ -867,7 +669,7 @@ def _join_background_db_threads(timeout: float = 30.0) -> None:
 
     A scan kicks enrichment on completion, so join the scan first — by the time
     it returns, _kick_enrich() has set _enrich_thread — then join enrichment."""
-    st = _scan_thread
+    st = scan.scan_thread()
     if st is not None and st.is_alive():
         st.join(timeout)
     et = enrichment._enrich_thread
@@ -875,50 +677,8 @@ def _join_background_db_threads(timeout: float = 30.0) -> None:
         et.join(timeout)
 
 
-def _kick_scan() -> bool:
-    """Request a library rescan, single-flight + coalescing.
-
-    Returns True if a new scan thread was started, False if one was already
-    running. In the latter case a follow-up pass is queued and runs as soon
-    as the current scan finishes so files landing mid-scan (e.g. an upload
-    that finalizes after the scan has already listed DLC_DIR) are not lost
-    until the next periodic pass. Multiple late-arriving requests coalesce
-    into a single follow-up.
-    """
-    global _scan_rescan_pending, _scan_thread
-    with _scan_kick_lock:
-        if _scan_status["running"]:
-            _scan_rescan_pending = True
-            return False
-        # Mark running synchronously so a parallel _kick_scan() observes it
-        # before the worker thread has a chance to reassign _scan_status.
-        _scan_status["running"] = True
-    _scan_thread = threading.Thread(target=_scan_runner, daemon=True)
-    _scan_thread.start()
-    return True
 
 
-def _scan_runner():
-    """Run _background_scan, then re-run if requests arrived mid-scan."""
-    global _scan_rescan_pending
-    while True:
-        try:
-            _background_scan()
-        except Exception:
-            log.exception("background scan failed unexpectedly")
-
-        with _scan_kick_lock:
-            if not _scan_rescan_pending:
-                _scan_status["running"] = False
-                break
-            _scan_rescan_pending = False
-            _scan_status["running"] = True
-    # Enrichment rides scan completion (library-metadata design §6): the scan
-    # pool is a side-effect-free, no-network process pool by design, so
-    # enrichment is a SEPARATE post-scan pass — non-blocking, the library is
-    # usable immediately. The 5-minute periodic rescan re-kicks it, which is
-    # the natural low-priority retry hook.
-    enrichment._kick_enrich()
 
 
 # ── Metadata enrichment worker (P7 plumbing + P8 matcher) ─────────────────────
@@ -1142,7 +902,7 @@ async def startup_events():
         # Plugins still call this with just a path.
         "extract_meta": lambda p: _extract_meta_for_file(p, _get_dlc_dir),
         "meta_db": meta_db,
-        "get_scan_status": lambda: dict(_scan_status),
+        "get_scan_status": lambda: dict(scan.status()),
         "get_art_cache_dir": lambda: ART_CACHE_DIR,
         "library_providers": library_providers,
         "register_library_provider": register_library_provider,
@@ -1454,7 +1214,7 @@ def shutdown_events():
 
 def startup_scan():
     """Start background metadata scan and periodic rescan on server start."""
-    _kick_scan()
+    scan.kick_scan()
     # Periodic rescan every 5 minutes
     rescan_thread = threading.Thread(target=_periodic_rescan, daemon=True)
     rescan_thread.start()
@@ -1464,10 +1224,10 @@ def _periodic_rescan():
     """Check for new files every 5 minutes."""
     time.sleep(300)  # Wait 5 minutes after startup
     while True:
-        # _kick_scan() is a no-op (returns False, queues a pending pass) when
+        # scan.kick_scan() is a no-op (returns False, queues a pending pass) when
         # a scan is already running, so racing against the active scan is
         # safe — no second runner is spawned.
-        _kick_scan()
+        scan.kick_scan()
         time.sleep(300)
 
 
@@ -1480,7 +1240,7 @@ app.include_router(version.router)
 
 @app.get("/api/scan-status")
 def scan_status():
-    return _scan_status
+    return scan.status()
 
 
 # ── Enrichment routes → routers/enrichment.py (R3) ──────────────────────────
@@ -1571,7 +1331,7 @@ async def startup_status_stream(request: Request):
 @app.post("/api/rescan")
 def trigger_rescan():
     """Manually trigger a library rescan."""
-    if not _kick_scan():
+    if not scan.kick_scan():
         return {"message": "Scan already in progress"}
     return {"message": "Rescan started"}
 
@@ -1579,7 +1339,7 @@ def trigger_rescan():
 @app.post("/api/rescan/full")
 def trigger_full_rescan():
     """Clear cache and rescan everything."""
-    if _scan_status["running"]:
+    if scan.status()["running"]:
         return {"message": "Scan already in progress"}
     with meta_db._lock:
         # Force every file to re-scan by invalidating the mtime cache (get()
@@ -1589,7 +1349,7 @@ def trigger_full_rescan():
         # delete_missing() prunes anything genuinely gone at the end.
         meta_db.conn.execute("UPDATE songs SET mtime = -1")
         meta_db.conn.commit()
-    if not _kick_scan():
+    if not scan.kick_scan():
         return {"message": "Scan already in progress"}
     return {"message": "Full rescan started"}
 
@@ -1639,13 +1399,25 @@ def _invalidate_song_caches(cache_key: str) -> None:
                 log.debug("failed to evict audio cache file %s", f, exc_info=True)
 
 
-# Publish the scan/ingest seam for routers/song.py. These stay here (the scan
-# lifecycle owns them); scan_status is a getter so the reassigned dict stays live.
+# Publish the scan/ingest seam. The scanner itself is lib/scan.py now; these are the
+# handles the routers reach it (and its neighbours) through.
+#
+# scan_status is a CALLABLE, not the dict. lib/scan.py REBINDS the status dict on every
+# stage transition rather than updating it in place, so a value published here would be a
+# snapshot frozen at whatever stage it happened to be captured — it would report "listing"
+# forever while the scan ran to completion.
+#
+# server_root is published for the same reason lib/builtin_content.py takes it as a
+# parameter: `Path(__file__).resolve().parent` is right HERE and silently wrong anywhere
+# under lib/ (it yields lib/, which holds no docs/ or data/), and it fails by finding
+# nothing rather than by raising. server.py is the only module that legitimately knows
+# where it lives, so it says so once, here.
 appstate.configure(
-    kick_scan=_kick_scan,
+    kick_scan=scan.kick_scan,
     invalidate_song_caches=_invalidate_song_caches,
     stat_for_cache=_stat_for_cache,
-    scan_status=lambda: _scan_status,
+    scan_status=scan.status,
+    server_root=_feedBack_server_root(),
 )
 
 

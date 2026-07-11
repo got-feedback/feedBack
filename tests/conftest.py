@@ -136,3 +136,34 @@ def reset_plugin_state(monkeypatch):
         sys.modules.update(saved_modules)
         sys.modules.update(saved_bare)
         sys.path[:] = saved_path
+
+
+# ── Scanner isolation ───────────────────────────────────────────────────────────
+#
+# lib/scan.py holds MODULE-LEVEL state (_scan_status, and the kick/runner bookkeeping),
+# and `scan` is NOT re-imported by the fixtures that re-import `server` — so unlike the
+# old server-globals arrangement, that state now outlives a test.
+#
+# It matters because of a deliberate asymmetry in the scanner: background_scan() never
+# sets `running` back to False. Ownership of that flag lives in _scan_runner, so that a
+# kick_scan() racing the terminal write cannot see a stale False and start a second runner.
+# Correct in production — but a test that calls background_scan() DIRECTLY skips the runner
+# entirely and therefore leaves the scanner marked "running" forever. Every later scan or
+# rescan then returns "already in progress" and quietly does nothing.
+#
+# The suite passed anyway, on ordering luck. Codex [P2] caught it. So: snapshot and restore.
+@pytest.fixture()
+def reset_scan_state():
+    """Restore lib/scan.py's module-level state around a test that drives it directly."""
+    import scan
+
+    saved_status = scan._scan_status
+    saved_thread = scan._scan_thread
+    saved_pending = scan._scan_rescan_pending
+    scan._scan_status = dict(scan._SCAN_STATUS_INIT)
+    try:
+        yield scan
+    finally:
+        scan._scan_status = saved_status
+        scan._scan_thread = saved_thread
+        scan._scan_rescan_pending = saved_pending

@@ -117,6 +117,16 @@ invalidate_song_caches = None
 stat_for_cache = None
 scan_status = None
 
+# The directory containing server.py: the repo root in dev, resources/feedBack when
+# bundled — the tree that actually holds docs/ and data/.
+#
+# It is published HERE, by server.py, precisely so no module under lib/ ever computes it.
+# `Path(__file__).resolve().parent` is correct in server.py and silently WRONG anywhere in
+# lib/ (it yields lib/, which has no docs/ or data/), and it fails by finding nothing
+# rather than by raising — the builtin-content seeds would just quietly never run. See
+# lib/builtin_content.py's header. Read it; never re-derive it.
+server_root = None
+
 _SLOTS = frozenset({
     "meta_db", "audio_effect_mappings", "tuning_providers",
     "library_providers", "local_library_provider",
@@ -127,6 +137,7 @@ _SLOTS = frozenset({
     "art_cache_dir", "song_pack_art_exists", "art_override_paths", "art_safe_name",
     "default_settings",
     "kick_scan", "invalidate_song_caches", "stat_for_cache", "scan_status",
+    "server_root",
 })
 
 

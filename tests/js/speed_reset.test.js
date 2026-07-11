@@ -143,7 +143,10 @@ function loadPlaySong(sandbox) {
         : '';
     const code = `
         var artAbortController = null;
-        var isPlaying = true;
+        // isPlaying moved onto the shared player-state container so a carved module can
+        // WRITE it (an imported binding is read-only). NB window.feedBack.isPlaying — the
+        // public mirror stubbed above — is a different thing and is unchanged.
+        var S = { isPlaying: true, lastAudioTime: 0 };
         var currentFilename = null;
         var _playerOriginScreen = null;
         var _pendingAutostart = false;

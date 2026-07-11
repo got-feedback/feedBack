@@ -84,7 +84,11 @@ function makeSandbox({ isAudioRunning, loadBackingTrack, outputType = 'Windows A
             json: () => Promise.resolve({ path: '/local/song.ogg' }),
         }),
         document: { hidden: false },
-        isPlaying: true,
+        // `isPlaying` moved onto the shared player-state container so a carved module
+        // can WRITE it (an imported binding is read-only). The sliced code now reads and
+        // writes S.isPlaying, so the sandbox provides the same container — the
+        // assertions below are unchanged.
+        S: { isPlaying: true, lastAudioTime: 0 },
         audio,
         jucePlayer,
         __calls: calls,

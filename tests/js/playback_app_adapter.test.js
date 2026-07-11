@@ -84,5 +84,8 @@ test('playback adapter suppresses duplicate HTML5 pause events before emitting c
     const src = fs.readFileSync(APP_JS, 'utf8');
     const fn = extractFunction(src, 'function _installPlaybackTransportAdapter()');
 
-    assert.match(fn, /if \(!window\._juceMode && wasPlaying\) \{\s*isPlaying = false;\s*window\.feedBack\.isPlaying = false;\s*audio\.pause\(\);\s*_markPlaybackPaused\(\);\s*\}/);
+    // isPlaying moved onto the shared player-state container so a carved module can
+    // WRITE it (an imported binding is read-only). window.feedBack.isPlaying — the
+    // public mirror — is unchanged.
+    assert.match(fn, /if \(!window\._juceMode && wasPlaying\) \{\s*S\.isPlaying = false;\s*window\.feedBack\.isPlaying = false;\s*audio\.pause\(\);\s*_markPlaybackPaused\(\);\s*\}/);
 });

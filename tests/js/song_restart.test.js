@@ -19,7 +19,9 @@ function buildSandbox({ loopA = null, loopB = null, isPlaying = false } = {}) {
     const sandbox = {
         loopA,
         loopB,
-        isPlaying,
+        // isPlaying moved onto the shared player-state container so a carved module can
+        // WRITE it (an imported binding is read-only). Same value, same assertions.
+        S: { isPlaying, lastAudioTime: 0 },
         __cancelCountInCalls: 0,
         __seekCalls: [],
         __startCountInCalls: [],
@@ -42,7 +44,7 @@ function buildSandbox({ loopA = null, loopB = null, isPlaying = false } = {}) {
         },
         __togglePlay() {
             sandbox.__togglePlayCalls++;
-            sandbox.isPlaying = true;
+            sandbox.S.isPlaying = true;
             return Promise.resolve();
         },
     };
@@ -53,7 +55,7 @@ function buildSandbox({ loopA = null, loopB = null, isPlaying = false } = {}) {
 function loadRestart(sandbox, src, { audioSeekImpl } = {}) {
     const restartSrc = extractFunction(src, 'async function restartCurrentSong(');
     const code = `
-        var isPlaying = ${sandbox.isPlaying};
+        var S = { isPlaying: ${sandbox.S.isPlaying}, lastAudioTime: 0 };
         function _cancelCountIn() { __cancelCountInCalls++; }
         async function _audioSeek(s, reason) {
             return (${audioSeekImpl || '__audioSeek'})(s, reason);

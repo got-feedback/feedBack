@@ -55,8 +55,10 @@ function buildSandbox() {
         loopA: 10,
         loopB: 20,
         _countingIn: false,
-        isPlaying: false,
-        lastAudioTime: 0,
+        // isPlaying / lastAudioTime moved onto the shared player-state container
+        // (static/js/player-state.js) so a carved module can WRITE them — an imported
+        // binding is read-only. Same values, same assertions, one indirection.
+        S: { isPlaying: false, lastAudioTime: 0 },
 
         // Browser-ish globals.
         performance: { now: () => Date.now() },
@@ -135,8 +137,7 @@ test('loop:restart fires once when wrap path runs', async () => {
         var _countInGen = 0;
         var _countInTimer = null;
         var _countInRaf = 0;
-        var isPlaying = false;
-        var lastAudioTime = 0;
+        var S = { isPlaying: false, lastAudioTime: 0 };
         ${startCountInSrc}
         globalThis.__startCountIn = startCountIn;
     `;
@@ -180,8 +181,7 @@ test('loop:restart aborts when seek lands far from loopA (JUCE rollback)', async
         var _countInGen = 0;
         var _countInTimer = null;
         var _countInRaf = 0;
-        var isPlaying = false;
-        var lastAudioTime = 0;
+        var S = { isPlaying: false, lastAudioTime: 0 };
         ${startCountInSrc}
         globalThis.__startCountIn = startCountIn;
         globalThis.__getCountingIn = () => _countingIn;

@@ -29,8 +29,11 @@ async function runTogglePlayRejecting({ rerouteInProgress }) {
     const buttonStates = [];
     const sandbox = {
         console: { log() {}, warn() {}, error() {} },
-        // not-playing -> togglePlay takes the HTML5 play branch
-        isPlaying: false,
+        // not-playing -> togglePlay takes the HTML5 play branch.
+        // isPlaying / lastAudioTime moved onto the shared player-state container
+        // (static/js/player-state.js) so a carved module can WRITE them — an imported
+        // binding is read-only. Same values, same assertions, one indirection.
+        S: { isPlaying: false, lastAudioTime: 0 },
         _audioSeekGen: 0,
         _playAttemptGen: 0,
         setPlayButtonState(v) { buttonStates.push(v); },
@@ -51,7 +54,7 @@ async function runTogglePlayRejecting({ rerouteInProgress }) {
     vm.createContext(sandbox);
     vm.runInContext(TOGGLE_PLAY_SRC, sandbox, { filename: 'app.js#togglePlay' });
     await vm.runInContext('togglePlay()', sandbox);
-    return { buttonStates, isPlaying: sandbox.isPlaying };
+    return { buttonStates, isPlaying: sandbox.S.isPlaying };
 }
 
 test('reroute-aborted play() leaves the button on Pause (isPlaying stays true)', async () => {

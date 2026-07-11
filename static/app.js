@@ -40,6 +40,7 @@ import {
     importSettings,
 } from './js/settings-io.js';
 import { audio } from './js/audio-el.js';
+import { S } from './js/player-state.js';
 import {
     _loopMutationGen,
     clearLoop,
@@ -1042,7 +1043,7 @@ async function showScreen(id) {
     if (id !== 'player') {
         const audio = document.getElementById('audio');
         const stopTime = _audioTime();
-        const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || isPlaying;
+        const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || S.isPlaying;
         // Snapshot where we were so leaving the player — especially by accident
         // — is recoverable instead of dumping the user back at bar 1 next time.
         // Must run BEFORE highway.stop()/audio unload, while getSongInfo() and
@@ -1063,7 +1064,7 @@ async function showScreen(id) {
             // to 0, then emit AFTER stop completes. Mirrors the HTML5
             // pause contract via _songEventPayload (audioT/chartT/perfNow).
             const payload = _songEventPayload();
-            const wasPlaying = isPlaying;
+            const wasPlaying = S.isPlaying;
             await jucePlayer.stop().catch(() => {});
             if (wasPlaying && window.feedBack) {
                 window.feedBack.isPlaying = false;
@@ -1078,7 +1079,7 @@ async function showScreen(id) {
         window._currentSongAudio = null;
         // Reloading any song later should get a fresh JUCE routing attempt.
         window._clearJuceRerouteMemo?.();
-        isPlaying = false;
+        S.isPlaying = false;
         setPlayButtonState(false);
     }
     window.scrollTo(0, 0);
@@ -3463,7 +3464,6 @@ function retuneSong(filename, title, tuning, target) {
 // `audio` now lives in ./js/audio-el.js so carved-out modules can reach the
 // player without importing app.js back (which would close a cycle). Same
 // element, same handle, same lookup — just imported instead of declared here.
-let isPlaying = false;
 let _lastSongPositionEventAt = 0;
 
 function _emitSongPositionChanged(time, duration) {
@@ -3710,7 +3710,7 @@ window.addEventListener('unhandledrejection', (e) => {
     // (a transient transport-start failure throws instead — also not memoised.)
     async function _switchHtml5ToJuce(songAudio) {
         const url = songAudio.url;
-        const wasPlaying = isPlaying;
+        const wasPlaying = S.isPlaying;
         const pos = audio.currentTime || 0;
         window.feedBack?.playback?.recordRouteChange?.({
             routeKind: 'desktop-native',
@@ -3746,7 +3746,7 @@ window.addEventListener('unhandledrejection', (e) => {
                 // flow audio.src is intact here, but a prior HTML5→JUCE switch
                 // clears it — re-point + load before resuming so a bounced
                 // reroute doesn't try to play() an empty element.
-                if (isPlaying && !_isStale(songAudio)) {
+                if (S.isPlaying && !_isStale(songAudio)) {
                     if (!audio.src) { audio.src = url; audio.load(); }
                     try { await audio.play(); } catch (_) { /* ignore */ }
                 }
@@ -3775,10 +3775,10 @@ window.addEventListener('unhandledrejection', (e) => {
             // during the multi-await fetch/IPC chain above. Starting the JUCE
             // transport off a stale `wasPlaying` snapshot would resume a song
             // the user just paused. Only start it if playback is still wanted.
-            if (isPlaying) {
+            if (S.isPlaying) {
                 const started = await jucePlayer.play();
                 if (started === false) {
-                    if (!_isStale(songAudio) && isPlaying) {
+                    if (!_isStale(songAudio) && S.isPlaying) {
                         try { await audio.play(); } catch (_) { /* ignore */ }
                     }
                     throw new Error('jucePlayer.play() failed (transient transport start)');
@@ -3818,7 +3818,7 @@ window.addEventListener('unhandledrejection', (e) => {
             // previously playing song isn't left silently paused, then re-throw
             // so the caller logs it. The caller does NOT memoise this URL —
             // transient failures must retry on the next poll.
-            if (isPlaying && !window._juceMode && !_isStale(songAudio)) {
+            if (S.isPlaying && !window._juceMode && !_isStale(songAudio)) {
                 if (!audio.src) { audio.src = url; audio.load(); }
                 try { await audio.play(); } catch (_) { /* ignore */ }
             }
@@ -3846,7 +3846,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
     async function _switchJuceToHtml5(songAudio) {
         const url = songAudio.url;
-        const wasPlaying = isPlaying;
+        const wasPlaying = S.isPlaying;
         const pos = (window.jucePlayer ? jucePlayer.currentTime : 0) || 0;
         window.feedBack?.playback?.recordRouteChange?.({
             routeKind: 'browser-media',
@@ -3893,7 +3893,7 @@ window.addEventListener('unhandledrejection', (e) => {
                     // Re-read isPlaying (not the entry snapshot): the user may
                     // have pressed Pause during jucePlayer.pause()/metadata
                     // load — don't resume a song they just paused.
-                    if (isPlaying) {
+                    if (S.isPlaying) {
                         audio.play().catch(() => { /* ignore */ });
                     }
                 } finally {
@@ -4458,7 +4458,7 @@ let _resetJuceAudioShimChain = function () {};
                 if (!forUpcomingPlay) {
                     await jucePlayer.pause();
                     if (gen !== _juceShimGen) return;
-                    isPlaying = false;
+                    S.isPlaying = false;
                     setPlayButtonState(false);
                     const sm = window.feedBack;
                     if (sm) {
@@ -4474,7 +4474,7 @@ let _resetJuceAudioShimChain = function () {};
             enqueue(async (gen) => {
                 await jucePlayer.pause();
                 if (gen !== _juceShimGen) return;
-                isPlaying = false;
+                S.isPlaying = false;
                 setPlayButtonState(false);
                 const sm = window.feedBack;
                 if (sm) {
@@ -4532,7 +4532,7 @@ let _resetJuceAudioShimChain = function () {};
 
     Object.defineProperty(audio, 'paused', {
         get() {
-            if (window._juceMode) return !isPlaying;
+            if (window._juceMode) return !S.isPlaying;
             return pausedDesc.get.call(this);
         },
         configurable: true,
@@ -4554,7 +4554,7 @@ let _resetJuceAudioShimChain = function () {};
             const p = enqueue(async (gen) => {
                 const started = await jucePlayer.play();
                 if (gen !== _juceShimGen || !started) return;
-                isPlaying = true;
+                S.isPlaying = true;
                 setPlayButtonState(true);
                 const sm = window.feedBack;
                 if (sm) {
@@ -4588,7 +4588,7 @@ function _songEventPayload() {
 }
 
 function _markPlaybackPaused() {
-    isPlaying = false;
+    S.isPlaying = false;
     setPlayButtonState(false);
     if (window.feedBack) {
         window.feedBack.isPlaying = false;
@@ -4597,7 +4597,7 @@ function _markPlaybackPaused() {
 }
 
 function _markPlaybackResumed() {
-    isPlaying = true;
+    S.isPlaying = true;
     setPlayButtonState(true);
     if (window.feedBack) {
         window.feedBack.isPlaying = true;
@@ -4688,7 +4688,7 @@ async function _audioSeek(s, reason) {
         // Sync the jump-fix tracker so the next 60Hz tick doesn't see a
         // legitimate far seek (e.g. saved-loop jump > 30s) as a browser
         // bug and revert it.
-        lastAudioTime = to;
+        S.lastAudioTime = to;
         // Sync the chart clock too so any song:* emit fired right after
         // _audioSeek resolves (e.g. the auto-resume song:play in
         // changeArrangement) sees an in-sync chartT via _songEventPayload.
@@ -4814,7 +4814,7 @@ function _currentPlaybackSnapshot() {
         chartTime: (typeof highway !== 'undefined' && highway && typeof highway.getTime === 'function') ? highway.getTime() : null,
         duration: Number.isFinite(_audioDuration()) ? _audioDuration() : (song && song.duration) || null,
         playbackRate: window._juceMode ? (window.jucePlayer && window.jucePlayer._speed || 1) : audio.playbackRate,
-        isPlaying,
+        isPlaying: S.isPlaying,
         readiness: song ? 'ready' : 'idle',
         routeKind: window._juceMode ? 'desktop-native' : 'browser-media',
         routeState: song || audio.src || window._juceAudioUrl ? 'active' : 'unavailable',
@@ -4867,9 +4867,9 @@ function _installPlaybackTransportAdapter() {
             return _currentPlaybackSnapshot();
         },
         async pause() {
-            const wasPlaying = isPlaying;
+            const wasPlaying = S.isPlaying;
             if (!window._juceMode && wasPlaying) {
-                isPlaying = false;
+                S.isPlaying = false;
                 window.feedBack.isPlaying = false;
                 audio.pause();
                 _markPlaybackPaused();
@@ -4877,7 +4877,7 @@ function _installPlaybackTransportAdapter() {
                 if (window._juceMode) await jucePlayer.pause();
                 else audio.pause();
                 if (wasPlaying) _markPlaybackPaused();
-                else { isPlaying = false; window.feedBack.isPlaying = false; setPlayButtonState(false); }
+                else { S.isPlaying = false; window.feedBack.isPlaying = false; setPlayButtonState(false); }
             }
             return _currentPlaybackSnapshot();
         },
@@ -4888,7 +4888,7 @@ function _installPlaybackTransportAdapter() {
                 _markPlaybackResumed();
             } else {
                 await audio.play();
-                isPlaying = true;
+                S.isPlaying = true;
                 window.feedBack.isPlaying = true;
                 setPlayButtonState(true);
             }
@@ -4896,11 +4896,11 @@ function _installPlaybackTransportAdapter() {
         },
         async stop() {
             const stopTime = _audioTime();
-            const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || isPlaying;
-            const wasPlaying = isPlaying;
+            const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || S.isPlaying;
+            const wasPlaying = S.isPlaying;
             if (window._juceMode) await jucePlayer.stop().catch(() => {});
             if (!window._juceMode && wasPlaying) {
-                isPlaying = false;
+                S.isPlaying = false;
                 window.feedBack.isPlaying = false;
                 audio.pause();
                 _markPlaybackPaused();
@@ -4911,7 +4911,7 @@ function _installPlaybackTransportAdapter() {
                 // spurious) song:pause.
                 if (!window._juceMode) audio.pause();
                 if (wasPlaying) _markPlaybackPaused();
-                else { isPlaying = false; window.feedBack.isPlaying = false; setPlayButtonState(false); }
+                else { S.isPlaying = false; window.feedBack.isPlaying = false; setPlayButtonState(false); }
             }
             if (hadPlayableSong) _emitPlaybackStopped(stopTime);
             return _currentPlaybackSnapshot();
@@ -4977,7 +4977,7 @@ audio.addEventListener('pause', () => {
     // The JUCE engine-reroute watcher pauses the element on purpose mid-migration
     // (and the src='' it does fires a trailing async pause too); don't flag those
     // as unexpected — the watcher holds window._juceRerouteInProgress across it.
-    if (isPlaying && !window._juceRerouteInProgress) {
+    if (S.isPlaying && !window._juceRerouteInProgress) {
         console.log('Audio paused unexpectedly at', audio.currentTime.toFixed(1));
     }
 });
@@ -4989,7 +4989,7 @@ audio.addEventListener('error', (e) => {
 audio.addEventListener('stalled', () => console.log('Audio stalled at', audio.currentTime.toFixed(1)));
 audio.addEventListener('waiting', () => console.log('Audio waiting/buffering at', audio.currentTime.toFixed(1)));
 audio.addEventListener('ended', () => {
-    console.log('Audio ended'); isPlaying = false;
+    console.log('Audio ended'); S.isPlaying = false;
     setPlayButtonState(false);
     window.feedBack.isPlaying = false;
     window.feedBack.emit('song:ended', _songEventPayload());
@@ -5008,7 +5008,7 @@ audio.addEventListener('play', () => {
     window.feedBack.emit('song:resume', payload);
 });
 audio.addEventListener('pause', () => {
-    if (!isPlaying) return;
+    if (!S.isPlaying) return;
     // Same as above: suppress the song:pause emitted by a reroute's deliberate
     // audio.pause() — the migration is transparent to plugin play-state.
     if (window._juceRerouteInProgress) return;
@@ -5301,7 +5301,7 @@ window.feedBack.holdAutoplay = function () {
 window.feedBack.on('song:ready', () => {
     if (!_pendingAutostart) return;
     _pendingAutostart = false;
-    if (isPlaying) return;
+    if (S.isPlaying) return;
     // Feedpak contributor credits: only real feedpak plays carry authors
     // (loose/archive and minigames get []), so a non-empty list is the gate.
     // Shown over the highway and dismissed the moment real playback begins
@@ -5327,13 +5327,13 @@ window.feedBack.on('song:ready', () => {
     // can't double-toggle, and so a stale (released-after-leaving) start never
     // begins playback off the player.
     const start = () => {
-        if (isPlaying) return;
+        if (S.isPlaying) return;
         if (!document.getElementById('player')?.classList.contains('active')) { hideSongCreditsOverlay(); return; }
         if (_countdownBeforeSongEnabled()) {
             Promise.resolve(startSongCountIn()).catch((err) => console.warn('[app] song count-in failed:', err));
         } else {
             Promise.resolve(togglePlay())
-                .then(() => { if (!isPlaying) hideSongCreditsOverlay(); })
+                .then(() => { if (!S.isPlaying) hideSongCreditsOverlay(); })
                 .catch((err) => { console.warn('[app] autoplay failed:', err); hideSongCreditsOverlay(); });
         }
     };
@@ -5454,7 +5454,7 @@ window.feedBack.on('song:ready', () => {
         }
     } catch (_) { /* speed restore is best-effort */ }
     Promise.resolve(_audioSeek(Math.max(0, Number(pend.position) || 0), 'session-resume'))
-        .then(() => { if (_autoplayExitEnabled() && !isPlaying) return togglePlay(); })
+        .then(() => { if (_autoplayExitEnabled() && !S.isPlaying) return togglePlay(); })
         .catch((err) => console.warn('[app] resume failed:', err));
 });
 
@@ -5561,7 +5561,7 @@ window.feedBack.on('song:ready', () => {
     window._pendingHighwayLoop = null;
     window._highwayReturnCtx = pend.returnCtx || null;
     Promise.resolve(setLoop(pend.a, pend.b))
-        .then((ok) => { if (ok && !isPlaying) return togglePlay(); })
+        .then((ok) => { if (ok && !S.isPlaying) return togglePlay(); })
         .catch((err) => console.warn('[app] loop-in-3d apply failed:', err));
     _updateEditRegionBtn();
 });
@@ -5678,7 +5678,7 @@ async function playSong(filename, arrangement, options) {
         // Snapshot payload BEFORE stop() resets _pos so audioT/chartT
         // capture the actual paused position.
         const payload = _songEventPayload();
-        const wasPlaying = isPlaying;
+        const wasPlaying = S.isPlaying;
         await jucePlayer.stop().catch(() => {});
         if (wasPlaying && window.feedBack) {
             window.feedBack.isPlaying = false;
@@ -5693,7 +5693,7 @@ async function playSong(filename, arrangement, options) {
     window._currentSongAudio = null;
     // Fresh JUCE routing attempt for whatever song loads next.
     window._clearJuceRerouteMemo?.();
-    isPlaying = false;
+    S.isPlaying = false;
     setPlayButtonState(false);
     _resetPlaybackSpeedForNewSong();
     clearLoop();
@@ -5702,7 +5702,7 @@ async function playSong(filename, arrangement, options) {
     // Reset so the jump-fix (setInterval, ~line 8979) doesn't mistake the new
     // song starting at t=0 for an unexpected seek from the previous song's
     // position. audio.currentTime may not reset synchronously when src is cleared.
-    lastAudioTime = 0;
+    S.lastAudioTime = 0;
 
     currentFilename = filename;
     // A fresh load arms autoplay; a pending auto-exit from the previous
@@ -5756,12 +5756,12 @@ async function changeArrangement(index) {
         // the timer, the song:play listener, and the overlay node.
         hideSongCreditsOverlay();
         window.feedBack.emit('song:arrangement-changed', { filename: currentFilename, arrangement: index });
-        const wasPlaying = isPlaying;
+        const wasPlaying = S.isPlaying;
         const time = _audioTime();
-        if (isPlaying) {
+        if (S.isPlaying) {
             if (window._juceMode) await jucePlayer.pause();
             else audio.pause();
-            isPlaying = false;
+            S.isPlaying = false;
         }
 
         // Audio is paused, but the play button is intentionally left
@@ -5850,13 +5850,13 @@ async function changeArrangement(index) {
                 if (window._juceMode) {
                     const started = await jucePlayer.play();
                     if (started) {
-                        isPlaying = true;
+                        S.isPlaying = true;
                         window.feedBack.isPlaying = true;
                         const payload = _songEventPayload();
                         window.feedBack.emit('song:play', payload);
                         window.feedBack.emit('song:resume', payload);
                     }
-                } else audio.play().then(() => { isPlaying = true; }).catch(() => {});
+                } else audio.play().then(() => { S.isPlaying = true; }).catch(() => {});
             }
             clearBusy();
             clearMyCallback();
@@ -5886,16 +5886,16 @@ let _playAttemptGen = 0;
 
 async function togglePlay() {
     if (window._juceMode) {
-        if (isPlaying) {
+        if (S.isPlaying) {
             await jucePlayer.pause();
-            isPlaying = false;
+            S.isPlaying = false;
             setPlayButtonState(false);
             window.feedBack.isPlaying = false;
             window.feedBack.emit('song:pause', _songEventPayload());
         } else {
             const started = await jucePlayer.play();
             if (!started) return; // startBacking() failed — IPC error already logged
-            isPlaying = true;
+            S.isPlaying = true;
             setPlayButtonState(true);
             window.feedBack.isPlaying = true;
             const payload = _songEventPayload();
@@ -5904,8 +5904,8 @@ async function togglePlay() {
         }
         return;
     }
-    if (isPlaying) {
-        audio.pause(); isPlaying = false;
+    if (S.isPlaying) {
+        audio.pause(); S.isPlaying = false;
         setPlayButtonState(false);
     } else {
         // Flip the UI optimistically before awaiting the play() Promise so
@@ -5920,7 +5920,7 @@ async function togglePlay() {
         //     can't clobber a faster attempt N+1 (Play → Pause → Play).
         const sessionGen = _audioSeekGen;
         const attempt = ++_playAttemptGen;
-        isPlaying = true;
+        S.isPlaying = true;
         setPlayButtonState(true);
         try {
             await audio.play();
@@ -5936,7 +5936,7 @@ async function togglePlay() {
             // "two clicks to pause on the first song after a fresh load" bug.
             if (window._juceRerouteInProgress) return;
             console.error('[app] audio.play() rejected:', err);
-            isPlaying = false;
+            S.isPlaying = false;
             setPlayButtonState(false);
         }
     }
@@ -5978,7 +5978,7 @@ async function restartCurrentSong() {
         await startCountIn({ immediate: true });
         return true;
     }
-    if (!isPlaying) await togglePlay();
+    if (!S.isPlaying) await togglePlay();
     return true;
 }
 window.restartCurrentSong = restartCurrentSong;
@@ -6118,7 +6118,7 @@ function _openExitConfirm() {
     // still live on the player — guarding a teardown/seek/end behind the prompt.
     _cancelCountIn();
     const _resumeGen = _audioSeekGen;
-    const _wasPlaying = isPlaying;
+    const _wasPlaying = S.isPlaying;
     if (_wasPlaying) Promise.resolve(togglePlay()).catch(() => {});
     const overlay = document.createElement('div');
     overlay.id = 'fb-exit-confirm';
@@ -6169,7 +6169,7 @@ function _openExitConfirm() {
         // Stay → resume exactly what we paused, but only if the session is still
         // the same live song on the player (not torn down / ended / seeked away
         // behind the modal). If the user was already paused, leave them paused.
-        if (_wasPlaying && !isPlaying &&
+        if (_wasPlaying && !S.isPlaying &&
             _audioSeekGen === _resumeGen &&
             document.querySelector('.screen.active')?.id === 'player') {
             Promise.resolve(togglePlay()).catch(() => {});
@@ -6760,7 +6760,7 @@ async function startCountIn(opts = {}) {
             _countingIn = false;
             return;
         }
-        lastAudioTime = loopA;
+        S.lastAudioTime = loopA;
         highway.setTime(loopA);
         if (window.feedBack) {
             window.feedBack.emit('loop:restart', { loopA, loopB, time: loopA });
@@ -6810,8 +6810,8 @@ async function startCountIn(opts = {}) {
                     // isPlaying must reflect that and the button + plugin
                     // host must agree.
                     _countingIn = false;
-                    if (isPlaying) {
-                        isPlaying = false;
+                    if (S.isPlaying) {
+                        S.isPlaying = false;
                         setPlayButtonState(false);
                         if (window.feedBack) {
                             window.feedBack.isPlaying = false;
@@ -6826,7 +6826,7 @@ async function startCountIn(opts = {}) {
                 // loopA` because subscribers treat that as the semantic
                 // marker for "new iteration starts at A", not the actual
                 // audio position.
-                lastAudioTime = r.to;
+                S.lastAudioTime = r.to;
                 highway.setTime(r.to);
                 window.feedBack.emit('loop:restart', { loopA, loopB, time: loopA });
                 beginCount();
@@ -6850,7 +6850,7 @@ async function startCountIn(opts = {}) {
                     jucePlayer.play().then((started) => {
                         if (gen !== _countInGen) return; // teardown during play start
                         if (!started) return;
-                        isPlaying = true;
+                        S.isPlaying = true;
                         setPlayButtonState(true);
                         window.feedBack.isPlaying = true;
                         const payload = _songEventPayload();
@@ -6860,7 +6860,7 @@ async function startCountIn(opts = {}) {
                 } else {
                     audio.play().then(() => {
                         if (gen !== _countInGen) return;
-                        isPlaying = true;
+                        S.isPlaying = true;
                         setPlayButtonState(true);
                     }).catch((err) => {
                         if (gen !== _countInGen) return;
@@ -6871,7 +6871,7 @@ async function startCountIn(opts = {}) {
                         // Same rationale as togglePlay: don't claim playback
                         // started if the Promise rejected.
                         console.error('[app] audio.play() rejected after count-in:', err);
-                        isPlaying = false;
+                        S.isPlaying = false;
                         setPlayButtonState(false);
                     });
                 }
@@ -6903,7 +6903,7 @@ async function startSongCountIn() {
         audio.pause();
     }
     if (gen !== _countInGen) return; // teardown during pause
-    const startT = lastAudioTime || 0;
+    const startT = S.lastAudioTime || 0;
     let bpm = highway.getBPM(startT);
     // Pre-chart / malformed-tempo fallback: 4 beats at 120 BPM (500 ms each).
     if (!Number.isFinite(bpm) || bpm <= 0) bpm = 120;
@@ -6929,7 +6929,6 @@ async function startSongCountIn() {
 }
 
 // Time display + highway sync
-let lastAudioTime = 0;
 // hud-time write cache: the 60 Hz tick below used to rewrite textContent
 // (and getElementById) every tick even though the mm:ss display only
 // changes once a second — each write invalidates layout. Write-on-change
@@ -6941,8 +6940,8 @@ setInterval(() => {
     const dur = _audioDuration();
     if (dur && !_countingIn) {
         // JUCE end-of-track: HTML5 fires 'ended'; JUCE needs a manual check
-        if (window._juceMode && isPlaying && ct >= dur) {
-            isPlaying = false;
+        if (window._juceMode && S.isPlaying && ct >= dur) {
+            S.isPlaying = false;
             setPlayButtonState(false);
             window.feedBack.isPlaying = false;
             window.feedBack.emit('song:ended', _songEventPayload());
@@ -6950,19 +6949,19 @@ setInterval(() => {
         }
         // A-B loop: count-in then seek back to A
         else if (loopA !== null && loopB !== null && ct >= loopB) {
-            lastAudioTime = loopB;
+            S.lastAudioTime = loopB;
             startCountIn();
         }
         // Detect and fix audio time jumps (browser seeking bug; skip for JUCE — position is polled)
-        else if (!window._juceMode && isPlaying && Math.abs(ct - lastAudioTime) > 30 && lastAudioTime > 0) {
-            console.warn(`Audio time jumped from ${lastAudioTime.toFixed(1)} to ${ct.toFixed(1)}, resetting`);
-            _audioSeek(lastAudioTime, 'jump-fix');
+        else if (!window._juceMode && S.isPlaying && Math.abs(ct - S.lastAudioTime) > 30 && S.lastAudioTime > 0) {
+            console.warn(`Audio time jumped from ${S.lastAudioTime.toFixed(1)} to ${ct.toFixed(1)}, resetting`);
+            _audioSeek(S.lastAudioTime, 'jump-fix');
             // Treat the corrected position as canonical for the rest of this
             // tick. Otherwise we'd write the stale jumped `ct` into
             // lastAudioTime below and ping-pong on the next tick.
-            ct = lastAudioTime;
+            ct = S.lastAudioTime;
         }
-        lastAudioTime = ct;
+        S.lastAudioTime = ct;
         const hudText = `${formatTime(ct)} / ${formatTime(dur)}`;
         if (hudText !== _hudTimeLast) {
             if (!_hudTimeEl || !_hudTimeEl.isConnected) _hudTimeEl = document.getElementById('hud-time');

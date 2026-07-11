@@ -77,7 +77,10 @@ function loadFunctions(sandbox, src) {
         // _audioSeek now syncs the jump-fix tracker so far seeks don't
         // trigger an immediate revert; declare it here so the sandbox
         // assignment lands on a real binding rather than an implicit global.
-        let lastAudioTime = 0;
+        // lastAudioTime moved onto the shared player-state container
+        // (static/js/player-state.js) so a carved module can WRITE it — an imported
+        // binding is read-only. The sliced code writes S.lastAudioTime now.
+        let S = { isPlaying: false, lastAudioTime: 0 };
         // _audioSeek wraps jucePlayer.seek in a timeout race; pull in the
         // helper + constant. Tests can override jucePlayer.seek to vary
         // behavior; the timeout (2 s) is well above any test setTimeout.

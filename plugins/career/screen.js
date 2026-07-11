@@ -88,7 +88,11 @@
         } else {
             action = '<div class="text-xs text-gray-500">Venue pack coming soon — plays with the standard stage for now</div>';
         }
-        const isActive = !locked && localStorage.getItem(VENUE_OVERRIDE_KEY) === v.id;
+        // Mirror pushCrowdManifest(): an override only counts while the pack
+        // is installed — after a removal the badge must not claim a venue the
+        // crowd layer can't use.
+        const isActive = !locked && v.installed &&
+            localStorage.getItem(VENUE_OVERRIDE_KEY) === v.id;
         return `<div class="rounded-xl border ${locked ? 'border-gray-800 opacity-60' : 'border-gray-700'} bg-dark-700/40 p-4 flex flex-col gap-2">
             <div class="flex items-center justify-between">
                 <div class="font-semibold text-white">${esc(v.name)}${isActive ? ' <span class="text-cyan-400 text-xs">● playing here</span>' : ''}</div>
@@ -172,8 +176,11 @@
             fetch(`${API}/packs/${dlBtn.dataset.careerDownload}/download`, { method: 'POST' })
                 .then(refresh);
         } else if (delBtn) {
+            // Do NOT null _appliedManifestVenue here: pushCrowdManifest()
+            // clears/replaces the crowd manifest precisely by seeing that the
+            // applied venue is no longer among the installed ones.
             fetch(`${API}/packs/${delBtn.dataset.careerDelete}`, { method: 'DELETE' })
-                .then(() => { _appliedManifestVenue = null; refresh(); });
+                .then(refresh);
         } else if (playBtn) {
             try { localStorage.setItem(VENUE_OVERRIDE_KEY, playBtn.dataset.careerPlay); } catch (_) { /* ok */ }
             _appliedManifestVenue = null; // force manifest re-push

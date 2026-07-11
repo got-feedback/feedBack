@@ -233,6 +233,10 @@ def _mb_search_release_groups(query: str, limit: int = 8) -> list[dict]:
 
 
 _ACOUSTID_MAX_UPLOAD_BYTES = 256 * 1024 * 1024  # 256 MB — an uncompressed master
+# Slack for the multipart envelope on the Content-Length pre-parse guard, shared
+# by the AcoustID-identify route (server.py) and the song-upload route
+# (routers/song.py). The real per-file cap is the streaming check downstream.
+_MULTIPART_OVERHEAD_SLACK = 1024 * 1024  # 1 MiB
 
 
 def _fpcalc_bin() -> str | None:

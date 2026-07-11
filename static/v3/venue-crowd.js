@@ -108,6 +108,7 @@
     let _boundToRenderer = false;
     let _pendingLoop = null;    // loop switch deferred by an active stinger
     let _loadingLoop = null;    // loop currently waiting on canplaythrough
+    let _fadingLoop = null;     // loop currently crossfading in (not yet active)
     let _stingerUntilEnded = false;
     let _lastStingerAt = -Infinity;
     let _prevStreak = 0;
@@ -236,7 +237,9 @@
         loadAndPlay(video, _manifest.loops[state], true, (ok) => {
             if (_loadingLoop === state) _loadingLoop = null;
             if (!ok || !_venueActive) return;
+            _fadingLoop = state;
             fadeMixTo(layer === 1 ? 1 : 0, fadeMs, () => {
+                if (_fadingLoop === state) _fadingLoop = null;
                 const old = _videos[_activeLayer];
                 _activeLayer = layer;
                 if (old && !old.paused) old.pause();
@@ -254,11 +257,15 @@
         const layer = idleLayer();
         const video = _videos[layer];
         // The stinger reuses the idle layer's element, cancelling any loop
-        // load still in flight there — requeue that loop for when the
+        // load still in flight there — and idleLayer() is still the fading-in
+        // layer while a crossfade runs (_activeLayer flips on completion), so
+        // a mid-fade loop gets overwritten too. Requeue either for when the
         // stinger ends (the machine already advanced, nothing re-fires it).
-        if (_loadingLoop) {
-            _pendingLoop = _loadingLoop;
+        const interrupted = _loadingLoop || _fadingLoop;
+        if (interrupted) {
+            _pendingLoop = interrupted;
             _loadingLoop = null;
+            _fadingLoop = null;
         }
         // A loop switch deferred (or preempted) by this stinger must play
         // once the stinger is done OR failed — the machine already advanced,
@@ -340,6 +347,7 @@
         _stingerUntilEnded = false;
         _pendingLoop = null;
         _loadingLoop = null;
+        _fadingLoop = null;
         for (const v of _videos) {
             if (v && !v.paused) v.pause();
         }
@@ -373,8 +381,11 @@
         const norm = normalizeManifest(m);
         _manifest = norm;
         if (_venueActive) {
+            // Full stop first even when replacing pack-for-pack: it bumps
+            // _stopGen so an in-flight load from the OLD manifest can't
+            // settle and fade a stale URL in after the new pack starts.
+            stop();
             if (norm) start();
-            else stop();
         }
     }
 

@@ -188,4 +188,4 @@ out of the capability graph.
 - [ ] Dropdowns positioned via `getBoundingClientRect()`, not `#player-controls`.
 - [ ] `#player` overlays keep `z-index` ≤ the chrome layers (transport/HUD 20,
       rail 30, popovers 40).
-- [ ] Verify in **both** `/` (v2) and `/v3`.
+- [ ] Verify at `/` — it and `/v3` serve the same (and only) v3 shell.

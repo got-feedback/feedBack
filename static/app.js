@@ -127,6 +127,7 @@ import {
     toggleSectionPracticePopover,
 } from './js/section-practice.js';
 import { configureHost } from './js/host.js';
+import { formatTime } from './js/format.js';
 // The playback transport. These used to BE app.js — they are imported back now, and the
 // four modules that reached for them through the host seam import them directly instead.
 import {
@@ -4821,7 +4822,6 @@ if (window.feedBack) {
 }
 
 
-function formatTime(s) { return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`; }
 
 
 
@@ -6261,7 +6261,6 @@ async function checkScanAndLoad() {
 // tests/js/host_contract.test.js fails CI if this list and the host.* uses under
 // static/js/ ever drift apart.
 configureHost({
-    formatTime,
     handleSliderInput,
     playSong,
     // count-in is a module now, so section-practice reaches it through the seam too —

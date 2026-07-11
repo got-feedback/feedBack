@@ -20,6 +20,7 @@
 // fails CI if the hooks used here and the hooks app.js wires ever drift apart.
 import { esc, uiPrompt } from './dom.js';
 import { _audioSeek, _audioTime } from './transport.js';
+import { formatTime } from './format.js';
 import { host } from './host.js';
 import {
     _setSectionPracticeMode,
@@ -167,11 +168,11 @@ export function updateLoopUI() {
     const label = document.getElementById('loop-label');
     const hasLoop = loopA !== null && loopB !== null;
     if (hasLoop) {
-        label.textContent = `${host.formatTime(loopA)} → ${host.formatTime(loopB)}`;
+        label.textContent = `${formatTime(loopA)} → ${formatTime(loopB)}`;
         document.getElementById('btn-loop-clear').classList.remove('hidden');
         document.getElementById('btn-loop-save').classList.remove('hidden');
     } else if (loopA !== null) {
-        label.textContent = `${host.formatTime(loopA)} → ?`;
+        label.textContent = `${formatTime(loopA)} → ?`;
         document.getElementById('btn-loop-clear').classList.add('hidden');
         document.getElementById('btn-loop-save').classList.add('hidden');
     } else {
@@ -190,7 +191,7 @@ export async function loadSavedLoops() {
 
     sel.innerHTML = '<option value="">Saved Loops</option>';
     for (const l of loops) {
-        sel.innerHTML += `<option value="${l.id}" data-start="${l.start}" data-end="${l.end}">${esc(l.name)} (${host.formatTime(l.start)}→${host.formatTime(l.end)})</option>`;
+        sel.innerHTML += `<option value="${l.id}" data-start="${l.start}" data-end="${l.end}">${esc(l.name)} (${formatTime(l.start)}→${formatTime(l.end)})</option>`;
     }
     if (loops.length > 0) {
         sel.classList.remove('hidden');

@@ -28,6 +28,7 @@
 import { audio } from './audio-el.js';
 import { esc } from './dom.js';
 import { _audioDuration, _audioTime, audioSeekGen } from './transport.js';
+import { formatTime } from './format.js';
 import { host } from './host.js';
 
 export function _sectionPracticeBarContains(el) {
@@ -902,7 +903,7 @@ export function renderSectionPracticeBar() {
     _showSectionPracticeBar(bar);
     scroll.innerHTML = parents.map((p, i) => {
         const label = _formatSectionPracticeName(p.name);
-        const tip = `${label} (${host.formatTime(p.start)}–${host.formatTime(p.end)})`;
+        const tip = `${label} (${formatTime(p.start)}–${formatTime(p.end)})`;
         const kindClass = _sectionPracticeChipKindClass(p.name, i);
         return `<button type="button" class="section-practice-chip${kindClass}" data-parent-idx="${i}" title="${esc(tip)}" onclick="onSectionParentClick(${i})">${esc(label)}</button>`;
     }).join('');

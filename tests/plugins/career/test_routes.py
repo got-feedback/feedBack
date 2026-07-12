@@ -32,7 +32,7 @@ def test_stars_from_best_accuracy_across_arrangements(client, meta_db):
 
 
 def test_unlock_flags_follow_thresholds(client, meta_db):
-    # 6 stars: bar (0) unlocked, club (15) and arena (40) locked.
+    # 6 stars: bar (0) unlocked, club (50) and arena (150) locked.
     for i in range(2):
         meta_db.add(f"s{i}.feedpak", "guitar", 0.9)  # 3 stars each
     state = client.get("/api/plugins/career/state").json()
@@ -50,6 +50,18 @@ def test_orphaned_stats_do_not_count(client, meta_db):
     state = client.get("/api/plugins/career/state").json()
     assert state["stars_total"] == 3
     assert "gone.feedpak" not in state["stars_per_song"]
+
+
+def test_star_detail_rows_sorted_by_next_star_gap(client, meta_db):
+    meta_db.add("far.feedpak", "guitar", 0.61)    # 1★, 14% from next
+    meta_db.add("close.feedpak", "guitar", 0.84)  # 2★, 1% from next
+    meta_db.add("maxed.feedpak", "guitar", 0.99)  # 3★, maxed
+    detail = client.get("/api/plugins/career/state").json()["star_detail"]
+    assert [r["filename"] for r in detail] == \
+        ["close.feedpak", "far.feedpak", "maxed.feedpak"]
+    close = detail[0]
+    assert close["stars"] == 2 and close["next_star_at"] == 0.85
+    assert detail[2]["next_star_at"] is None
 
 
 def test_no_stats_still_serves_state(client):

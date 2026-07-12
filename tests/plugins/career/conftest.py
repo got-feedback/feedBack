@@ -23,15 +23,16 @@ class FakeMetaDb:
                    filename TEXT, arrangement TEXT, best_accuracy REAL
                )"""
         )
-        self.conn.execute("CREATE TABLE songs (filename TEXT)")
+        self.conn.execute("CREATE TABLE songs (filename TEXT, title TEXT, artist TEXT)")
 
     def add(self, filename, arrangement, best_accuracy, in_library=True):
         self.conn.execute("INSERT INTO song_stats VALUES (?, ?, ?)",
                           (filename, arrangement, best_accuracy))
         if in_library:
             self.conn.execute(
-                "INSERT INTO songs SELECT ? WHERE NOT EXISTS "
-                "(SELECT 1 FROM songs WHERE filename = ?)", (filename, filename))
+                "INSERT INTO songs SELECT ?, ?, ? WHERE NOT EXISTS "
+                "(SELECT 1 FROM songs WHERE filename = ?)",
+                (filename, filename.replace(".feedpak", "").title(), "Test Artist", filename))
         self.conn.commit()
 
 

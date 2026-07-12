@@ -1,5 +1,9 @@
 {
-    "star_accuracy_thresholds": [0.6, 0.75, 0.85],
+    "star_accuracy_thresholds": [
+        0.6,
+        0.75,
+        0.85
+    ],
     "venues": [
         {
             "id": "bar",
@@ -12,14 +16,14 @@
             "id": "club",
             "name": "Velvet Room",
             "description": "A proper club stage. People actually came to hear you.",
-            "star_threshold": 15,
+            "star_threshold": 50,
             "pack": null
         },
         {
             "id": "arena",
             "name": "Feedback Arena",
             "description": "Ten thousand seats. Try not to think about it.",
-            "star_threshold": 40,
+            "star_threshold": 150,
             "pack": null
         }
     ]

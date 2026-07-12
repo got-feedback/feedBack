@@ -13,6 +13,8 @@
 
     const API = '/api/plugins/career';
     const VENUE_OVERRIDE_KEY = 'feedBack-career-venue';
+    const NO_VENUE = '__none__';
+    const PREV_VIZ_KEY = 'feedBack-career-prev-viz';
     const POLL_MS = 2000;
 
     let _state = null;
@@ -46,11 +48,12 @@
         const gen = ++_manifestReqGen;
         const unlocked = state.venues.filter((v) => v.unlocked);
         let venue = null;
-        try {
-            const override = localStorage.getItem(VENUE_OVERRIDE_KEY);
+        let override = null;
+        try { override = localStorage.getItem(VENUE_OVERRIDE_KEY); } catch (_) { /* ok */ }
+        if (override !== NO_VENUE) {
             venue = unlocked.find((v) => v.id === override && v.installed) || null;
-        } catch (_) { /* ok */ }
-        if (!venue) venue = lastOf(unlocked.filter((v) => v.installed));
+            if (!venue) venue = lastOf(unlocked.filter((v) => v.installed));
+        }
         if (!venue) {
             if (_appliedManifestVenue !== null) {
                 _appliedManifestVenue = null;
@@ -82,8 +85,12 @@
             action = `<div class="career-bar-track mb-1" style="height:0.375rem"><div class="career-bar-fill" style="width:${pct}%"></div></div>
                 <div class="text-xs text-gray-400">Downloading… ${pct}%</div>`;
         } else if (v.installed) {
+            const active = localStorage.getItem(VENUE_OVERRIDE_KEY) === v.id;
+            const main = active
+                ? `<button data-career-unselect="1" class="career-btn career-btn-ghost">Leave venue</button>`
+                : `<button data-career-play="${esc(v.id)}" class="career-btn career-btn-primary">Play here</button>`;
             action = `<div class="flex items-center gap-2">
-                <button data-career-play="${esc(v.id)}" class="career-btn career-btn-primary">Play here</button>
+                ${main}
                 <button data-career-delete="${esc(v.id)}" class="career-btn career-btn-ghost">Remove pack</button>
             </div>`;
         } else if (v.has_pack) {
@@ -108,6 +115,43 @@
         </div>`;
     }
 
+    function starGlyphs(n) {
+        let out = '';
+        for (let i = 0; i < 3; i++) {
+            out += `<span class="${i < n ? 'on' : 'off'}">★</span>`;
+        }
+        return out;
+    }
+
+    function renderStars(state) {
+        const list = $('career-star-list');
+        const summary = $('career-star-summary');
+        if (!list || !summary) return;
+        const detail = state.star_detail || [];
+        const tiers = [0, 0, 0, 0];
+        for (const r of detail) tiers[r.stars]++;
+        summary.textContent =
+            `${tiers[3]}× 3★ · ${tiers[2]}× 2★ · ${tiers[1]}× 1★ · ${tiers[0]} unstarred`;
+        if (!detail.length) {
+            list.innerHTML = '<div class="text-xs text-gray-500">Play songs to start collecting stars — 60% accuracy earns the first one.</div>';
+            return;
+        }
+        list.innerHTML = detail.map((r) => {
+            let hint = 'maxed';
+            let close = '';
+            if (r.next_star_at != null) {
+                const gap = Math.max(0, r.next_star_at - r.best_accuracy) * 100;
+                hint = `${gap.toFixed(0)}% to next ★`;
+                if (gap <= 5) close = ' close';
+            }
+            return `<div class="career-star-row">
+                <span class="stars">${starGlyphs(r.stars)}</span>
+                <span class="song">${esc(r.title)}${r.artist ? ` <span class="artist">— ${esc(r.artist)}</span>` : ''}</span>
+                <span class="hint${close}">best ${(r.best_accuracy * 100).toFixed(0)}% · ${hint}</span>
+            </div>`;
+        }).join('');
+    }
+
     function render(state) {
         const host = $('career-venues');
         if (!host) return;
@@ -128,6 +172,7 @@
             label.textContent = 'All venues unlocked — enjoy the arena.';
         }
         host.innerHTML = state.venues.map((v) => venueCardHTML(v, state)).join('');
+        renderStars(state);
     }
 
     function schedulePoll(state) {
@@ -187,8 +232,28 @@
             fetch(`${API}/packs/${delBtn.dataset.careerDelete}`, { method: 'DELETE' })
                 .then(refresh);
         } else if (playBtn) {
-            try { localStorage.setItem(VENUE_OVERRIDE_KEY, playBtn.dataset.careerPlay); } catch (_) { /* ok */ }
+            try {
+                localStorage.setItem(VENUE_OVERRIDE_KEY, playBtn.dataset.careerPlay);
+                // Selecting a venue makes the Venue visualization the default;
+                // remember what the user had so Leave venue can restore it.
+                const cur = localStorage.getItem('vizSelection');
+                if (cur && cur !== 'venue') localStorage.setItem(PREV_VIZ_KEY, cur);
+                localStorage.setItem('vizSelection', 'venue');
+                if (typeof window.setViz === 'function') window.setViz('venue');
+            } catch (_) { /* ok */ }
             _appliedManifestVenue = null; // force manifest re-push
+            refresh();
+        } else if (e.target.closest('[data-career-unselect]')) {
+            try {
+                localStorage.setItem(VENUE_OVERRIDE_KEY, NO_VENUE);
+                const prev = localStorage.getItem(PREV_VIZ_KEY);
+                if (prev) {
+                    localStorage.setItem('vizSelection', prev);
+                    if (typeof window.setViz === 'function') window.setViz(prev);
+                }
+            } catch (_) { /* ok */ }
+            // keep _appliedManifestVenue: pushCrowdManifest clears the crowd
+            // manifest precisely by seeing it is still set with no venue left
             refresh();
         }
     }

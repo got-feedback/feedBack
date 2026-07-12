@@ -41,11 +41,36 @@ import {
     teachingDegreeLabel,
     teachingFingerLabel,
 } from './js/highway-geometry.js';
+import {
+    _noteState,
+    _paintGemGlow,
+    fillTextReadable,
+    fretX,
+} from './js/highway-state-primitives.js';
 
 function createHighway() {
   // R3c: per-instance mutable state in one object, so extracted renderer/ws
   // modules can close over it as a factory arg without cross-panel sharing.
   const hwState = {};
+
+    // ── Stable, hwState-bound views of the carved primitives (R3c) ──────────────
+    //
+    // fretX and _noteState moved to ./js/highway-state-primitives.js and now take hwState as
+    // their first argument — they must, because createHighway() is a FACTORY and a module
+    // cannot import per-instance state without two panels silently sharing it.
+    //
+    // But the RENDERER BUNDLE hands both straight to plugins (b.fretX, b.getNoteState), and
+    // highway_3d calls them EVERY FRAME with the old arity. Handing out the 3-arg versions
+    // would have passed `note` where hwState belongs — no throw, just wrong geometry and wrong
+    // judgment state, inside a plugin, which no core test would ever see.
+    //
+    // So bind hwState ONCE, here, per instance. A per-frame arrow would fix the arity and
+    // reintroduce exactly the per-frame allocation the bundle's stable-reference contract
+    // (feedBack#254) exists to prevent. These are created once and reused forever.
+    //
+    // b.project needs none of this: project() is pure, and its arity never changed.
+    const boundFretX = (fret, scale, w) => fretX(hwState, fret, scale, w);
+    const boundNoteState = (note, chartTime) => _noteState(hwState, note, chartTime);
     
     // Promise chain for serializing async ws.onmessage handlers —
     // reset on each connect() so reconnections start a fresh chain.
@@ -421,14 +446,6 @@ function createHighway() {
         hwState.displayMaxFret += (targetMax - hwState.displayMaxFret) * rate;
     }
 
-    function fretX(fret, scale, w) {
-        const hw = w * 0.52 * scale;
-        const margin = hw * 0.06;
-        const usable = hw * 2 - 2 * margin;
-        const t = fret / Math.max(1, hwState.displayMaxFret);
-        return w / 2 - hw + margin + t * usable;
-    }
-
     /** Map a bend curve [{t, v}] (§6.2.1) to [{x, v}] with x normalized to
      * 0..1 across the curve's time span (0 when the span is degenerate).
      * Pure — drives the 2D bend-shape glyph. */
@@ -460,150 +477,12 @@ function createHighway() {
     }
 
     /** Call while lefty mirror transform is active; keeps glyphs readable. */
-    function fillTextReadable(text, x, y) {
-        // ctx may be null when the 2D context was never acquired
-        // (canvas already locked to WebGL). No-op in that case —
-        // alternatives would be throwing, which breaks plugin hooks
-        // that call this after a context-type mismatch.
-        if (!hwState.canvas || !hwState.ctx) return;
-        const W = hwState.canvas.width;
-        if (!hwState._lefty) {
-            hwState.ctx.fillText(text, x, y);
-            return;
-        }
-        hwState.ctx.save();
-        hwState.ctx.setTransform(1, 0, 0, 1, 0, 0);
-        hwState.ctx.fillText(text, W - x, y);
-        hwState.ctx.restore();
-    }
-
-    // ── Per-note judgment state (feedBack#254) ──────────────────────────
-    // Resolves the registered provider for one chart note. Returns null
-    // when no provider is set, the provider throws, it reports nothing,
-    // or the reported alpha is non-positive. Otherwise a normalized
-    // { state: 'hit'|'active'|'miss', alpha: 0..1, color: string|null }.
-    // 'hit' and 'active' are both "lit" — renderers may treat them the
-    // same; the distinction (struck note vs currently-held sustain) is
-    // there for renderers that want it. The provider owns all timing /
-    // fade — `alpha` is whatever intensity it wants right now.
-    function _noteState(note, chartTime) {
-        if (!hwState._noteStateProvider) return null;
-        let raw;
-        try { raw = hwState._noteStateProvider(note, chartTime); } catch (e) { return null; }
-        if (!raw) return null;
-        const state = typeof raw === 'string' ? raw : raw.state;
-        if (state !== 'hit' && state !== 'active' && state !== 'miss') return null;
-        const alpha = (raw && typeof raw === 'object' && Number.isFinite(raw.alpha))
-            ? Math.max(0, Math.min(1, raw.alpha))
-            : 1;
-        if (alpha <= 0) return null;
-        const color = (raw && typeof raw === 'object' && typeof raw.color === 'string') ? raw.color : null;
-        // Pass through the provider's `live` flag: note_detect tags its
-        // ring-tracking 'active' responses with live:true so a renderer can
-        // treat them as authoritative (extinguish on mute, relight on
-        // re-strike) instead of latching them for the whole chart sustain.
-        // Renderers that don't care simply ignore it.
-        const live = (raw && typeof raw === 'object' && raw.live === true);
-        return { state, alpha, color, live };
-    }
-
     // Stable bundle accessor for the registered provider — see
     // bundle.getNoteStateProvider below. Defined once per createHighway()
     // instance (not module scope — _noteStateProvider is per-instance),
     // so _makeBundle() doesn't reallocate an arrow function per frame
     // (matches getNoteState: _noteState's stable-reference pattern).
     function _getNoteStateProvider() { return hwState._noteStateProvider; }
-
-    // Paints the judgment effect on top of an already-drawn gem at
-    // (cx,cy) with half-extent `r`. `ns` is the normalized state from
-    // _noteState (or null → no-op). A miss → faint red wash. A correct
-    // hit / held sustain → a "sizzle": throbbing additive halo + a
-    // flickering white-hot core + crackling spark lines re-randomised
-    // each frame + (for a fresh struck note that's fading) an expanding
-    // shockwave ring. Intensity scales with `ns.alpha`, so a struck
-    // note flares and dies while a held sustain crackles continuously.
-    // Caller draws the gem normally first, then calls this BEFORE any
-    // glyph so a readable fret number can land on top.
-    function _paintGemGlow(cx, cy, r, stringIdx, ns) {
-        if (!ns || !hwState.ctx) return;
-        hwState.ctx.save();
-        if (ns.state === 'miss') {
-            hwState.ctx.globalAlpha = 0.4 * ns.alpha;
-            hwState.ctx.fillStyle = '#ff2828';
-            hwState.ctx.beginPath();
-            hwState.ctx.arc(cx, cy, r * 1.05, 0, Math.PI * 2);
-            hwState.ctx.fill();
-            hwState.ctx.restore();
-            return;
-        }
-        const col = ns.color || hwState.STRING_BRIGHT[stringIdx] || '#ffffff';
-        const a = ns.alpha;
-        const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-        hwState.ctx.lineCap = 'round';
-
-        // Expanding shockwave — only on a fresh struck-and-fading hit
-        // (alpha decays 1→0). 'active' (held sustain, alpha pinned 1) skips it.
-        if (ns.state === 'hit' && a < 1) {
-            const prog = 1 - a;                       // 0 at strike → 1 at fade-out
-            hwState.ctx.globalCompositeOperation = 'lighter';
-            hwState.ctx.globalAlpha = a * 0.85;
-            hwState.ctx.strokeStyle = col;
-            hwState.ctx.lineWidth = Math.max(1.5, r * 0.26 * a);
-            hwState.ctx.beginPath();
-            hwState.ctx.arc(cx, cy, r * (1.0 + prog * 2.7), 0, Math.PI * 2);
-            hwState.ctx.stroke();
-        }
-
-        // Throbbing halo (≈9 Hz wobble).
-        const pulse = 0.8 + 0.2 * Math.sin(nowMs / 18);
-        const haloR = r * 2.0 * pulse;
-        hwState.ctx.globalCompositeOperation = 'lighter';
-        hwState.ctx.globalAlpha = a;
-        const g = hwState.ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
-        g.addColorStop(0, '#ffffff');
-        g.addColorStop(0.30, col);
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        hwState.ctx.fillStyle = g;
-        hwState.ctx.beginPath();
-        hwState.ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
-        hwState.ctx.fill();
-
-        // Crackle — short bright spark lines flicking out from the gem,
-        // re-randomised every frame so it shimmers.
-        const sparkCount = 6;
-        for (let i = 0; i < sparkCount; i++) {
-            if (Math.random() > 0.55 * a + 0.2) continue;     // intermittent
-            const ang = Math.random() * Math.PI * 2;
-            const inR = r * 0.45;
-            const len = r * (0.7 + Math.random() * 1.6) * (0.5 + 0.5 * a);
-            hwState.ctx.globalAlpha = a * (0.45 + Math.random() * 0.55);
-            hwState.ctx.strokeStyle = Math.random() < 0.5 ? '#ffffff' : col;
-            hwState.ctx.lineWidth = Math.max(1, r * (0.08 + Math.random() * 0.08));
-            hwState.ctx.beginPath();
-            hwState.ctx.moveTo(cx + Math.cos(ang) * inR, cy + Math.sin(ang) * inR);
-            hwState.ctx.lineTo(cx + Math.cos(ang) * (inR + len), cy + Math.sin(ang) * (inR + len));
-            hwState.ctx.stroke();
-        }
-
-        // Flickering white-hot core.
-        hwState.ctx.globalCompositeOperation = 'lighter';
-        hwState.ctx.globalAlpha = a * (0.55 + Math.random() * 0.45);
-        hwState.ctx.fillStyle = '#ffffff';
-        hwState.ctx.beginPath();
-        hwState.ctx.arc(cx, cy, r * (0.30 + Math.random() * 0.14), 0, Math.PI * 2);
-        hwState.ctx.fill();
-
-        // Crisp bright rim.
-        hwState.ctx.globalCompositeOperation = 'source-over';
-        hwState.ctx.globalAlpha = a;
-        hwState.ctx.strokeStyle = col;
-        hwState.ctx.lineWidth = Math.max(2, r * 0.2);
-        hwState.ctx.beginPath();
-        hwState.ctx.arc(cx, cy, r * 0.95, 0, Math.PI * 2);
-        hwState.ctx.stroke();
-
-        hwState.ctx.restore();
-    }
 
     // ── Drawing ──────────────────────────────────────────────────────────
     //
@@ -736,7 +615,7 @@ function createHighway() {
         // that need lefty-aware text should check `bundle.lefty` and
         // apply the mirror transform themselves on their own context.
         b.project = project;
-        b.fretX = fretX;
+        b.fretX = boundFretX;              // stable, hwState-bound — see the factory head
         // Windowed-iteration helpers (stable references): lower-bound
         // binary searches so custom viz don't full-scan chart arrays per
         // frame. lowerBoundT keys on `.t` (notes / chords); lowerBoundTime
@@ -751,7 +630,7 @@ function createHighway() {
         // on an overlay ring. Returns null when no provider is set
         // or it reports nothing for this note; otherwise
         // { state: 'hit'|'active'|'miss', alpha: 0..1, color: string|null }.
-        b.getNoteState = _noteState;   // stable reference
+        b.getNoteState = boundNoteState;   // stable, hwState-bound — see the factory head
         // Lets custom renderers (e.g. highway_3d) tell "is a provider
         // attached" apart from "no provider, getNoteState always
         // returns null" — `getNoteState` always exists on the bundle
@@ -1439,7 +1318,7 @@ function createHighway() {
                 const t = (i / 40) * VISIBLE_SECONDS;
                 const p = project(t);
                 if (!p) continue;
-                const x = fretX(fret, p.scale, W);
+                const x = fretX(hwState, fret, p.scale, W);
                 if (i === 0) hwState.ctx.moveTo(x, p.y * H);
                 else hwState.ctx.lineTo(x, p.y * H);
             }
@@ -1565,14 +1444,14 @@ function createHighway() {
             hwState.ctx.fill();
             // Judgment glow (feedBack#254) — central halo on the bar.
             // _paintGemGlow takes a half-extent; barH is the full bar height.
-            _paintGemGlow(W/2, y, barH * 0.5, string, ns);
+            _paintGemGlow(hwState, W/2, y, barH * 0.5, string, ns);
             // "0" label
             const fontSize = Math.max(8, sz * 0.5) | 0;
             hwState.ctx.fillStyle = '#fff';
             hwState.ctx.font = `bold ${fontSize}px sans-serif`;
             hwState.ctx.textAlign = 'center';
             hwState.ctx.textBaseline = 'middle';
-            fillTextReadable('0', W/2, y);
+            fillTextReadable(hwState, '0', W/2, y);
 
             // Technique labels on open strings — PM, H/P/T, tremolo, and
             // accent markers are all meaningful on fret 0. Bend and slide
@@ -1588,7 +1467,7 @@ function createHighway() {
                     hwState.ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
                     hwState.ctx.textAlign = 'center';
                     hwState.ctx.textBaseline = 'bottom';
-                    fillTextReadable(label, W/2, y - barH/2 - 4);
+                    fillTextReadable(hwState, label, W/2, y - barH/2 - 4);
                 }
                 // PM below
                 if (palmMute) {
@@ -1596,7 +1475,7 @@ function createHighway() {
                     hwState.ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
                     hwState.ctx.textAlign = 'center';
                     hwState.ctx.textBaseline = 'top';
-                    fillTextReadable('PM', W/2, y + barH/2 + 2);
+                    fillTextReadable(hwState, 'PM', W/2, y + barH/2 + 2);
                 }
                 // Tremolo (wavy line above)
                 if (tremolo) {
@@ -1655,7 +1534,7 @@ function createHighway() {
                 hwState.ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
                 hwState.ctx.textAlign = 'center';
                 hwState.ctx.textBaseline = 'top';
-                fillTextReadable('PH', x, y + dh + 2);
+                fillTextReadable(hwState, 'PH', x, y + dh + 2);
             }
         } else {
             // Glow
@@ -1671,7 +1550,7 @@ function createHighway() {
         // Judgment glow (feedBack#254) — additive halo for a correct
         // hit / held sustain, faint red wash for a miss. Drawn before
         // the fret number so the number stays legible on top.
-        _paintGemGlow(x, y, isHarmonic ? half * 1.2 : half, string, ns);
+        _paintGemGlow(hwState, x, y, isHarmonic ? half * 1.2 : half, string, ns);
 
         // Fret number
         const fontSize = Math.max(10, sz * 0.5) | 0;
@@ -1679,7 +1558,7 @@ function createHighway() {
         hwState.ctx.font = `bold ${fontSize}px sans-serif`;
         hwState.ctx.textAlign = 'center';
         hwState.ctx.textBaseline = 'middle';
-        fillTextReadable(String(fret), x, y);
+        fillTextReadable(hwState, String(fret), x, y);
 
         // Bend notation
         if (bend && bend > 0 && sz >= 12) {
@@ -1748,7 +1627,7 @@ function createHighway() {
             hwState.ctx.font = `bold ${Math.max(9, sz * 0.28) | 0}px sans-serif`;
             hwState.ctx.textAlign = 'center';
             hwState.ctx.textBaseline = 'bottom';
-            fillTextReadable(label, x, labelTopY - 2);
+            fillTextReadable(hwState, label, x, labelTopY - 2);
         }
 
         if (sz < 14) return;  // Skip small technique labels
@@ -1764,7 +1643,7 @@ function createHighway() {
             hwState.ctx.font = `bold ${Math.max(8, sz * 0.26) | 0}px sans-serif`;
             hwState.ctx.textAlign = 'left';
             hwState.ctx.textBaseline = 'middle';
-            fillTextReadable(fgLabel, x + half + 2, y + half * 0.5);
+            fillTextReadable(hwState, fgLabel, x + half + 2, y + half * 0.5);
         }
         if (hwState._showTeachingMarks) {
             const sdLabel = teachingDegreeLabel(opts?.sd);
@@ -1773,7 +1652,7 @@ function createHighway() {
                 hwState.ctx.font = `bold ${Math.max(8, sz * 0.26) | 0}px sans-serif`;
                 hwState.ctx.textAlign = 'right';
                 hwState.ctx.textBaseline = 'middle';
-                fillTextReadable(sdLabel, x - half - 2, y + half * 0.5);
+                fillTextReadable(hwState, sdLabel, x - half - 2, y + half * 0.5);
             }
         }
 
@@ -1810,7 +1689,7 @@ function createHighway() {
             hwState.ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
             hwState.ctx.textAlign = 'center';
             hwState.ctx.textBaseline = 'bottom';
-            fillTextReadable(label, x, ly);
+            fillTextReadable(hwState, label, x, ly);
         }
 
         // Palm mute (PM below note)
@@ -1819,7 +1698,7 @@ function createHighway() {
             hwState.ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
             hwState.ctx.textAlign = 'center';
             hwState.ctx.textBaseline = 'top';
-            fillTextReadable('PM', x, y + half + 2);
+            fillTextReadable(hwState, 'PM', x, y + half + 2);
         }
 
         // Tremolo (wavy line above)
@@ -1868,8 +1747,8 @@ function createHighway() {
             const p0 = project(t0), p1 = project(t1);
             if (!p0 || !p1) continue;
 
-            const x0 = fretX(n.f, p0.scale, W);
-            const x1 = fretX(n.f, p1.scale, W);
+            const x0 = fretX(hwState, n.f, p0.scale, W);
+            const x1 = fretX(hwState, n.f, p1.scale, W);
             const sw0 = Math.max(2, 6 * p0.scale);
             const sw1 = Math.max(2, 6 * p1.scale);
 
@@ -1880,7 +1759,7 @@ function createHighway() {
             // (the gem / overlay marks the miss; a red trail would be
             // noisy). Skip the lookup entirely when no provider is set —
             // zero cost in the hot loop for the common case.
-            const ns = hwState._noteStateProvider ? _noteState(n, n.t) : null;
+            const ns = hwState._noteStateProvider ? _noteState(hwState, n, n.t) : null;
             const litTrail = !!(ns && ns.state !== 'miss');
             const y0 = p0.y * H, y1 = p1.y * H;
             if (litTrail) {
@@ -1981,8 +1860,8 @@ function createHighway() {
             }
             if (!p) continue;
 
-            const x = fretX(n.f, p.scale, W);
-            drawNote(W, H, x, p.y * H, p.scale, n.s, n.f, n, hwState._noteStateProvider ? _noteState(n, n.t) : null);
+            const x = fretX(hwState, n.f, p.scale, W);
+            drawNote(W, H, x, p.y * H, p.scale, n.s, n.f, n, hwState._noteStateProvider ? _noteState(hwState, n, n.t) : null);
             drawnNotes.push({
                 t: n.t, s: n.s, f: n.f, bn: n.bn || 0, x, y: p.y * H, scale: p.scale,
                 ch: Number.isInteger(n.ch) ? n.ch : -1,
@@ -2095,7 +1974,7 @@ function createHighway() {
                 hwState.ctx.textBaseline = 'middle';
                 const cpX = (x1 + 2 * midX + x2) / 4;
                 const cpY = (y1 + 2 * midY + y2) / 4;
-                fillTextReadable('U', cpX + sz * 0.3, cpY);
+                fillTextReadable(hwState, 'U', cpX + sz * 0.3, cpY);
             }
         }
     }
@@ -2153,7 +2032,7 @@ function createHighway() {
             if (hasNonZero) {
                 xMin = Infinity; xMax = -Infinity;
                 for (let k = 0; k < nonZeroFrets.length; k++) {
-                    const x = fretX(nonZeroFrets[k], p.scale, W);
+                    const x = fretX(hwState, nonZeroFrets[k], p.scale, W);
                     if (x < xMin) xMin = x;
                     if (x > xMax) xMax = x;
                 }
@@ -2201,12 +2080,12 @@ function createHighway() {
             // Bracket bar above the notes.
             if (hasNonZero || sorted.length >= 2) {
                 const positions = (hasNonZero ? nonZeroNotes : sorted).map((cn, j) => ({
-                    x: fretX(cn.f, p.scale, W),
+                    x: fretX(hwState, cn.f, p.scale, W),
                     y: p.y * H - actualTotalH / 2 + j * actualSpread,
                 }));
                 const barY = positions[0].y - sz * 0.7;
-                const barLeft = hasNonZero ? xMin : fretX(frameLeftFret, p.scale, W);
-                const barRight = hasNonZero ? xMax : fretX(frameRightFret, p.scale, W);
+                const barLeft = hasNonZero ? xMin : fretX(hwState, frameLeftFret, p.scale, W);
+                const barRight = hasNonZero ? xMax : fretX(hwState, frameRightFret, p.scale, W);
 
                 hwState.ctx.fillStyle = REPEAT_BOX_BAR;
                 hwState.ctx.lineWidth = Math.max(3, sz / 4);
@@ -2225,13 +2104,13 @@ function createHighway() {
                 const labelX = hasNonZero
                     ? (xMin + xMax) / 2
                     : (sorted.length >= 2
-                        ? (fretX(frameLeftFret, p.scale, W) + fretX(frameRightFret, p.scale, W)) / 2
-                        : fretX(sorted[0].f, p.scale, W));
+                        ? (fretX(hwState, frameLeftFret, p.scale, W) + fretX(hwState, frameRightFret, p.scale, W)) / 2
+                        : fretX(hwState, sorted[0].f, p.scale, W));
                 hwState.ctx.fillStyle = '#fff';
                 hwState.ctx.font = `bold ${Math.max(14, sz * 0.45) | 0}px sans-serif`;
                 hwState.ctx.textAlign = 'center';
                 hwState.ctx.textBaseline = 'bottom';
-                fillTextReadable(tmpl.name, labelX, labelY);
+                fillTextReadable(hwState, tmpl.name, labelX, labelY);
             }
 
             // Harmony annotations (§6.3.1 / §6.6) — the chord's function
@@ -2246,8 +2125,8 @@ function createHighway() {
                     const hx = hasNonZero
                         ? (xMin + xMax) / 2
                         : (sorted.length >= 2
-                            ? (fretX(frameLeftFret, p.scale, W) + fretX(frameRightFret, p.scale, W)) / 2
-                            : fretX(sorted[0].f, p.scale, W));
+                            ? (fretX(hwState, frameLeftFret, p.scale, W) + fretX(hwState, frameRightFret, p.scale, W)) / 2
+                            : fretX(hwState, sorted[0].f, p.scale, W));
                     // Baseline = just above where the chord name sits.
                     const nameY = hasNonZero
                         ? (p.y * H - actualTotalH / 2 - sz * 0.7 - sz * 0.4)
@@ -2258,22 +2137,22 @@ function createHighway() {
                     let stackY = nameY - sz * 0.5;
                     if (rn) {
                         hwState.ctx.fillStyle = '#ffcc66';   // matches the sd teaching color
-                        fillTextReadable(rn, hx, stackY);
+                        fillTextReadable(hwState, rn, hx, stackY);
                         stackY -= sz * 0.45;
                     }
                     if (voicing) {
                         hwState.ctx.fillStyle = '#7fd1ff';   // matches the fg teaching color
-                        fillTextReadable(voicing, hx, stackY);
+                        fillTextReadable(hwState, voicing, hx, stackY);
                         stackY -= sz * 0.45;
                     }
                     if (caged) {
                         hwState.ctx.fillStyle = '#a0ffa0';   // CAGED shape teaching color
-                        fillTextReadable(caged, hx, stackY);
+                        fillTextReadable(hwState, caged, hx, stackY);
                         stackY -= sz * 0.45;
                     }
                     if (guideTones) {
                         hwState.ctx.fillStyle = '#d0a0ff';   // guide-tone teaching color
-                        fillTextReadable(guideTones, hx, stackY);
+                        fillTextReadable(hwState, guideTones, hx, stackY);
                     }
                 }
             }
@@ -2287,11 +2166,11 @@ function createHighway() {
 
             for (let j = 0; j < sorted.length; j++) {
                 const cn = sorted[j];
-                const x = fretX(cn.f, p.scale, W);
+                const x = fretX(hwState, cn.f, p.scale, W);
                 const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
                 // feedBack#254 — per-string judgment, keyed by the
                 // chord's chart time (matches how note_detect stores it).
-                const cnNs = hwState._noteStateProvider ? _noteState(cn, ch.t) : null;
+                const cnNs = hwState._noteStateProvider ? _noteState(hwState, cn, ch.t) : null;
 
                 // Open-string-in-chord wide bar — only when the note has no
                 // technique flags. Otherwise fall back to drawNote so PM /
@@ -2302,21 +2181,21 @@ function createHighway() {
                     const color = litBar ? (cnNs.color || hwState.STRING_BRIGHT[cn.s] || hwState.STRING_COLORS[cn.s] || '#888') : (hwState.STRING_COLORS[cn.s] || '#888');
                     const dark = litBar ? (hwState.STRING_COLORS[cn.s] || '#666') : (hwState.STRING_DIM[cn.s] || '#222');
                     const barH = sz;
-                    const barLeft = fretX(frameLeftFret, p.scale, W);
-                    const barRight = fretX(frameRightFret, p.scale, W);
+                    const barLeft = fretX(hwState, frameLeftFret, p.scale, W);
+                    const barRight = fretX(hwState, frameRightFret, p.scale, W);
                     hwState.ctx.fillStyle = dark;
                     roundRect(hwState.ctx, barLeft - 1, ny - barH / 2 - 1, barRight - barLeft + 2, barH + 2, 3);
                     hwState.ctx.fill();
                     hwState.ctx.fillStyle = color;
                     roundRect(hwState.ctx, barLeft, ny - barH / 2, barRight - barLeft, barH, 2);
                     hwState.ctx.fill();
-                    _paintGemGlow((barLeft + barRight) / 2, ny, barH * 0.5, cn.s, cnNs);
+                    _paintGemGlow(hwState, (barLeft + barRight) / 2, ny, barH * 0.5, cn.s, cnNs);
                     const fontSize = Math.max(8, sz * 0.5) | 0;
                     hwState.ctx.fillStyle = '#fff';
                     hwState.ctx.font = `bold ${fontSize}px sans-serif`;
                     hwState.ctx.textAlign = 'center';
                     hwState.ctx.textBaseline = 'middle';
-                    fillTextReadable('0', (barLeft + barRight) / 2, ny);
+                    fillTextReadable(hwState, '0', (barLeft + barRight) / 2, ny);
                 } else {
                     drawNote(W, H, x, ny, p.scale, cn.s, cn.f, { ...cn, chord: true }, cnNs);
                 }
@@ -2364,7 +2243,7 @@ function createHighway() {
                     hwState.ctx.textBaseline = 'middle';
                     const cpX = (x1 + 2 * midX + x2) / 4;
                     const cpY = (y1 + 2 * midY + y2) / 4;
-                    fillTextReadable('U', cpX + sz * 0.3, cpY);
+                    fillTextReadable(hwState, 'U', cpX + sz * 0.3, cpY);
                 }
             }
         }
@@ -2383,10 +2262,10 @@ function createHighway() {
 
         for (let fret = lo; fret <= hi; fret++) {
             if (fret < 0) continue;
-            const x = fretX(fret, 1.0, W);
+            const x = fretX(hwState, fret, 1.0, W);
             const inAnchor = fret >= anchor.fret && fret <= anchor.fret + anchor.width;
             hwState.ctx.fillStyle = inAnchor ? '#e8c040' : '#8a6830';
-            fillTextReadable(String(fret), x, y);
+            fillTextReadable(hwState, String(fret), x, y);
         }
     }
 
@@ -2721,8 +2600,8 @@ function createHighway() {
         const yCenter = p.y * H;
         const boxTop = yCenter - actualTotalH / 2 - sz * 0.5;
         const boxBottom = boxTop + Math.max(sz, actualTotalH + sz);
-        const boxX = fretX(baseFret, p.scale, W);
-        const boxW = fretX(baseFret + CHORD_FRAME_FRETS, p.scale, W) - boxX;
+        const boxX = fretX(hwState, baseFret, p.scale, W);
+        const boxW = fretX(hwState, baseFret + CHORD_FRAME_FRETS, p.scale, W) - boxX;
         return { boxX, boxW, boxTop, boxH: boxBottom - boxTop };
     }
 
@@ -2789,13 +2668,13 @@ function createHighway() {
         for (const cn of hwState._chordFretLineNotes) {
             const yi = hwState._inverted ? 5 - cn.s : cn.s;
             const syl = strTop + (yi / 5) * (strBot - strTop);
-            const fretXPos = fretX(cn.f, 1, W);
+            const fretXPos = fretX(hwState, cn.f, 1, W);
             hwState.ctx.fillStyle = hwState.STRING_COLORS[cn.s] || '#888';
             hwState.ctx.beginPath();
             hwState.ctx.arc(fretXPos, syl, noteSize / 2, 0, Math.PI * 2);
             hwState.ctx.fill();
             hwState.ctx.fillStyle = '#fff';
-            fillTextReadable(String(cn.f), fretXPos, syl);
+            fillTextReadable(hwState, String(cn.f), fretXPos, syl);
         }
     }
 
@@ -3896,7 +3775,7 @@ function createHighway() {
             }
         },
         /** Resolve the registered provider for one note (normalized). */
-        getNoteState(note, chartTime) { return _noteState(note, chartTime); },
+        getNoteState(note, chartTime) { return _noteState(hwState, note, chartTime); },
         /**
          * Fire all registered draw hooks on the given 2D context.
          * Custom renderers (e.g. the 3D highway) that maintain their own
@@ -3910,10 +3789,10 @@ function createHighway() {
             }
         },
         project(tOffset) { return project(tOffset); },
-        fretX(fret, scale, w) { return fretX(fret, scale, w); },
+        fretX(fret, scale, w) { return fretX(hwState, fret, scale, w); },
 
         /** Use when drawing text inside the lefty mirror; noop when not lefty. */
-        fillTextUnmirrored(text, x, y) { fillTextReadable(text, x, y); },
+        fillTextUnmirrored(text, x, y) { fillTextReadable(hwState, text, x, y); },
 
         toggleLyrics() {
             hwState.showLyrics = !hwState.showLyrics;

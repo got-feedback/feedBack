@@ -65,23 +65,39 @@ def _installed(venue_id):
 
 
 def _stars():
-    """(total, per-song dict). Accuracy in song_stats is a 0..1 fraction."""
+    """(total, per-song dict, detail rows). Accuracy is a 0..1 fraction."""
     db = _state["meta_db"]
     if db is None:
-        return 0, {}
+        return 0, {}, []
     thresholds = _state["content"]["star_accuracy_thresholds"]
     # Existing-song filter: a scan hides (not deletes) stats of songs removed
     # from the library, so orphaned rows must not keep counting toward stars.
     rows = db.conn.execute(
-        "SELECT filename, MAX(best_accuracy) FROM song_stats "
-        "WHERE filename IN (SELECT filename FROM songs) GROUP BY filename"
+        "SELECT s.filename, MAX(s.best_accuracy), "
+        "       COALESCE(MAX(sg.title), ''), COALESCE(MAX(sg.artist), '') "
+        "FROM song_stats s JOIN songs sg ON sg.filename = s.filename "
+        "GROUP BY s.filename"
     ).fetchall()
     per_song = {}
-    for filename, acc in rows:
-        stars = sum(1 for t in thresholds if (acc or 0.0) >= t)
+    detail = []
+    for filename, acc, title, artist in rows:
+        acc = acc or 0.0
+        stars = sum(1 for t in thresholds if acc >= t)
         if stars:
             per_song[filename] = stars
-    return sum(per_song.values()), per_song
+        next_at = next((t for t in thresholds if acc < t), None)
+        detail.append({
+            "filename": filename,
+            "title": title or filename,
+            "artist": artist,
+            "stars": stars,
+            "best_accuracy": round(acc, 4),
+            "next_star_at": next_at,
+        })
+    # closest-to-next-star first (a practice worklist), maxed songs last
+    detail.sort(key=lambda r: (r["next_star_at"] is None,
+                               (r["next_star_at"] or 1.0) - r["best_accuracy"]))
+    return sum(per_song.values()), per_song, detail
 
 
 def _validate_pack_dir(pack_dir: Path):
@@ -164,7 +180,7 @@ def setup(app, context):
 
     @app.get(f"/api/plugins/{PLUGIN_ID}/state")
     def get_state():
-        stars_total, per_song = _stars()
+        stars_total, per_song, star_detail = _stars()
         venues = []
         for v in _state["content"]["venues"]:
             with _lock:
@@ -182,6 +198,7 @@ def setup(app, context):
         return {
             "stars_total": stars_total,
             "stars_per_song": per_song,
+            "star_detail": star_detail,
             "star_accuracy_thresholds": _state["content"]["star_accuracy_thresholds"],
             "venues": venues,
         }
@@ -194,7 +211,7 @@ def setup(app, context):
         pack = venue.get("pack")
         if not pack:
             raise HTTPException(404, "No pack published for this venue yet.")
-        stars_total, _ = _stars()
+        stars_total, _, _ = _stars()
         if stars_total < venue["star_threshold"]:
             raise HTTPException(403, "Venue not unlocked yet.")
         with _lock:

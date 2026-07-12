@@ -108,6 +108,43 @@
         </div>`;
     }
 
+    function starGlyphs(n) {
+        let out = '';
+        for (let i = 0; i < 3; i++) {
+            out += `<span class="${i < n ? 'on' : 'off'}">★</span>`;
+        }
+        return out;
+    }
+
+    function renderStars(state) {
+        const list = $('career-star-list');
+        const summary = $('career-star-summary');
+        if (!list || !summary) return;
+        const detail = state.star_detail || [];
+        const tiers = [0, 0, 0, 0];
+        for (const r of detail) tiers[r.stars]++;
+        summary.textContent =
+            `${tiers[3]}× 3★ · ${tiers[2]}× 2★ · ${tiers[1]}× 1★ · ${tiers[0]} unstarred`;
+        if (!detail.length) {
+            list.innerHTML = '<div class="text-xs text-gray-500">Play songs to start collecting stars — 60% accuracy earns the first one.</div>';
+            return;
+        }
+        list.innerHTML = detail.map((r) => {
+            let hint = 'maxed';
+            let close = '';
+            if (r.next_star_at != null) {
+                const gap = Math.max(0, r.next_star_at - r.best_accuracy) * 100;
+                hint = `${gap.toFixed(0)}% to next ★`;
+                if (gap <= 5) close = ' close';
+            }
+            return `<div class="career-star-row">
+                <span class="stars">${starGlyphs(r.stars)}</span>
+                <span class="song">${esc(r.title)}${r.artist ? ` <span class="artist">— ${esc(r.artist)}</span>` : ''}</span>
+                <span class="hint${close}">best ${(r.best_accuracy * 100).toFixed(0)}% · ${hint}</span>
+            </div>`;
+        }).join('');
+    }
+
     function render(state) {
         const host = $('career-venues');
         if (!host) return;
@@ -128,6 +165,7 @@
             label.textContent = 'All venues unlocked — enjoy the arena.';
         }
         host.innerHTML = state.venues.map((v) => venueCardHTML(v, state)).join('');
+        renderStars(state);
     }
 
     function schedulePoll(state) {

@@ -3499,7 +3499,14 @@
                             layer.lastVidH = el.videoHeight;
                             layer.applyCoverCrop();
                         }
-                        const opacity = i === 0 ? 1 - _venueCrowdMix : _venueCrowdMix;
+                        // Layer 0 (rear) stays fully opaque whenever any of the
+                        // fade involves it: two half-transparent layers would
+                        // let the static plate behind bleed through (~25% at
+                        // mid-fade). The crossfade is therefore layer 1 (front)
+                        // fading over an opaque layer 0 — in both directions.
+                        const opacity = i === 0
+                            ? (_venueCrowdMix < 0.999 ? 1 : 0)
+                            : _venueCrowdMix;
                         layer.mat.opacity = opacity;
                         layer.mesh.visible = ready && opacity > 0.01;
                         if (layer.mesh.visible) {

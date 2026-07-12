@@ -53,6 +53,11 @@
         let lastSwitchAt = -Infinity;
         return {
             get current() { return current; },
+            reset() {
+                current = "neutral";
+                candidate = null;
+                lastSwitchAt = -Infinity;
+            },
             // Feed the latest perf state; returns the new crowd state when a
             // transition commits, else null.
             update(perfState, nowMs) {
@@ -111,6 +116,10 @@
     let _fadingLoop = null;     // loop currently crossfading in (not yet active)
     let _stingerUntilEnded = false;
     let _stingerGen = 0;        // identity for ended/timeout handlers
+    let _introActive = false;
+    let _introGen = 0;
+    let _audioEl = null;        // crowd ambience during the intro flyover
+    let _audioFadeTimer = 0;
     let _lastStingerAt = -Infinity;
     let _prevStreak = 0;
     let _lastAccuracyPct = null; // from perf events; stats:recorded carries none
@@ -131,7 +140,11 @@
         if (!CROWD_STATES.every((s) => loops[s])) return null;
         const stingers = {};
         for (const k of ['clap', 'cheer']) stingers[k] = abs(m.stingers && m.stingers[k]);
-        return { loops, stingers };
+        const intro = {
+            video: abs(m.intro && m.intro.video),
+            audio: abs(m.intro && m.intro.audio),
+        };
+        return { loops, stingers, intro };
     }
 
     function ensureVideos() {
@@ -211,10 +224,14 @@
         const gen = _stopGen;
         let settled = false;
         const settle = (ok) => {
-            if (settled || token !== video._fbCrowdToken || gen !== _stopGen) return;
+            if (settled) return;
             settled = true;
+            // Cleanup must run even for superseded loads or stale listeners
+            // accumulate on the two persistent elements; only the callback
+            // is gated on still being the current load.
             video.removeEventListener('canplaythrough', onReady);
             video.removeEventListener('error', onError);
+            if (token !== video._fbCrowdToken || gen !== _stopGen) return;
             cb(ok);
         };
         const onReady = () => settle(true);
@@ -269,6 +286,10 @@
         // stinger ends (the machine already advanced, nothing re-fires it).
         const interrupted = _loadingLoop || _fadingLoop;
         if (interrupted) {
+            // Freeze any in-flight crossfade: its ramp would keep pushing the
+            // mix toward this layer while the stinger replaces the src (loop
+            // vanishing / stinger popping in at full opacity).
+            cancelFade();
             _pendingLoop = interrupted;
             _loadingLoop = null;
             _fadingLoop = null;
@@ -309,22 +330,131 @@
         });
     }
 
+    function ensureAudio() {
+        if (_audioEl || typeof document === 'undefined') return;
+        _audioEl = document.createElement('audio');
+        _audioEl.preload = 'auto';
+        _audioEl.style.display = 'none';
+        document.body.appendChild(_audioEl);
+    }
+
+    function fadeAudioOut(durationMs) {
+        if (!_audioEl || _audioEl.paused) return;
+        if (_audioFadeTimer) return; // already fading
+        const from = _audioEl.volume;
+        const t0 = now();
+        _audioFadeTimer = setInterval(() => {
+            const k = Math.min(1, (now() - t0) / durationMs);
+            _audioEl.volume = from * (1 - k);
+            if (k >= 1) {
+                clearInterval(_audioFadeTimer);
+                _audioFadeTimer = 0;
+                _audioEl.pause();
+            }
+        }, 50);
+    }
+
+    function stopAudio() {
+        if (_audioFadeTimer) { clearInterval(_audioFadeTimer); _audioFadeTimer = 0; }
+        if (_audioEl && !_audioEl.paused) _audioEl.pause();
+    }
+
+    // One-shot flyover intro on song load: video flies from the back of the
+    // room onto the stage, crowd ambience plays and ducks out as the song
+    // starts (song:play) or as the flyover lands, whichever comes first.
+    function playIntro() {
+        if (!_manifest || !_manifest.intro || !_manifest.intro.video || !_videos[0]) {
+            return false;
+        }
+        const myGen = ++_introGen;
+        _introActive = true;
+        const layer = idleLayer();
+        const video = _videos[layer];
+        const land = () => {
+            if (_introGen !== myGen || !_introActive) return;
+            _introActive = false;
+            video.removeEventListener('ended', land);
+            fadeAudioOut(1200);
+            const pending = _pendingLoop;
+            _pendingLoop = null;
+            showLoop(pending || machine.current, 400);
+        };
+        loadAndPlay(video, _manifest.intro.video, false, (ok) => {
+            if (_introGen !== myGen) return;
+            if (!ok || !_venueActive) {
+                // Failed intro must not leave the song loop-less: fall back
+                // to the normal loop exactly like the no-intro path.
+                _introActive = false;
+                if (_venueActive) showLoop(machine.current, FADE_MS);
+                return;
+            }
+            fadeMixTo(layer === 1 ? 1 : 0, 300);
+            video.addEventListener('ended', land);
+            setTimeout(land, 15000); // decode-stall safety
+            if (_manifest.intro.audio) {
+                ensureAudio();
+                _audioEl.src = _manifest.intro.audio;
+                _audioEl.volume = 1;
+                // The user's play gesture precedes song:loaded, so autoplay
+                // with sound is normally allowed; degrade silently if not.
+                _audioEl.play().catch(() => { /* no gesture yet */ });
+                // start ducking shortly before the flyover lands
+                video.addEventListener('timeupdate', function duck() {
+                    if (video.duration && video.duration - video.currentTime < 1.5) {
+                        video.removeEventListener('timeupdate', duck);
+                        fadeAudioOut(1400);
+                    }
+                });
+            }
+        });
+        return true;
+    }
+
+    function onSongPlay() {
+        // Song audio starting is the hard cue: the ambience must yield.
+        fadeAudioOut(1000);
+    }
+
     function onPerformanceState(e) {
         if (!_venueActive || !_manifest) return;
         bindVideosToRenderer();
         const d = (e && e.detail) || {};
-        if (Number.isFinite(Number(d.accuracyPct))) _lastAccuracyPct = Number(d.accuracyPct);
+        // Number(null) === 0: HUD reset events (accuracyPct: null) must not
+        // wipe the value the end-of-song stinger reads via stats:recorded.
+        if (d.accuracyPct != null && Number.isFinite(Number(d.accuracyPct))) {
+            _lastAccuracyPct = Number(d.accuracyPct);
+        }
         const streak = Number(d.streak) || 0;
         const sting = stingerForStreak(_prevStreak, streak);
         _prevStreak = streak;
-        if (sting && CROWD_RANK[machine.current] >= CROWD_RANK.neutral) {
+        if (sting && !_introActive && CROWD_RANK[machine.current] >= CROWD_RANK.neutral) {
             playStinger(sting);
         }
         const next = machine.update(d.state, now());
         if (next) {
-            // A stinger owns the idle layer; defer the switch until it ends.
-            if (_stingerUntilEnded) _pendingLoop = next;
+            // A stinger or the intro owns the idle layer; defer the switch.
+            if (_stingerUntilEnded || _introActive) _pendingLoop = next;
             else showLoop(next, FADE_MS);
+        }
+    }
+
+    function onSongLoaded() {
+        machine.reset();
+        _prevStreak = 0;
+        _lastAccuracyPct = null;
+        // Abort any stinger/pending state from the previous song: its ended
+        // handler must not fade back into the old song's layers.
+        cancelFade();
+        _stingerGen++;
+        _introGen++;
+        _stingerUntilEnded = false;
+        _introActive = false;
+        stopAudio();
+        _pendingLoop = null;
+        _loadingLoop = null;
+        _fadingLoop = null;
+        if (_venueActive && _manifest) {
+            if (!playIntro()) showLoop(machine.current, FADE_MS);
         }
     }
 
@@ -356,6 +486,9 @@
         cancelFade();
         _stopGen++;
         _stingerGen++;
+        _introGen++;
+        _introActive = false;
+        stopAudio();
         _stingerUntilEnded = false;
         _pendingLoop = null;
         _loadingLoop = null;
@@ -373,6 +506,10 @@
             setVideo(1, null);
         }
         _boundToRenderer = false;
+        // Mix and active layer must reset together: mix 0 shows layer 0, so a
+        // restart that left _activeLayer at 1 would flash layer 0's stale
+        // frame until the new loop loads.
+        _activeLayer = 0;
         setMix(0);
     }
 
@@ -418,6 +555,10 @@
         if (sm && typeof sm.on === 'function') {
             sm.on('v3:live-performance-state', onPerformanceState);
             sm.on('stats:recorded', onStatsRecorded);
+            // A new song must not inherit the previous song's crowd mood
+            // through the hysteresis/dwell window.
+            sm.on('song:loaded', onSongLoaded);
+            sm.on('song:play', onSongPlay);
         }
         const dev = readDevManifest();
         if (dev && !_manifest) setManifest(dev);
@@ -431,6 +572,7 @@
             activeLayer: _activeLayer,
             mix: _mix,
             stingerActive: _stingerUntilEnded,
+            introActive: _introActive,
         };
     }
 

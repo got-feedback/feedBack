@@ -105,6 +105,45 @@ export let _settingsOriginScreen = 'home';
 
 // ── Screen Navigation ─────────────────────────────────────────────────────
 export async function showScreen(id) {
+    // ── 'home' is the LEGACY library screen. Always route it to the v3 Songs list. ──
+    //
+    // The v3 shell replaced #home with #v3-songs. That mapping DID exist — but only inside
+    // wrappers on `window.showScreen`, and only for callers that go through `window`:
+    //
+    //     app.js publishes the raw fn  ->  shell.js wraps it (adding the mapping)
+    //                                  ->  the stems plugin wraps it AGAIN, capturing whatever
+    //                                      happened to be there at the time
+    //
+    // Two ways that fails, and testers hit both:
+    //
+    //   1. ORDER. Three independent parties monkey-patch window.showScreen, each capturing the
+    //      current value. Plugins load ASYNCHRONOUSLY, so the chain links up in whatever order
+    //      the race settles — and any capture taken before shell.js installs, or any
+    //      re-assignment after it, silently drops the mapping.
+    //
+    //   2. THE INTERNAL CALLERS NEVER TOUCHED window.showScreen AT ALL. closeCurrentSong and the
+    //      Esc-from-settings shortcut call the IMPORTED showScreen directly, so no wrapper ever
+    //      sees them. Verified in a browser: the unwrapped function with 'home' lands on the dead
+    //      legacy screen every single time.
+    //
+    // Hence "randomly, when moving to the library from another menu option" — and "never when a
+    // song ends", because closeCurrentSong resolves its target through _resolvePlayerOrigin(),
+    // which already applies this mapping.
+    //
+    // So it lives HERE now: ONE guard in the function every caller routes through, rather than a
+    // chain of monkey-patches that must each remember.
+    //
+    // ONLY 'home'. NOT 'v3-home'. _resolvePlayerOrigin() maps BOTH — correctly, because it
+    // computes where to RETURN TO after a song, and coming back to the Songs list from the
+    // dashboard is the right behaviour. Copying that condition here was a [P1] (Codex caught it):
+    // #v3-home is the v3 DASHBOARD, a real screen the shell's Home nav, the onboarding tour and
+    // the dashboard re-render listener all target. Redirecting it would make Home unreachable.
+    //
+    // A legacy alias is not the same thing as a return target.
+    if (id === 'home' && document.getElementById('v3-songs')) {
+        id = 'v3-songs';
+    }
+
     // Capture the previous screen before changing active classes
     const prevScreenId = document.querySelector('.screen.active')?.id;
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));

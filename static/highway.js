@@ -4240,6 +4240,21 @@ function createHighway() {
 }
 const highway = createHighway();
 window.highway = highway; // expose for plugins
+
+// THE FACTORY IS PART OF THE PUBLIC CONTRACT, and a classic script gave it to us for free.
+//
+// A top-level `function createHighway()` in a CLASSIC script implicitly becomes
+// window.createHighway. In a MODULE it does not — module declarations are module-scoped, and
+// the name would silently vanish from the global object the moment this file grew a
+// type="module" attribute. The constitution names window.createHighway as public extension
+// contract (alongside window.playSong / showScreen / feedBack), and plugins that render their
+// own highway panel construct a second instance with it. Nothing in-tree calls it, which is
+// exactly why this would have shipped: the only consumers are third-party, and I cannot grep
+// those.
+//
+// So it is assigned explicitly now. Same object, same behaviour, no longer an accident of how
+// the file happens to be loaded.
+window.createHighway = createHighway;
 highway.setOnLyricsChange(function(visible) {
     const btn = document.getElementById('btn-lyrics');
     if (btn) {

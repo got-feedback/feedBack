@@ -1333,9 +1333,13 @@
     <script defer src="/static/panes/pane-desktop-host.js"></script>
     <script defer src="/static/panes/pane-hub.js"></script>
     <script defer src="/static/panes/pane-chip.js"></script>
+    <script defer src="/static/panes/pane-mirror.js"></script>
     <script defer src="/static/panes/pane-launcher.js"></script>
     <script defer src="/static/panes/builtin/now-playing.js"></script>
     <script defer src="/static/panes/builtin/mixer-pane.js"></script>
+    <!-- Last: registers panes declared in plugin manifests, so a plugin's pane is
+         openable from the rail or the tray without its screen ever being visited. -->
+    <script defer src="/static/panes/pane-plugins.js"></script>
     <script>
         // Navbar scroll effect
         window.addEventListener('scroll', () => {

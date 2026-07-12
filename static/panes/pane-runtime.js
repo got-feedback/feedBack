@@ -126,11 +126,22 @@
         });
 
         loadScript(snap.spec.script).then(() => {
-            if (!captured) { fail('The pane script loaded but registered nothing.'); return; }
+            // Two ways a script can hand us a pane, and the same file must work in
+            // both realms:
+            //   - a plugin pane sets window.feedBackPane_<id> (the factory global,
+            //     mirroring the existing window.feedBackViz_<id> contract), because
+            //     the main realm loads it lazily and must not have to re-register;
+            //   - a core built-in calls feedBack.panes.register(), which our shim
+            //     above captured.
+            const pane = window['feedBackPane_' + paneId] || captured;
+            if (!pane || typeof pane.mount !== 'function') {
+                fail('The pane script loaded but provided no pane.');
+                return;
+            }
             statusEl.hidden = true;
             rootEl.hidden = false;
             try {
-                captured.mount(rootEl, ctx);
+                pane.mount(rootEl, ctx);
                 mounted = true;
             } catch (err) {
                 console.error('[pane] mount() threw', err);

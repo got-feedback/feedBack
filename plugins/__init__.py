@@ -277,6 +277,66 @@ def _normalize_string_list(value) -> list[str]:
     return [stripped for item in value if isinstance(item, str) and (stripped := item.strip())]
 
 
+def _normalize_panes(value, plugin_id: str) -> list[dict]:
+    """Validate a manifest's `panes` list (detachable panes — window.feedBack.panes).
+
+    Each entry: {id, title, icon?, script, defaultHost?, mirrorGlobal?, width?, height?}.
+
+    `script` is a relpath served through the sandboxed /api/plugins/<id>/src/
+    route, so it MUST live under the plugin's src/ tree — the same containment
+    rule `styles` has for assets/. A pane whose script could escape that route
+    would be an arbitrary-file-read dressed up as a manifest key.
+
+    A bad entry is dropped with a warning rather than failing the whole plugin:
+    one malformed pane should not cost the user their working plugin.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, dict):
+            log.warning("[Plugin] %s: `panes` entry is not an object, skipping", plugin_id)
+            continue
+        pane_id = entry.get("id")
+        script = entry.get("script")
+        if not isinstance(pane_id, str) or not pane_id.strip():
+            log.warning("[Plugin] %s: pane is missing `id`, skipping", plugin_id)
+            continue
+        pane_id = pane_id.strip()
+        if not isinstance(script, str) or not script.strip():
+            log.warning("[Plugin] %s: pane %r is missing `script`, skipping", plugin_id, pane_id)
+            continue
+        script = script.strip().lstrip("/")
+        # Reject anything that could climb out of src/: absolute paths, drive
+        # letters, backslashes, and .. segments — the same checks settings.server_files
+        # applies to its relpaths.
+        if (
+            "\\" in script
+            or ".." in script.split("/")
+            or ":" in script
+            or not script.endswith(".js")
+        ):
+            log.warning("[Plugin] %s: pane %r has an unsafe `script` %r, skipping", plugin_id, pane_id, script)
+            continue
+        if pane_id in seen:
+            log.warning("[Plugin] %s: duplicate pane id %r, skipping", plugin_id, pane_id)
+            continue
+        seen.add(pane_id)
+        pane = {
+            "id": pane_id,
+            "title": entry.get("title") if isinstance(entry.get("title"), str) else pane_id,
+            "icon": entry.get("icon") if isinstance(entry.get("icon"), str) else None,
+            "script": script,
+            "defaultHost": entry.get("defaultHost") if entry.get("defaultHost") in ("window", "dock") else None,
+            "mirrorGlobal": entry.get("mirrorGlobal") if isinstance(entry.get("mirrorGlobal"), str) else None,
+            "width": entry.get("width") if isinstance(entry.get("width"), int) else None,
+            "height": entry.get("height") if isinstance(entry.get("height"), int) else None,
+        }
+        out.append(pane)
+    return out
+
+
 def _normalize_manifest_mapping(value) -> dict:
     return value if isinstance(value, dict) else {}
 
@@ -1442,6 +1502,14 @@ def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=N
             # client can build the asset URL without a second manifest read.
             "has_styles": bool(manifest.get("styles")),
             "styles": manifest.get("styles"),
+            # Detachable panes (window.feedBack.panes). Declaring them in the
+            # manifest — rather than calling panes.register() from screen.js —
+            # is what lets a pane be OPENED FROM THE TRAY OR THE RAIL WITHOUT THE
+            # PLUGIN'S SCREEN EVER HAVING BEEN VISITED: the host registers a stub
+            # from this projection and only fetches the pane's script when the
+            # user actually opens it. Validated (id + script required, script
+            # sandboxed under src/) so one bad entry can't take the list down.
+            "panes": _normalize_panes(manifest.get("panes"), plugin_id),
             "standards": _normalize_string_list(manifest.get("standards")),
             "capabilities": _validated_capabilities,
             "capability_validation_warnings": _capability_validation_warnings,
@@ -2164,6 +2232,11 @@ def register_plugin_api(app: FastAPI):
                 # _nav_entry() at discovery and carried through graduation.
                 # The `.get()` fallbacks keep stubbed test entries (which build
                 # rows directly without going through _nav_entry) working.
+                # Detachable panes. Key-presence check (not truthiness) like
+                # `capabilities` below: _nav_entry() may legitimately have
+                # validated the list down to empty, and an `or` would wrongly
+                # re-derive the unvalidated manifest value.
+                "panes": p["panes"] if "panes" in p else _normalize_panes((p.get("_manifest") or {}).get("panes"), p.get("id", "plugin")),
                 "standards": p.get("standards") or _normalize_string_list((p.get("_manifest") or {}).get("standards")),
                 "capabilities": p["capabilities"] if "capabilities" in p else _normalize_manifest_mapping((p.get("_manifest") or {}).get("capabilities")),
                 "capability_validation_warnings": p.get("capability_validation_warnings", []),
@@ -2211,6 +2284,11 @@ def register_plugin_api(app: FastAPI):
                 "has_tour": e.get("has_tour", False),
                 "has_styles": e.get("has_styles", False),
                 "styles": e.get("styles"),
+                # Pending entries come from _nav_entry() too, so their panes are
+                # already validated. Surfacing them here is what lets a pane be
+                # opened while its plugin is still installing its dependencies —
+                # the pane's script is fetched on open, not now.
+                "panes": e.get("panes", []),
                 # Pending entries are built from _nav_entry() too, so they
                 # carry the same capability-pipelines.v1 metadata — surface it
                 # so the Inspector can show still-installing plugins.

@@ -31,12 +31,12 @@ const _RESUME_END_GUARD_S = 5;                      // ignore basically-finished
 let _resumePillDismissed = false;                   // per-session: user waved off the current snapshot
 
 // Snapshot the live session. Called from showScreen()'s teardown before
-// highway.stop()/audio unload, while getSongInfo() + position are still valid.
+// window.highway.stop()/audio unload, while getSongInfo() + position are still valid.
 export function _snapshotResumeSession(position) {
     try {
         if (!host.currentFilename()) return;
-        const si = (window.highway && typeof highway.getSongInfo === 'function')
-            ? (highway.getSongInfo() || {}) : {};
+        const si = (window.highway && typeof window.highway.getSongInfo === 'function')
+            ? (window.highway.getSongInfo() || {}) : {};
         const dur = Number(si.duration) || 0;
         const pos = Number(position) || 0;
         // Only worth resuming a song you were genuinely mid-way through — not a

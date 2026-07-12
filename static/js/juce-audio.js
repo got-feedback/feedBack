@@ -111,7 +111,7 @@ import { S } from './player-state.js';
             return false;
         }
     }
-    // highway.js's initial song-load routing consults this for the same
+    // window.highway.js's initial song-load routing consults this for the same
     // feedpak-under-exclusive decision the watcher makes below.
     window._juceOutputIsExclusive = _outputIsExclusive;
     // Returns true when window._currentSongAudio no longer references the exact
@@ -383,7 +383,7 @@ import { S } from './player-state.js';
         // the stem mixer / WebAudio path keeps working. Sloppak stem URLs
         // are never routable (per-stem mix can't ride a single transport).
         if (!songAudio || (!songAudio.juceEligible && !songAudio.feedpakFullMix)) return;
-        // Don't race highway.js's own initial song-load routing: it owns
+        // Don't race window.highway.js's own initial song-load routing: it owns
         // _juceMode until _juceRoutingPromise settles. Re-running our switch
         // concurrently would double-call loadBackingTrack for the same URL.
         if (window._highwayJuceRoutingPending) return;

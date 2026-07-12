@@ -45,6 +45,11 @@ function buildSandbox({ juceMode = false, audioT = 12.5, chartT = 11.8, juceT } 
         performance: { now: () => 1000.123 },
     };
     vm.createContext(sandbox);
+    // highway.js is loaded as a CLASSIC script today, so its top-level `const highway`
+    // creates a global lexical binding that app.js and the modules could reach as a bare
+    // name. That binding disappears the moment highway.js becomes a module (R3c), so every
+    // consumer now says `window.highway` — the same object, explicitly. Mirror it here.
+    if (sandbox.window && sandbox.highway) sandbox.window.highway = sandbox.highway;
     return sandbox;
 }
 
@@ -97,6 +102,11 @@ test('time and audioT are the same number (not duplicated computation)', () => {
         performance: { now: () => 1000 },
     };
     vm.createContext(sandbox);
+    // highway.js is loaded as a CLASSIC script today, so its top-level `const highway`
+    // creates a global lexical binding that app.js and the modules could reach as a bare
+    // name. That binding disappears the moment highway.js becomes a module (R3c), so every
+    // consumer now says `window.highway` — the same object, explicitly. Mirror it here.
+    if (sandbox.window && sandbox.highway) sandbox.window.highway = sandbox.highway;
     loadFunctions(sandbox, src);
     const p = sandbox.__payload();
     assert.equal(p.time, p.audioT, 'time must equal audioT');

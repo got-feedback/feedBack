@@ -860,10 +860,10 @@ async function showScreen(id) {
         const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || S.isPlaying;
         // Snapshot where we were so leaving the player — especially by accident
         // — is recoverable instead of dumping the user back at bar 1 next time.
-        // Must run BEFORE highway.stop()/audio unload, while getSongInfo() and
+        // Must run BEFORE window.highway.stop()/audio unload, while getSongInfo() and
         // the position (stopTime) are still live.
         if (hadPlayableSong) _snapshotResumeSession(stopTime);
-        highway.stop();
+        window.highway.stop();
         // Cancel any queued seeks, in-flight shim closures, AND active
         // count-in timers before stopping playback so none of these paths
         // can mutate the torn-down session (mirrors the same triple reset
@@ -1049,7 +1049,7 @@ async function loadSettings() {
     const demucsEl = document.getElementById('demucs-server-url');
     if (demucsEl) demucsEl.value = data.demucs_server_url || '';
     const leftyEl = document.getElementById('setting-lefty');
-    if (leftyEl) leftyEl.checked = highway.getLefty();
+    if (leftyEl) leftyEl.checked = window.highway.getLefty();
     const autoplayExitEl = document.getElementById('setting-autoplay-exit');
     if (autoplayExitEl) autoplayExitEl.checked = _autoplayExitEnabled();
     const showUpNextEl = document.getElementById('setting-show-upnext');
@@ -1435,7 +1435,7 @@ function setAvOffsetMs(ms, skipPersist) {
     // the audio-aligned chart time so plugins (note detection, etc.)
     // keep scoring against the real chart clock regardless of visual
     // calibration.
-    if (typeof highway !== 'undefined' && highway?.setAvOffset) highway.setAvOffset(_avOffsetMs);
+    if (window.highway?.setAvOffset) window.highway.setAvOffset(_avOffsetMs);
     // Sync any visible Settings slider
     const avSlider = document.getElementById('setting-av-offset');
     if (avSlider) {
@@ -1771,7 +1771,7 @@ window._juceAudioUrl = null;
 window.jucePlayer = jucePlayer;
 
 // ── Engine start/stop → re-route song audio (HTML5 ⇄ JUCE) ──────────────────
-// window._juceMode is otherwise decided once, at song-load time (highway.js),
+// window._juceMode is otherwise decided once, at song-load time (window.highway.js),
 // from isAudioRunning(). If the JUCE audio engine is started or stopped *after*
 // a song is already loaded (e.g. the user presses CHAIN / AMP), that decision
 // goes stale: the song stays on the HTML5 <audio> element while the engine
@@ -1907,7 +1907,7 @@ function _currentPlaybackSnapshot() {
     return {
         currentTime: Number.isFinite(time) ? time : null,
         mediaTime: Number.isFinite(time) ? time : null,
-        chartTime: (typeof highway !== 'undefined' && highway && typeof highway.getTime === 'function') ? highway.getTime() : null,
+        chartTime: (typeof window.highway?.getTime === 'function') ? window.highway.getTime() : null,
         duration: Number.isFinite(_audioDuration()) ? _audioDuration() : (song && song.duration) || null,
         playbackRate: window._juceMode ? (window.jucePlayer && window.jucePlayer._speed || 1) : audio.playbackRate,
         isPlaying: S.isPlaying,
@@ -2587,7 +2587,7 @@ async function playSong(filename, arrangement, options) {
     if (artAbortController) artAbortController.abort();
     artAbortController = null;
 
-    highway.stop();
+    window.highway.stop();
     // Cancel any active count-in: clear timers/RAF and bump the gen so
     // delayed callbacks (rewind frames, post-seek then, count-in ticks,
     // post-count play) bail before mutating the new session.
@@ -2618,7 +2618,7 @@ async function playSong(filename, arrangement, options) {
     }
     audio.pause();
     audio.src = '';
-    // Stale until the incoming song's WS handler (highway.js) sets it again.
+    // Stale until the incoming song's WS handler (window.highway.js) sets it again.
     window._currentSongAudio = null;
     // Fresh JUCE routing attempt for whatever song loads next.
     window._clearJuceRerouteMemo?.();
@@ -2655,19 +2655,19 @@ async function playSong(filename, arrangement, options) {
 
     // Wait for previous WebSocket to fully close before opening new one
     await new Promise(r => setTimeout(r, 500));
-    highway.init(document.getElementById('highway'));
+    window.highway.init(document.getElementById('highway'));
 
     const wsParams = new URLSearchParams();
     if (arrangement !== undefined) wsParams.set('arrangement', arrangement);
     wsParams.set('naming_mode', _getArrangementNamingMode());
     const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/highway/${decodeURIComponent(filename)}?${wsParams.toString()}`;
-    highway.connect(wsUrl);
+    window.highway.connect(wsUrl);
     _resetSectionPracticeLog();
     _scheduleSectionPracticeRetries();
     loadSavedLoops();
-    document.getElementById('quality-select').value = highway.getRenderScale();
+    document.getElementById('quality-select').value = window.highway.getRenderScale();
     const _minScaleSel = document.getElementById('min-scale-select');
-    if (_minScaleSel && highway.getMinRenderScale) _minScaleSel.value = String(highway.getMinRenderScale());
+    if (_minScaleSel && window.highway.getMinRenderScale) _minScaleSel.value = String(window.highway.getMinRenderScale());
 }
 
 // Generation token + safety-timeout handle for changeArrangement's
@@ -2749,7 +2749,7 @@ async function changeArrangement(index) {
             const clearMyCallback = () => {
                 // Only null out if the slot still points at us; a newer
                 // invocation may have replaced it during the await.
-                if (highway._onReady === myCallback) highway._onReady = null;
+                if (window.highway._onReady === myCallback) window.highway._onReady = null;
             };
             const r = await _audioSeek(time, 'arrangement-restore');
             // Don't auto-resume on cancel OR off-target landing — same
@@ -2790,7 +2790,7 @@ async function changeArrangement(index) {
             clearBusy();
             clearMyCallback();
         };
-        highway._onReady = myCallback;
+        window.highway._onReady = myCallback;
 
         // Reset the Section Practice bar for the incoming arrangement, mirroring
         // playSong(): different arrangements have different section markers, so
@@ -2803,7 +2803,7 @@ async function changeArrangement(index) {
         _resetSectionPracticeLog();
         invalidateParentCount();
 
-        highway.reconnect(currentFilename, index);
+        window.highway.reconnect(currentFilename, index);
         window.feedBack.emit('arrangement:changed', { index, filename: currentFilename });
     }
 }
@@ -2848,7 +2848,7 @@ if (window.feedBack) window.feedBack.restartCurrentSong = restartCurrentSong;
 
 // Leave the player and return to the screen the song was launched from
 // (Esc shortcut uses the same origin-aware target). showScreen() owns the
-// full teardown: song:stop, audio unload, highway.stop(), count-in cancel.
+// full teardown: song:stop, audio unload, window.highway.stop(), count-in cancel.
 function closeCurrentSong() {
     // A real close (user Escape/✕, or the queue-aware wrapper once the queue is
     // exhausted) abandons any play-queue so a stale one can't advance later.
@@ -3111,8 +3111,8 @@ function _resolveEditRegion() {
     if (loopA !== null && loopB !== null) return { a: loopA, b: loopB };
     const t = _audioTime();
     try {
-        const secs = (highway && typeof highway.getSections === 'function')
-            ? highway.getSections() : [];
+        const secs = (window.highway && typeof window.highway.getSections === 'function')
+            ? window.highway.getSections() : [];
         if (Array.isArray(secs) && secs.length) {
             let start = null, end = null;
             for (let i = 0; i < secs.length; i++) {
@@ -3173,7 +3173,7 @@ function editRegionInEditor() {
     const region = _resolveEditRegion();
     let arrangement = 0;
     try {
-        const si = highway && typeof highway.getSongInfo === 'function' ? highway.getSongInfo() : null;
+        const si = window.highway && typeof window.highway.getSongInfo === 'function' ? window.highway.getSongInfo() : null;
         if (si && typeof si.arrangement_index === 'number' && si.arrangement_index >= 0) {
             arrangement = si.arrangement_index;
         }
@@ -3337,7 +3337,7 @@ setInterval(() => {
     if (_sectionPracticeBarIsReady() && _sectionPracticeSourceSections().length) {
         _updateSectionPracticeHighlight(ct);
     }
-    if (!isCountingIn()) highway.setTime(ct);
+    if (!isCountingIn()) window.highway.setTime(ct);
 }, 1000 / 60);
 
 _installSectionPracticeDrawHook();

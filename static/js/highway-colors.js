@@ -155,7 +155,7 @@ function _hwcSlotKeysForChart(sc, isBass) {
     return ['low8', 'low7', 'lowE', 'A', 'D', 'G', 'B', 'highE'];
 }
 
-// Current arrangement shape (string count + bass-vs-guitar) from the 2D highway.
+// Current arrangement shape (string count + bass-vs-guitar) from the 2D window.highway.
 function _hwcChartShape() {
     let sc = 6, arr = '';
     try { sc = window.highway?.getStringCount?.() || 6; } catch (_) {}

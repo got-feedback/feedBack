@@ -172,7 +172,7 @@ export function _songEventPayload() {
     return {
         time: audioT,
         audioT,
-        chartT: highway.getTime(),
+        chartT: window.highway.getTime(),
         perfNow: performance.now(),
     };
 }
@@ -289,8 +289,8 @@ export async function _audioSeek(s, reason) {
         // _audioSeek resolves (e.g. the auto-resume song:play in
         // changeArrangement) sees an in-sync chartT via _songEventPayload.
         // Without this, chartT lags by one 60Hz tick after a seek.
-        if (typeof highway !== 'undefined' && highway && typeof highway.setTime === 'function') {
-            highway.setTime(to);
+        if (window.highway && typeof window.highway.setTime === 'function') {
+            window.highway.setTime(to);
         }
         window.feedBack.emit('song:seek', { from, to, reason: reason || null });
         return { completed: true, from, to };

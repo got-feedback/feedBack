@@ -381,7 +381,13 @@
         };
         loadAndPlay(video, _manifest.intro.video, false, (ok) => {
             if (_introGen !== myGen) return;
-            if (!ok || !_venueActive) { _introActive = false; return; }
+            if (!ok || !_venueActive) {
+                // Failed intro must not leave the song loop-less: fall back
+                // to the normal loop exactly like the no-intro path.
+                _introActive = false;
+                if (_venueActive) showLoop(machine.current, FADE_MS);
+                return;
+            }
             fadeMixTo(layer === 1 ? 1 : 0, 300);
             video.addEventListener('ended', land);
             setTimeout(land, 15000); // decode-stall safety

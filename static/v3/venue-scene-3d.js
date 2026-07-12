@@ -73,7 +73,7 @@
     function readArrangementSignal() {
         // Intentional karaoke/vocals signal: active arrangement name from the
         // highway WS (user selected Vocals in #arr-select). Do NOT use
-        // highway.getLyricsVisible() — lyrics overlay stays on during normal
+        // window.highway.getLyricsVisible() — lyrics overlay stays on during normal
         // guitar practice and must not force vocals POV.
         try {
             const si = root.highway && typeof root.highway.getSongInfo === 'function'

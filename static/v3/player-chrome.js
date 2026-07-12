@@ -6,7 +6,7 @@
  * auto-hiding bottom transport, and the speed-level visual (bars + chevrons).
  *
  * Design contract: the actual controls are the SAME legacy elements/handlers
- * (ids unchanged), just relocated into rail popovers — so app.js/highway.js
+ * (ids unchanged), just relocated into rail popovers — so app.js/window.highway.js
  * keep populating and reacting to them unmodified. This module only adds
  * presentation behavior (open/close, reveal/hide, mirror state). It runs only
  * while #player is the active screen.
@@ -146,8 +146,8 @@
         const rail = $('v3-player-rail');
         const lyr = rail && rail.querySelector('[data-rail-action="lyrics"]');
         if (!lyr) return;
-        const on = (window.highway && typeof highway.getLyricsVisible === 'function')
-            ? highway.getLyricsVisible()
+        const on = (window.highway && typeof window.highway.getLyricsVisible === 'function')
+            ? window.highway.getLyricsVisible()
             : lyr.classList.contains('is-active');
         lyr.classList.toggle('is-active', !!on);
         lyr.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -159,13 +159,13 @@
         rail.querySelectorAll('[data-rail]').forEach((b) =>
             b.addEventListener('click', (e) => { e.stopPropagation(); openPopFor(b); }));
         // Mic icon: a direct lyrics toggle (clicks the hidden canonical button so
-        // highway.toggleLyrics() + any label logic runs), mirroring on/off state.
+        // window.highway.toggleLyrics() + any label logic runs), mirroring on/off state.
         const lyr = rail.querySelector('[data-rail-action="lyrics"]');
         if (lyr) lyr.addEventListener('click', (e) => {
             e.stopPropagation();
             const real = $('btn-lyrics');
-            if (real) real.click();   // runs highway.toggleLyrics() via its onclick
-            else if (window.highway && typeof highway.toggleLyrics === 'function') highway.toggleLyrics();
+            if (real) real.click();   // runs window.highway.toggleLyrics() via its onclick
+            else if (window.highway && typeof window.highway.toggleLyrics === 'function') window.highway.toggleLyrics();
             syncLyricsIcon();          // reflect the ACTUAL toggled state, not click parity
         });
         // Click-outside + Esc close (bound once; harmless when no popover open).
@@ -288,7 +288,7 @@
         if (t - lastUpNext >= UPNEXT_MS) {
             lastUpNext = t;
             updateUpNext();
-            // Re-sync the lyrics icon so programmatic highway.setLyricsVisible()
+            // Re-sync the lyrics icon so programmatic window.highway.setLyricsVisible()
             // (e.g. from lyrics_karaoke) isn't left stale; cheap + idempotent.
             syncLyricsIcon();
             // Reconcile the edge-driven hover flag against ground truth at

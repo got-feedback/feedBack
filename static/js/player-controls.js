@@ -160,7 +160,7 @@ export function _resetPlaybackSpeedForNewSong() {
 //
 // Debounced trailing-edge (300ms) so dragging the slider — which fires
 // oninput per pixel — doesn't flood the server with concurrent writes
-// to config.json. highway.setMastery() still fires every oninput so
+// to config.json. window.highway.setMastery() still fires every oninput so
 // the chart re-filters in real time; only disk persistence waits.
 let _masteryPersistTimer = null;
 function _persistMastery(pct) {
@@ -209,7 +209,7 @@ export function _applyMastery(v, opts = {}) {
     // unlike #mastery-label above, whose markup carries no trailing unit.
     const setLabel = document.getElementById('setting-highway-speed-val');
     if (setLabel) setLabel.textContent = pct;
-    highway.setMastery(pct / 100);
+    window.highway.setMastery(pct / 100);
     if (!opts.skipPersist) _persistMastery(pct);
 }
 // Reflect phrase-data availability on the slider after every `ready`.

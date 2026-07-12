@@ -62,7 +62,7 @@ function _hasPromotedFlag() {
 // Pending nag: queued during _populateVizPicker, fired on the first
 // `song:ready` (so the toast lands when the user actually opens the
 // player, not at page load when they're still in the library).
-// `song:ready` is emitted by highway.js via window.feedBack.emit(), so
+// `song:ready` is emitted by window.highway.js via window.feedBack.emit(), so
 // subscribe through the same EventTarget. window.feedBack is created in
 // this same file before _populateVizPicker is reachable, so the global
 // is guaranteed to exist by the time this listener registers — but guard
@@ -326,7 +326,7 @@ export async function _populateVizPicker(plugins) {
     // plugin options — _autoMatchViz saw no candidates and left the
     // default active. Now that plugins are registered, re-evaluate
     // against whatever song is currently loaded (a no-op when no song
-    // has been loaded yet, since highway.getSongInfo() returns {}).
+    // has been loaded yet, since window.highway.getSongInfo() returns {}).
     if (sel.value === 'auto') _autoMatchViz();
 }
 
@@ -356,7 +356,7 @@ function _noteVizAutoMatch(id, matched) {
 }
 
 function _installVizRenderer(renderer, id, source = 'user-select') {
-    highway.setRenderer(_tagVizRenderer(renderer, id));
+    window.highway.setRenderer(_tagVizRenderer(renderer, id));
     // Drop any stale notation-view hint now that we have a resolved renderer id.
     // This is also the path used by _autoMatchViz() after it resolves 'auto' to
     // a real plugin id, so the null passed at evaluation start is corrected here.
@@ -377,7 +377,7 @@ export function setViz(id) {
         try { localStorage.setItem('vizSelection', 'default'); } catch (_) {}
         const sel = document.getElementById('viz-picker');
         if (sel) sel.value = 'default';
-        highway.setRenderer(null);
+        window.highway.setRenderer(null);
         _syncVenueVizPlayerClass('default');
         if (window.v3VenueScene3d && typeof window.v3VenueScene3d.syncViz === 'function') {
             window.v3VenueScene3d.syncViz('default');
@@ -399,7 +399,7 @@ export function setViz(id) {
         try { localStorage.setItem('vizSelection', id || 'default'); } catch (_) {}
         const _sel = document.getElementById('viz-picker');
         if (_sel) _sel.value = 'default';
-        highway.setRenderer(null);
+        window.highway.setRenderer(null);
         _syncVenueVizPlayerClass('default');
         if (window.v3VenueScene3d && typeof window.v3VenueScene3d.syncViz === 'function') {
             window.v3VenueScene3d.syncViz('default');
@@ -483,7 +483,7 @@ export function setViz(id) {
         fallbackToDefault();
         return;
     }
-    // Validate shape — highway.setRenderer will itself fall back to
+    // Validate shape — window.highway.setRenderer will itself fall back to
     // default on a bad renderer, but without this check the UI and
     // localStorage would still advertise the broken selection.
     if (!renderer || typeof renderer.draw !== 'function') {
@@ -503,7 +503,7 @@ export function setViz(id) {
 
 // Auto mode: evaluate each registered viz factory's static
 // `matchesArrangement(songInfo)` predicate and install the first
-// matching renderer. No match → fall back to the built-in 2D highway.
+// matching renderer. No match → fall back to the built-in 2D window.highway.
 //
 // vizSelection stays 'auto' across invocations so the next song:ready
 // re-evaluates. An explicit picker choice overrides Auto by persisting
@@ -530,10 +530,10 @@ function _setAutoVizLabel(resolvedText) {
 let _cancelPendingAutoLabel = null;
 
 // One-shot (per song) hint shown when a notation-only arrangement falls back
-// to the built-in 2D highway. Such arrangements carry no wire notes
+// to the built-in 2D window.highway. Such arrangements carry no wire notes
 // (sloppak-spec §5.3: `file:` may be omitted when `notation:` is present), so
 // the default renderer draws an empty board — without this the user is left
-// staring at a silently blank highway. Core ships no notation view; point at
+// staring at a silently blank window.highway. Core ships no notation view; point at
 // the viz picker instead.
 let _notationHintShownFor = null;
 function _showNotationViewHint(arrangementIndex, activeVizId) {
@@ -579,8 +579,8 @@ function _dropStaleNotationHint(activeVizId) {
     const curFilename = (window.feedBack && window.feedBack.currentSong
         && window.feedBack.currentSong.filename) || '';
     if (stale.dataset.filename !== curFilename) { stale.remove(); return; }
-    const songInfo = (typeof highway !== 'undefined' && typeof highway.getSongInfo === 'function')
-        ? (highway.getSongInfo() || {}) : {};
+    const songInfo = (typeof window.highway?.getSongInfo === 'function')
+        ? (window.highway.getSongInfo() || {}) : {};
     const curArrIdx = songInfo.arrangement_index != null ? String(songInfo.arrangement_index) : null;
     if (curArrIdx !== null && stale.dataset.arrangementIndex !== undefined
             && stale.dataset.arrangementIndex !== curArrIdx) {
@@ -593,8 +593,8 @@ function _dropStaleNotationHint(activeVizId) {
 
 export function _maybeShowNotationViewHint(activeVizId) {
     _dropStaleNotationHint(activeVizId);
-    const songInfo = (typeof highway !== 'undefined' && typeof highway.getSongInfo === 'function')
-        ? (highway.getSongInfo() || {}) : {};
+    const songInfo = (typeof window.highway?.getSongInfo === 'function')
+        ? (window.highway.getSongInfo() || {}) : {};
     const activeArr = Array.isArray(songInfo.arrangements)
         ? songInfo.arrangements.find(a => a.index === songInfo.arrangement_index)
         : null;
@@ -641,8 +641,8 @@ export function _autoMatchViz() {
     // Reset label at evaluation start so a stale resolved label never persists
     // if the song changes or the picker re-evaluates with a different outcome.
     _setAutoVizLabel(null);
-    const songInfo = (typeof highway !== 'undefined' && typeof highway.getSongInfo === 'function')
-        ? (highway.getSongInfo() || {}) : {};
+    const songInfo = (typeof window.highway?.getSongInfo === 'function')
+        ? (window.highway.getSongInfo() || {}) : {};
     // Only update the label when a real song is loaded. Before the first
     // song_info frame, getSongInfo() returns {} — leaving the reset state
     // ("Auto (match arrangement)") is correct; we haven't evaluated yet.
@@ -714,17 +714,17 @@ export function _autoMatchViz() {
         _noteVizAutoMatch(id, true);
         return;
     }
-    // No match — restore the built-in 2D highway. setRenderer(null) is
+    // No match — restore the built-in 2D window.highway. setRenderer(null) is
     // a no-op when the default is already active. If the previous Auto
-    // pick was a WebGL renderer, highway.setRenderer() handles the
+    // pick was a WebGL renderer, window.highway.setRenderer() handles the
     // context-type change by replacing the canvas element (cloneNode +
     // replaceWith) so the default 2D renderer's getContext('2d') always
     // succeeds — no canvas-lock limitation here.
-    highway.setRenderer(null);
+    window.highway.setRenderer(null);
     _notifyVizDomain('default', 'auto-match');
     _noteVizAutoMatch('default', false);
     // Update the label so the user can see Auto resolved to the built-in
-    // highway. Read from the DOM rather than hard-coding the name so a
+    // window.highway. Read from the DOM rather than hard-coding the name so a
     // future rename of the default entry is automatically reflected.
     if (hasSong) {
         const defaultOpt = Array.from(sel.options).find(o => o.value === 'default');

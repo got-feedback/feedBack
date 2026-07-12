@@ -38,7 +38,7 @@ export function _sectionPracticeBarContains(el) {
 }
 
 // ── Section Practice Bar ────────────────────────────────────────────────
-// One-click looping over song section markers (highway.getSections —
+// One-click looping over song section markers (window.highway.getSections —
 // same array as 3D highway bundle.sections / "Now / Up Next").
 // Reuses setLoop() so manual A/B controls and saved loops stay canonical.
 let _sectionPracticeRanges = [];
@@ -127,7 +127,7 @@ export function _resetSectionPracticeLog() {
 }
 
 function _sectionPracticeHighway() {
-    return window.highway || (typeof highway !== 'undefined' ? highway : null);
+    return window.highway || null;
 }
 
 function _sectionPracticeDuration() {

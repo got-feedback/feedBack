@@ -60,7 +60,7 @@ const _CREDITS_HOLD_MS = 3000;
 // Backstop: the overlay's primary dismiss is song:play, but playback can fail
 // to start without emitting it (HTML5 autoplay rejection, JUCE start failure,
 // a count-in handoff that never plays). This hard cap guarantees the credits
-// never linger over the highway. Generous enough to outlast a normal count-in.
+// never linger over the window.highway. Generous enough to outlast a normal count-in.
 const _CREDITS_MAX_MS = 12000;
 export function _cancelCountIn() {
     _countInGen++;
@@ -107,7 +107,7 @@ function _creditLineLabel(role) {
     return key.charAt(0).toUpperCase() + key.slice(1) + ' by';
 }
 
-// Show the feedpak contributor credits over the highway. `authors` is the
+// Show the feedpak contributor credits over the window.highway. `authors` is the
 // sanitized [{name, role}] list from window.feedBack.currentSong.authors.
 // Anchored to the lower third (bottom-center) so it never collides with the
 // vertically-centered count-in number, and pointer-events-none so it never
@@ -196,7 +196,7 @@ export async function startCountIn(opts = {}) {
             return;
         }
         S.lastAudioTime = loopA;
-        highway.setTime(loopA);
+        window.highway.setTime(loopA);
         if (window.feedBack) {
             window.feedBack.emit('loop:restart', { loopA, loopB, time: loopA });
         }
@@ -217,7 +217,7 @@ export async function startCountIn(opts = {}) {
         // Ease out quad
         const eased = 1 - (1 - t) * (1 - t);
         const currentT = fromTime + (toTime - fromTime) * eased;
-        highway.setTime(currentT);
+        window.highway.setTime(currentT);
         if (t < 1) {
             _countInRaf = requestAnimationFrame(rewindStep);
         } else {
@@ -262,7 +262,7 @@ export async function startCountIn(opts = {}) {
                 // marker for "new iteration starts at A", not the actual
                 // audio position.
                 S.lastAudioTime = r.to;
-                highway.setTime(r.to);
+                window.highway.setTime(r.to);
                 window.feedBack.emit('loop:restart', { loopA, loopB, time: loopA });
                 beginCount();
             });
@@ -271,7 +271,7 @@ export async function startCountIn(opts = {}) {
     _countInRaf = requestAnimationFrame(rewindStep);
 
     function beginCount() {
-        const bpm = highway.getBPM(loopA);
+        const bpm = window.highway.getBPM(loopA);
         const beatInterval = 60 / bpm;
         let count = 0;
 
@@ -339,7 +339,7 @@ export async function startSongCountIn() {
     }
     if (gen !== _countInGen) return; // teardown during pause
     const startT = S.lastAudioTime || 0;
-    let bpm = highway.getBPM(startT);
+    let bpm = window.highway.getBPM(startT);
     // Pre-chart / malformed-tempo fallback: 4 beats at 120 BPM (500 ms each).
     if (!Number.isFinite(bpm) || bpm <= 0) bpm = 120;
     const beatInterval = 60 / bpm;

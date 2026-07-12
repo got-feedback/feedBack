@@ -25,7 +25,9 @@ function loadFn(file, name) {
     return new Function('"use strict";' + extractFn(src, name) + `\nreturn ${name};`)();
 }
 
-const bnvNormalizedPoints = loadFn('static/highway.js', 'bnvNormalizedPoints');
+// R3c: the PURE geometry/label primitives were carved out of highway.js into
+// static/js/highway-geometry.js. Same bodies, byte-for-byte — only the file moved.
+const bnvNormalizedPoints = loadFn('static/js/highway-geometry.js', 'bnvNormalizedPoints');
 const bnvSampleAt = loadFn('plugins/highway_3d/screen.js', 'bnvSampleAt');
 
 // ── bnvNormalizedPoints (2D) ─────────────────────────────────────────────────

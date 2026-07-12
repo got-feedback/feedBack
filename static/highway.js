@@ -33,6 +33,14 @@ import {
     _PAUSED_FRAME_INTERVAL_MS,
     _SHIMMER_LUT_SIZE,
 } from './js/highway-constants.js';
+import {
+    bnvNormalizedPoints,
+    chordHarmonyLabels,
+    project,
+    roundRect,
+    teachingDegreeLabel,
+    teachingFingerLabel,
+} from './js/highway-geometry.js';
 
 function createHighway() {
   // R3c: per-instance mutable state in one object, so extracted renderer/ws
@@ -362,19 +370,6 @@ function createHighway() {
         return _toHex(c.r + (255 - c.r) * t, c.g + (255 - c.g) * t, c.b + (255 - c.b) * t);
     }
 
-    // ── Projection ───────────────────────────────────────────────────────
-    function project(tOffset) {
-        if (tOffset > VISIBLE_SECONDS || tOffset < -0.05) return null;
-        if (tOffset < 0) return { y: 0.82 + Math.abs(tOffset) * 0.3, scale: 1.0 };
-
-        const z = tOffset * (Z_MAX / VISIBLE_SECONDS);
-        const denom = z + Z_CAM;
-        if (denom < 0.01) return null;
-        const scale = Z_CAM / denom;
-        const y = 0.82 + (0.08 - 0.82) * (1.0 - scale);
-        return { y, scale };
-    }
-
     // ── Anchor / Fret mapping ────────────────────────────────────────────
     // Zoom approach: fret 0 at the left edge, fret N at the right (entire canvas mirrored when lefty).
     // The "zoom level" determines how many frets are visible.
@@ -437,50 +432,16 @@ function createHighway() {
     /** Map a bend curve [{t, v}] (§6.2.1) to [{x, v}] with x normalized to
      * 0..1 across the curve's time span (0 when the span is degenerate).
      * Pure — drives the 2D bend-shape glyph. */
-    function bnvNormalizedPoints(bnv, sus) {
-        if (!Array.isArray(bnv) || bnv.length === 0) return [];
-        // Map each point's time over the NOTE's span [0, sus] so it sits at its
-        // real fraction of the note (a bend that completes before the note ends
-        // draws short of the glyph's right edge). Fall back to the curve's own
-        // t-range only when the note has no usable sustain.
-        if (Number.isFinite(sus) && sus > 0) {
-            return bnv.map(p => ({ x: Math.min(Math.max(p.t / sus, 0), 1), v: p.v }));
-        }
-        const t0 = bnv[0].t;
-        const span = bnv[bnv.length - 1].t - t0;
-        return bnv.map(p => ({ x: span > 0 ? (p.t - t0) / span : 0, v: p.v }));
-    }
-
     /** Teaching mark (§6.2.2): fret-hand-finger label for a note's `fg`.
      * '' when unset/out of range; 0 → 'T' (thumb), 1..4 → '1'..'4'. Pure. */
-    function teachingFingerLabel(fg) {
-        if (!Number.isInteger(fg) || fg < 0 || fg > 4) return '';
-        return fg === 0 ? 'T' : String(fg);
-    }
-
     /** Teaching mark (§6.2.2): scale-degree label for a note's `sd` (chromatic
      * 0..11 above the active key tonic). '' when unset/out of range. Pure. */
-    function teachingDegreeLabel(sd) {
-        if (!Number.isInteger(sd) || sd < 0 || sd > 11) return '';
-        return String(sd);
-    }
-
     /** Harmony annotations (§6.3.1 / §6.6): display labels for a chord's
      * harmonic function (the instance `fn.rn` Roman numeral) and its template
      * `voicing`, `caged` shape, and `guideTones`. Returns '' for each when
      * absent or malformed; `caged`/`guideTones` come back pre-formatted
      * ("CAGED: E" / "gt 4,10"). Pure; node-tested and shared by both highways.
      * Display/teaching only — MUST NEVER feed a grader (honesty rule). */
-    function chordHarmonyLabels(fn, voicing, caged, guideTones) {
-        const rn = (fn && typeof fn.rn === 'string') ? fn.rn.trim() : '';
-        const vc = (typeof voicing === 'string') ? voicing.trim() : '';
-        const cg = (typeof caged === 'string' && /^[CAGED]$/.test(caged.trim()))
-            ? 'CAGED: ' + caged.trim() : '';
-        const gt = Array.isArray(guideTones)
-            ? guideTones.filter(n => Number.isInteger(n) && n >= 0 && n <= 11) : [];
-        return { rn, voicing: vc, caged: cg, guideTones: gt.length ? 'gt ' + gt.join(',') : '' };
-    }
-
     /** Teaching mark (§6.2.2): bucket drawn notes by their strum-group key `ch`.
      * Returns the groups (in first-seen order) for each ch value >= 0 that has
      * at least two members — a lone note is not a strum gesture. Pure; drives
@@ -2584,20 +2545,6 @@ function createHighway() {
                 xPos += spaceWidth;
             }
         }
-    }
-
-    function roundRect(ctx, x, y, w, h, r) {
-        ctx.beginPath();
-        ctx.moveTo(x + r, y);
-        ctx.lineTo(x + w - r, y);
-        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-        ctx.lineTo(x + w, y + h - r);
-        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-        ctx.lineTo(x + r, y + h);
-        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-        ctx.lineTo(x, y + r);
-        ctx.quadraticCurveTo(x, y, x + r, y);
-        ctx.closePath();
     }
 
     function bsearch(arr, time) {

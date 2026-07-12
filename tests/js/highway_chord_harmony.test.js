@@ -25,7 +25,9 @@ function loadFn(file, name) {
     return new Function('"use strict";' + extractFn(src, name) + `\nreturn ${name};`)();
 }
 
-const labels2D = loadFn('static/highway.js', 'chordHarmonyLabels');
+// R3c: the PURE geometry/label primitives were carved out of highway.js into
+// static/js/highway-geometry.js. Same bodies, byte-for-byte — only the file moved.
+const labels2D = loadFn('static/js/highway-geometry.js', 'chordHarmonyLabels');
 const labels3D = loadFn('plugins/highway_3d/screen.js', 'chordHarmonyLabels');
 
 for (const [name, fn] of [['2D', labels2D], ['3D', labels3D]]) {

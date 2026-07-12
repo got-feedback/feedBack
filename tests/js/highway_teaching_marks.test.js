@@ -26,8 +26,10 @@ function loadFn(file, name) {
     return new Function('"use strict";' + extractFn(src, name) + `\nreturn ${name};`)();
 }
 
-const fingerLabel2D = loadFn('static/highway.js', 'teachingFingerLabel');
-const degreeLabel2D = loadFn('static/highway.js', 'teachingDegreeLabel');
+// R3c: the PURE geometry/label primitives were carved out of highway.js into
+// static/js/highway-geometry.js. Same bodies, byte-for-byte — only the file moved.
+const fingerLabel2D = loadFn('static/js/highway-geometry.js', 'teachingFingerLabel');
+const degreeLabel2D = loadFn('static/js/highway-geometry.js', 'teachingDegreeLabel');
 const fingerLabel3D = loadFn('plugins/highway_3d/screen.js', 'teachingFingerLabel');
 const degreeLabel3D = loadFn('plugins/highway_3d/screen.js', 'teachingDegreeLabel');
 const strumGroupBuckets = loadFn('static/highway.js', 'strumGroupBuckets');

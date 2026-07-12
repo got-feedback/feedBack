@@ -3131,6 +3131,33 @@ function createHighway() {
 
         getRenderScale() { return hwState._renderScale; },
 
+        /**
+         * The render loop's own cost, for benchmarks and the perf HUD.
+         *
+         * WHY THIS EXISTS. The highway AUTO-SCALES: when the smoothed draw cost climbs past
+         * _DRAW_BUDGET_HI_MS it lowers the render resolution to protect the frame rate
+         * (#654). That is exactly right for players — and it means a performance regression
+         * does NOT show up as dropped frames. It shows up as a BLURRIER PICTURE at a
+         * perfectly healthy 60fps. Benchmark the frame rate and you will measure the
+         * feedback loop, not the renderer, and conclude nothing changed.
+         *
+         * So a real perf gate has to pin the scale (setMinRenderScale(1)) and watch
+         * `drawMs`. Everything needed for that is here; none of it was reachable before.
+         *
+         * `effectiveScale` is what actually got rendered: renderScale x autoScale.
+         */
+        getPerf() {
+            return {
+                drawMs: hwState._drawMsEMA,          // smoothed cost of _renderer.draw()
+                frameMs: hwState._frameMsEMA,        // smoothed frame interval
+                renderScale: hwState._renderScale,   // the user's Quality setting
+                autoScale: hwState._autoScale,       // what the load-adaptive loop chose
+                effectiveScale: _effectiveRenderScale(),
+                drawBudgetHiMs: _DRAW_BUDGET_HI_MS,
+                drawBudgetLoMs: _DRAW_BUDGET_LO_MS,
+            };
+        },
+
         // Floor for the load-adaptive render scale (#654). 0.25 = stock (allows
         // quarter-res on heavy frames), 1.0 = never auto-downscale below the
         // Quality (renderScale) ceiling — so it's only full resolution when

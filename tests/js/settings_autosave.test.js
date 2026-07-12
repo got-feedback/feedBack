@@ -1,4 +1,4 @@
-// Verify the Settings-dropdown autosave path in static/app.js:
+// Verify the Settings-dropdown autosave path in static/js/settings.js:
 // persistSetting() must funnel one-field POSTs through a single chain so
 // they hit the server one at a time, in call order, and a failed save
 // must not poison the chain for later saves.
@@ -13,11 +13,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const APP_JS = path.join(__dirname, '..', '..', 'static', 'app.js');
+// R3d: settings was carved out of app.js into its own module. Bodies unchanged — only the file
+// moved. It went cleanly because the WRITERS came with it: _defaultArrangement was the one
+// binding written from outside the cluster, by saveSettings and pinCurrentArrangementDefault,
+// which are themselves settings functions. Widening the slice to include them left zero outside
+// writes, so no state container was needed.
+const APP_JS = path.join(__dirname, '..', '..', 'static', 'js', 'settings.js');
 
 function extractFunction(src, signature) {
     const start = src.indexOf(signature);
-    if (start === -1) throw new Error(`extractFunction: '${signature}' not found in app.js`);
+    if (start === -1) throw new Error(`extractFunction: '${signature}' not found in settings.js`);
     const openBrace = src.indexOf('{', start);
     let depth = 1;
     let i = openBrace + 1;

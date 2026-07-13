@@ -1,0 +1,17 @@
+{
+    "badge_requirement": {
+        "songs": 5,
+        "min_stars": 2
+    },
+    "genres": {},
+    "graded_instruments": [
+        "guitar",
+        "keys"
+    ],
+    "instruments": [
+        "guitar",
+        "bass",
+        "keys",
+        "drums"
+    ]
+}

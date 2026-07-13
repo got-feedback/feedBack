@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Career passports (backend)** — the badge-journey layer on top of career stars.
+  New career-plugin endpoints: `GET /api/plugins/career/passports` (per-instrument
+  passport walls: genre badges computed on read from `song_stats` × the library's
+  effective genre — Bronze = N genre songs at K★, data-driven in
+  `plugins/career/passports.json`, default 5 songs at 2★ — plus qualifying-song
+  "ticket stubs", the library genre list, and drill status), `POST
+  /passports/commit` (instrument commitment), `POST /passports/open` (open a genre
+  passport), and `POST /drill-state` (intake for the relayed Virtuoso
+  `virtuoso.progress` snapshot, so drill requirements can gate badges
+  server-side). Badges are never stored; the only persisted state (commitments,
+  opened passports, drill snapshot) lives under `CONFIG_DIR/career/` and rides the
+  settings export/import bundle via `settings.server_files`. Instruments are
+  attributed via the existing progression arrangement→instrument mapping;
+  non-graded instruments (bass, drums) render shown-not-judged — repertoire
+  without a pass bar, never a false badge denial.
+
 ### Removed
 - **The classic v2 UI shell is gone — v3 is the only UI (R3a).** `static/index.html`, the
   `/v2` route, and the `FEEDBACK_UI` v2/legacy opt-out are deleted; `/` and `/v3` both serve

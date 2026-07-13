@@ -10,11 +10,22 @@ the plugin under ``venue-packs/<id>/`` or downloaded on demand into
 ``CONFIG_DIR/plugin_uploads/career/venues/<id>/``. Downloaded packs override
 bundled packs so release assets can replace a built-in starter venue.
 
+Passports (badge journey per instrument × genre — the identity layer on top
+of the same stars): badges are COMPUTED on read from ``song_stats`` × the
+library's effective genre, never stored. The only persisted career state is
+what cannot be derived — instrument commitment, opened passports, and the
+relayed virtuoso drill snapshot — as JSON under ``CONFIG_DIR/career/``
+(exported via ``settings.server_files``).
+
 Endpoints (all under /api/plugins/career/):
   GET    /state                       stars + per-venue unlock/install/download status
   POST   /packs/{venue_id}/download   start background pack download (409 if running)
   DELETE /packs/{venue_id}            remove an installed pack
   GET    /venues/{venue_id}/{filename} serve pack files (manifest.json, loops, stingers)
+  GET    /passports                   passport walls: badges, stubs, genres, drill status
+  POST   /passports/commit            commit to an instrument (the wax seal, Stage 0)
+  POST   /passports/open              open a genre passport for an instrument
+  POST   /drill-state                 relayed virtuoso.progress snapshot (drill intake)
 """
 
 import hashlib
@@ -26,10 +37,13 @@ import tempfile
 import threading
 import urllib.request
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import HTTPException
+from fastapi import Body, HTTPException
 from fastapi.responses import FileResponse
+
+from progression import instrument_for_arrangement
 
 PLUGIN_ID = "career"
 VENUE_ID_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
@@ -118,6 +132,235 @@ def _stars():
     return sum(per_song.values()), per_song, detail
 
 
+# ── Passports ─────────────────────────────────────────────────────────────────
+
+GENRE_MAX_LEN = 64
+DRILL_SNAPSHOT_MAX_BYTES = 256 * 1024
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _genre_display(genre):
+    return " ".join(str(genre or "").strip().split())
+
+
+def _genre_key(genre):
+    return _genre_display(genre).lower()
+
+
+def _state_file() -> Path:
+    return _state["state_dir"] / "passports-state.json"
+
+
+def _drill_file() -> Path:
+    return _state["state_dir"] / "drill-state.json"
+
+
+def _load_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def _save_json(path: Path, obj):
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _career_state():
+    st = _load_json(_state_file(), {})
+    if not isinstance(st, dict):
+        st = {}
+    if not isinstance(st.get("instruments"), dict):
+        st["instruments"] = {}
+    if not isinstance(st.get("passports"), dict):
+        st["passports"] = {}
+    return st
+
+
+def _genre_expr(db):
+    # Reuse the host's override-aware effective-genre SQL (Fix-metadata popup
+    # overrides); plain `genre` on stand-ins that don't implement it.
+    fn = getattr(db, "_effective_genre_expr", None)
+    return fn() if callable(fn) else "genre"
+
+
+def _instrument_of(arrangements, arrangement):
+    """Progression's arrangement→instrument mapping, via the song_stats
+    arrangement index into the song's arrangements JSON."""
+    entry = None
+    try:
+        idx = int(arrangement)
+        if isinstance(arrangements, list) and 0 <= idx < len(arrangements):
+            entry = arrangements[idx]
+    except (TypeError, ValueError):
+        entry = None
+    return instrument_for_arrangement(entry)
+
+
+def _played_by_instrument_genre():
+    """(instrument, genre_key) → {filename: stub dict}. Best accuracy per
+    (instrument, song); the JOIN keeps the same dead-song filter as _stars()."""
+    db = _state["meta_db"]
+    if db is None:
+        return {}
+    thresholds = _state["content"]["star_accuracy_thresholds"]
+    rows = db.conn.execute(
+        "SELECT s.filename, s.arrangement, s.best_accuracy, s.last_played_at, "
+        "       songs.title, songs.artist, songs.arrangements, "
+        f"      {_genre_expr(db)} "
+        "FROM song_stats s JOIN songs ON songs.filename = s.filename"
+    ).fetchall()
+    arrs_cache = {}
+    out = {}
+    for filename, arrangement, acc, played_at, title, artist, arrs_json, genre in rows:
+        gkey = _genre_key(genre)
+        if not gkey:
+            continue
+        if filename not in arrs_cache:
+            try:
+                arrs_cache[filename] = json.loads(arrs_json) if arrs_json else None
+            except (TypeError, ValueError):
+                arrs_cache[filename] = None
+        instrument = _instrument_of(arrs_cache[filename], arrangement)
+        acc = acc or 0.0
+        stub = out.setdefault((instrument, gkey), {}).get(filename)
+        if stub is None:
+            out[(instrument, gkey)][filename] = {
+                "filename": filename,
+                "title": title or filename,
+                "artist": artist or "",
+                "best_accuracy": acc,
+                "last_played_at": played_at,
+            }
+        else:
+            stub["best_accuracy"] = max(stub["best_accuracy"], acc)
+            stub["last_played_at"] = max(stub["last_played_at"] or "", played_at or "") or None
+    for stubs in out.values():
+        for stub in stubs.values():
+            acc = stub["best_accuracy"]
+            stub["best_accuracy"] = round(acc, 4)
+            stub["stars"] = sum(1 for t in thresholds if acc >= t)
+    return out
+
+
+def _library_genres():
+    """Distinct effective genres across the live library (the brochure rack)."""
+    db = _state["meta_db"]
+    if db is None:
+        return []
+    rows = db.conn.execute(
+        f"SELECT {_genre_expr(db)} AS g, COUNT(*) FROM songs GROUP BY g").fetchall()
+    by_key = {}
+    for genre, count in rows:
+        display = _genre_display(genre)
+        key = display.lower()
+        if not key:
+            continue
+        cur = by_key.get(key)
+        if cur:  # case-variant duplicates collapse onto the first-seen casing
+            cur["songs_in_library"] += count
+        else:
+            by_key[key] = {"genre_key": key, "genre": display,
+                           "songs_in_library": count}
+    return sorted(by_key.values(),
+                  key=lambda r: (-r["songs_in_library"], r["genre_key"]))
+
+
+def _badge_requirement(gkey):
+    cfg = _state["passports_content"]
+    req = dict(cfg.get("badge_requirement") or {})
+    req.setdefault("songs", 5)
+    req.setdefault("min_stars", 2)
+    override = (cfg.get("genres") or {}).get(gkey)
+    if isinstance(override, dict):
+        req.update(override)
+    req["virtuoso_nodes"] = [n for n in (req.get("virtuoso_nodes") or [])
+                             if isinstance(n, str)]
+    return req
+
+
+def _drill_by_node():
+    doc = _load_json(_drill_file(), {})
+    if not isinstance(doc, dict):
+        return None, {}
+    snapshot = doc.get("snapshot") if isinstance(doc.get("snapshot"), dict) else {}
+    by_node = snapshot.get("byNode") if isinstance(snapshot.get("byNode"), dict) else {}
+    return doc.get("received_at"), by_node
+
+
+def _node_cleared(by_node, node_id):
+    """A drill counts as cleared on real completion evidence: mastered, or any
+    depth rung flipped true (virtuoso's gained-only false→true artifacts)."""
+    entry = by_node.get(node_id)
+    if not isinstance(entry, dict):
+        return False
+    depth = entry.get("depth") if isinstance(entry.get("depth"), dict) else {}
+    return bool(entry.get("masteredAt")) or any(bool(v) for v in depth.values())
+
+
+def _passports_view():
+    cfg = _state["passports_content"]
+    graded = set(cfg.get("graded_instruments") or [])
+    st = _career_state()
+    played = _played_by_instrument_genre()
+    received_at, by_node = _drill_by_node()
+    instruments = {}
+    for inst in cfg.get("instruments") or []:
+        committed_at = (st["instruments"].get(inst) or {}).get("committed_at")
+        opened = st["passports"].get(inst)
+        opened = opened if isinstance(opened, dict) else {}
+        passports = []
+        for gkey, meta in sorted(opened.items(),
+                                 key=lambda kv: ((kv[1] or {}).get("opened_at") or "", kv[0])):
+            meta = meta if isinstance(meta, dict) else {}
+            req = _badge_requirement(gkey)
+            songs = list(played.get((inst, gkey), {}).values())
+            for s in songs:
+                s["qualifies"] = s["stars"] >= req["min_stars"]
+            songs.sort(key=lambda s: (not s["qualifies"], -s["stars"],
+                                      s["title"].lower()))
+            qualifying = sum(1 for s in songs if s["qualifies"])
+            required = req["virtuoso_nodes"]
+            cleared = [n for n in required if _node_cleared(by_node, n)]
+            is_graded = inst in graded
+            if not is_graded:
+                # Where the engine can't fairly grade the instrument's job
+                # (bass pocket, feel) the passport shows repertoire, never a
+                # false badge denial — the doc's shown-not-judged rule.
+                badge = "shown_not_judged"
+            elif qualifying >= req["songs"] and len(cleared) == len(required):
+                badge = "earned"
+            else:
+                badge = "in_progress"
+            passports.append({
+                "genre_key": gkey,
+                "genre": meta.get("genre") or gkey,
+                "opened_at": meta.get("opened_at"),
+                "requirement": req,
+                "graded": is_graded,
+                "songs": songs,
+                "qualifying_count": qualifying,
+                "drills": {"required": required, "cleared": cleared},
+                "badge": badge,
+            })
+        instruments[inst] = {"committed_at": committed_at, "passports": passports}
+    return {
+        "config": {
+            "badge_requirement": cfg.get("badge_requirement") or {},
+            "graded_instruments": sorted(graded),
+            "instruments": list(cfg.get("instruments") or []),
+        },
+        "instruments": instruments,
+        "genres": _library_genres(),
+        "drill_state": {"received_at": received_at},
+    }
+
+
 def _validate_pack_dir(pack_dir: Path):
     """Raise ValueError unless pack_dir holds a complete venue pack."""
     manifest_path = pack_dir / "manifest.json"
@@ -197,6 +440,13 @@ def setup(app, context):
     _state["venues_dir"] = (
         Path(context["config_dir"]) / "plugin_uploads" / PLUGIN_ID / "venues")
     _state["venues_dir"].mkdir(parents=True, exist_ok=True)
+    _state["passports_content"] = json.loads(
+        (plugin_dir / "passports.json").read_text(encoding="utf-8"))
+    # Persisted career state (commitment / opened passports / drill snapshot)
+    # lives under CONFIG_DIR/career/ — declared in settings.server_files so it
+    # rides the settings export/import bundle. Packs stay out (they're media).
+    _state["state_dir"] = Path(context["config_dir"]) / PLUGIN_ID
+    _state["state_dir"].mkdir(parents=True, exist_ok=True)
     _state["meta_db"] = context.get("meta_db")
     _state["log"] = context.get("log") or _state["log"]
     for v in _state["content"]["venues"]:
@@ -228,6 +478,64 @@ def setup(app, context):
             "star_accuracy_thresholds": _state["content"]["star_accuracy_thresholds"],
             "venues": venues,
         }
+
+    @app.get(f"/api/plugins/{PLUGIN_ID}/passports")
+    def get_passports():
+        with _lock:
+            return _passports_view()
+
+    @app.post(f"/api/plugins/{PLUGIN_ID}/passports/commit")
+    def commit_instrument(body: dict = Body(...)):
+        inst = str((body or {}).get("instrument") or "")
+        if inst not in (_state["passports_content"].get("instruments") or []):
+            raise HTTPException(400, "Unknown instrument.")
+        with _lock:
+            st = _career_state()
+            entry = st["instruments"].setdefault(inst, {})
+            # Idempotent: the wax seal is pressed once; re-commits keep the
+            # original date (only-gained-never-lost).
+            if not entry.get("committed_at"):
+                entry["committed_at"] = _now_iso()
+                _save_json(_state_file(), st)
+        return {"ok": True, "instrument": inst,
+                "committed_at": entry["committed_at"]}
+
+    @app.post(f"/api/plugins/{PLUGIN_ID}/passports/open")
+    def open_passport(body: dict = Body(...)):
+        inst = str((body or {}).get("instrument") or "")
+        genre = _genre_display((body or {}).get("genre"))
+        gkey = genre.lower()
+        if inst not in (_state["passports_content"].get("instruments") or []):
+            raise HTTPException(400, "Unknown instrument.")
+        if not gkey or len(genre) > GENRE_MAX_LEN:
+            raise HTTPException(400, "Provide a genre.")
+        with _lock:
+            st = _career_state()
+            # Opening a passport implies the instrument commitment (permissive
+            # server, ceremony ordering is the UI's job).
+            st["instruments"].setdefault(inst, {}).setdefault(
+                "committed_at", _now_iso())
+            genres = st["passports"].setdefault(inst, {})
+            if gkey not in genres:
+                genres[gkey] = {"genre": genre, "opened_at": _now_iso()}
+                _save_json(_state_file(), st)
+        return {"ok": True, "instrument": inst, "passport": genres[gkey]}
+
+    @app.post(f"/api/plugins/{PLUGIN_ID}/drill-state")
+    def post_drill_state(body: dict = Body(...)):
+        # The relayed virtuoso.progress snapshot (career's screen.js listens to
+        # the virtuoso:progress bus event and forwards the localStorage doc).
+        # Only the fields the badge check reads are kept.
+        if not isinstance(body, dict) or not isinstance(body.get("byNode"), dict):
+            raise HTTPException(400, "Expected a progress snapshot with byNode.")
+        snapshot = {"mode": body.get("mode"), "xp": body.get("xp"),
+                    "byNode": body["byNode"]}
+        if len(json.dumps(snapshot)) > DRILL_SNAPSHOT_MAX_BYTES:
+            raise HTTPException(413, "Snapshot too large.")
+        with _lock:
+            _save_json(_drill_file(), {"received_at": _now_iso(),
+                                       "snapshot": snapshot})
+        return {"ok": True}
 
     @app.post(f"/api/plugins/{PLUGIN_ID}/packs/{{venue_id}}/download")
     def start_download(venue_id: str):

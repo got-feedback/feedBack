@@ -1,12 +1,18 @@
 {
     "id": "career",
     "name": "Career",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "bundled": true,
     "private": false,
-    "description": "Career mode — gig your way from a local bar to the arena. Earn stars per song; the crowd reacts to how you play.",
+    "description": "Career mode — gig your way from a local bar to the arena, and build a passport wall of genre badges per instrument. Earn stars per song; the crowd reacts to how you play.",
     "screen": "screen.html",
     "script": "screen.js",
     "styles": "assets/career.css",
+    "settings": {
+        "html": "settings.html",
+        "server_files": [
+            "career/"
+        ]
+    },
     "routes": "routes.py"
 }

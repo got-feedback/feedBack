@@ -497,6 +497,56 @@
         </button>`;
     }
 
+    // Practice invitations: which stamps are closest, and what would bring
+    // them home. Invitations only — no meters, no obligations.
+
+    // Floor, never round: 74.9% must not display as the already-met "75%".
+    function pct(frac) { return Math.floor((Number(frac) || 0) * 100); }
+
+    function ppNeed(p) {
+        return Math.max(0, ((p.requirement || {}).songs || 0) - (p.qualifying_count || 0));
+    }
+
+    // The one blocker phrase — shared by the Closest-stamps strip and the
+    // passport book's invite line so they can never contradict each other.
+    function ppAskHTML(p, withHint) {
+        const req = p.requirement || {};
+        const need = ppNeed(p);
+        const starGl = '★'.repeat(req.min_stars || 0);
+        if (need > 0) {
+            const near = withHint ? (p.nearest || [])[0] : null;
+            const hint = near
+                ? ` · nearest: <em>${esc(near.title)}</em> at ${pct(near.best_accuracy)}%`
+                : '';
+            return `${need === 1 ? `one more ${starGl} song` : `${need} more ${starGl} songs`}${hint}`;
+        }
+        const labels = ((_pp && _pp.config) || {}).drill_labels || {};
+        const drills = p.drills || {};
+        const pending = (drills.required || []).filter((n) => !(drills.cleared || []).includes(n));
+        return `clear ${pending.map((n) => esc(labels[n] || n)).join(', ') || 'the genre drill'} in Virtuoso`;
+    }
+
+    function closestLineHTML(p) {
+        return `<button class="pp-closest-row" data-pp-open="${esc(p.genre_key)}">
+            <span class="pp-closest-genre">${esc(p.genre)}</span>
+            <span class="pp-closest-ask">${ppAskHTML(p, true)}</span>
+        </button>`;
+    }
+
+    function renderClosest(inst, data) {
+        const host = $('pp-closest');
+        if (!host) return;
+        const candidates = (data.passports || [])
+            .filter((p) => p.badge === 'in_progress')
+            .sort((a, b) => ppNeed(a) - ppNeed(b))
+            .slice(0, 3);
+        if (!candidates.length) { host.innerHTML = ''; return; }
+        host.innerHTML = `<div class="pp-closest">
+            <div class="pp-closest-head">Closest stamps</div>
+            ${candidates.map(closestLineHTML).join('')}
+        </div>`;
+    }
+
     function renderShelf(inst, data) {
         const shelf = $('pp-shelf');
         if (!shelf) return;
@@ -551,6 +601,7 @@
                 ${esc(ppLabel(i))}${earned ? ` <span class="pp-inst-badges">⚡${earned}</span>` : ''}${committed ? '' : ' <span class="pp-inst-plus">+</span>'}
             </button>`;
         }).join('');
+        renderClosest(inst, data);
         renderShelf(inst, data);
         renderRack(inst, data);
     }
@@ -576,22 +627,13 @@
 
     function ppBookHTML(inst, p, pendingSlam) {
         const req = p.requirement || {};
-        const need = Math.max(0, (req.songs || 0) - p.qualifying_count);
         const starGl = '★'.repeat(req.min_stars || 0);
         const reqNodes = (p.drills || {}).required || [];
         const clearedNodes = new Set((p.drills || {}).cleared || []);
         const labels = ((_pp && _pp.config) || {}).drill_labels || {};
-        const pendingDrills = reqNodes.filter((n) => !clearedNodes.has(n));
-        // The invite names what actually blocks the stamp: songs first, then
-        // the genre drill once the song bar is met.
-        let invite;
-        if (need > 0) {
-            invite = need === 1 ? `One more ${starGl} song mints this stamp.`
-                : `${need} more ${starGl} songs mint this stamp.`;
-        } else {
-            const names = pendingDrills.map((n) => labels[n] || n).join(', ');
-            invite = `Clear ${names || 'the genre drill'} in Virtuoso to mint this stamp.`;
-        }
+        // The invite names what actually blocks the stamp — same shared
+        // phrase as the Closest-stamps strip, so they can't contradict.
+        const invite = `${ppAskHTML(p, false)} mints this stamp.`;
         let badgeArea = '';
         if (p.badge === 'shown_not_judged') {
             badgeArea = `<div class="pp-snj">Shown, not judged — your ${esc(ppLabel(inst).toLowerCase())} repertoire speaks for itself.</div>`;
@@ -608,7 +650,7 @@
                 <span class="pp-stamp-genre">${esc(p.genre.toUpperCase())}</span>
                 <span class="pp-stamp-tier">BRONZE</span>
             </div>
-            <div class="pp-invite">${esc(invite)}</div>`;
+            <div class="pp-invite">${invite.charAt(0).toUpperCase()}${invite.slice(1)}</div>`;
         }
         const hours = fmtHours(p.seconds_total);
         const odometer = hours
@@ -628,6 +670,16 @@
             : `Play ${esc(p.genre)} songs at ${starGl} to collect ticket stubs.`;
         const stubsHTML = stubs.length ? stubs.map(ppStubHTML).join('')
             : `<div class="pp-stub-empty">${emptyLine}</div>`;
+        // Bring-these-up: nearest-to-the-bar songs (graded, unearned only —
+        // an earned page is memorabilia, not homework).
+        let nearest = '';
+        if (p.badge === 'in_progress' && (p.nearest || []).length) {
+            nearest = `<div class="pp-nearest">
+                <div class="pp-nearest-head">Bring these up</div>
+                ${p.nearest.map((s) =>
+                    `<div class="pp-nearest-row"><em>${esc(s.title)}</em> — best ${pct(s.best_accuracy)}%, ${starGl} at ${pct(s.bar_at)}%</div>`).join('')}
+            </div>`;
+        }
         return `<div class="pp-book-wrap" data-pp-close-bg="1" role="dialog" aria-modal="true" aria-label="${esc(p.genre)} ${esc(ppLabel(inst))} passport">
             <div class="pp-book">
                 <div class="pp-page pp-page-left">
@@ -636,7 +688,7 @@
                 </div>
                 <div class="pp-page pp-page-right">
                     <div class="pp-page-head">Ticket stubs</div>
-                    <div class="pp-stubs">${stubsHTML}</div>
+                    <div class="pp-stubs">${stubsHTML}${nearest}</div>
                 </div>
                 <div class="pp-book-cover pp-leather-${esc(inst)}">
                     <span class="pp-cover-title">${esc(p.genre.toUpperCase())}</span>

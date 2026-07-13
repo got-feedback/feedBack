@@ -245,3 +245,30 @@ def test_family_drills_stay_per_instrument(client, meta_db):
     p = _passport(client, "keys", "death metal")
     assert p["drills"]["required"] == []
     assert p["badge"] == "earned"
+
+
+def test_nearest_invitations_order_and_exclusions(client, meta_db):
+    # Non-qualifying songs sorted by distance to the NEXT star; qualifying
+    # songs never appear; capped at 3.
+    meta_db.add("q.feedpak", 0, 0.80, genre="Soul", arrangements=LEAD)      # qualifies
+    meta_db.add("close.feedpak", 0, 0.74, genre="Soul", arrangements=LEAD)  # 1% to 2★
+    meta_db.add("mid.feedpak", 0, 0.70, genre="Soul", arrangements=LEAD)    # 5% to 2★
+    meta_db.add("far.feedpak", 0, 0.30, genre="Soul", arrangements=LEAD)    # 30% to 1★
+    meta_db.add("far2.feedpak", 0, 0.25, genre="Soul", arrangements=LEAD)
+    _open(client, "guitar", "Soul")
+    p = _passport(client, "guitar", "soul")
+    names = [s["filename"] for s in p["nearest"]]
+    assert names == ["close.feedpak", "mid.feedpak", "far.feedpak"]
+    assert all(s["next_star_at"] is not None for s in p["nearest"])
+    assert "q.feedpak" not in names
+
+
+def test_nearest_targets_the_qualifying_bar_not_next_star(client, meta_db):
+    # A 0★ song 1% from its NEXT star is farther from the ★★ badge bar than
+    # a 1★ song 5% from it — nearest must rank by the badge bar.
+    meta_db.add("one_star.feedpak", 0, 0.70, genre="Soul", arrangements=LEAD)   # 5% to bar
+    meta_db.add("zero_star.feedpak", 0, 0.59, genre="Soul", arrangements=LEAD)  # 1% to next ★, 16% to bar
+    _open(client, "guitar", "Soul")
+    p = _passport(client, "guitar", "soul")
+    assert [s["filename"] for s in p["nearest"]] == ["one_star.feedpak", "zero_star.feedpak"]
+    assert all(s["bar_at"] == 0.75 for s in p["nearest"])

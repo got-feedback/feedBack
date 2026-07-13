@@ -114,10 +114,9 @@ def _stars():
     detail = []
     for filename, acc, title, artist in rows:
         acc = acc or 0.0
-        stars = sum(1 for t in thresholds if acc >= t)
+        stars, next_at = _star_progress(acc, thresholds)
         if stars:
             per_song[filename] = stars
-        next_at = next((t for t in thresholds if acc < t), None)
         detail.append({
             "filename": filename,
             "title": title or filename,
@@ -249,8 +248,16 @@ def _played_by_instrument_genre():
         for stub in stubs.values():
             acc = stub["best_accuracy"]
             stub["best_accuracy"] = round(acc, 4)
-            stub["stars"] = sum(1 for t in thresholds if acc >= t)
+            stub["stars"], stub["next_star_at"] = _star_progress(acc, thresholds)
     return out, seconds
+
+
+def _star_progress(acc, thresholds):
+    """(stars, next_star_at) — the one place the ascending-thresholds
+    assumption lives; _stars() and the passport stubs both use it."""
+    stars = sum(1 for t in thresholds if acc >= t)
+    next_at = next((t for t in thresholds if acc < t), None)
+    return stars, next_at
 
 
 def _library_genres():
@@ -406,6 +413,17 @@ def _passports_view():
                 badge = "earned"
             else:
                 badge = "in_progress"
+            # Practice invitation: the non-qualifying songs closest to the
+            # QUALIFYING bar (the badge ask), nearest first — invitation
+            # data, the UI voices it without meters.
+            thresholds = _state["content"]["star_accuracy_thresholds"]
+            bar = (thresholds[req["min_stars"] - 1]
+                   if 0 < req["min_stars"] <= len(thresholds) else None)
+            nearest = [] if bar is None else sorted(
+                (s for s in songs if not s["qualifies"]),
+                key=lambda s: bar - s["best_accuracy"])[:3]
+            for s in nearest:
+                s["bar_at"] = bar
             passports.append({
                 "genre_key": gkey,
                 "genre": meta.get("genre") or gkey,
@@ -414,6 +432,7 @@ def _passports_view():
                 "graded": is_graded,
                 "songs": songs,
                 "qualifying_count": qualifying,
+                "nearest": nearest,
                 # Honest hours odometer (Stage 5 post-cap): a true fact that
                 # only grows — never a target, never a meter.
                 "seconds_total": round(played_seconds.get((inst, gkey), 0.0), 1),

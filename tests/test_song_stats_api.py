@@ -480,6 +480,8 @@ def test_seconds_only_post_accrues_without_touching_position(client):
     # overwrite Continue with the end-of-song offset).
     assert row["plays"] == 0
     assert row["last_position"] == pytest.approx(42.0)
+    # But the song WAS played — recency ordering must see it.
+    assert row["last_played_at"]
     # Still counts as playing today for the streak.
     assert r.json()["progress"]["current_streak"] == 1
 

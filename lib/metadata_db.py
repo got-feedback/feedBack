@@ -2130,16 +2130,25 @@ class MetadataDB:
         return self._stats_row(filename, int(arrangement))
 
     def add_play_seconds(self, filename: str, arrangement: int, seconds: float) -> dict:
-        """Accrue wall-clock play time only (no plays/score/position change) —
+        """Accrue wall-clock play time (no plays/score/position change) —
         the recorder's seconds-only flush for unscored plays that ran to the
         song's natural end (no resume position to touch there: `song:ended`
-        must not overwrite Continue with the end-of-song offset)."""
+        must not overwrite Continue with the end-of-song offset). Stamps
+        last_played_at like touch_position does: the song WAS played, so
+        /api/stats/recent and Continue ordering must see it. Accepted skew:
+        the recorder retries FAILED flushes later, which stamps recency at
+        retry time — rare (offline corner), self-healing on the next play,
+        and preferable to the alternative (keep-existing would leave repeat
+        plays looking stale, the common case)."""
         with self._lock:
             self.conn.execute(
-                """INSERT INTO song_stats (filename, arrangement, seconds_total, updated_at)
-                   VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
+                """INSERT INTO song_stats (filename, arrangement, seconds_total,
+                                           last_played_at, updated_at)
+                   VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'),
+                           strftime('%Y-%m-%d %H:%M:%f','now'))
                    ON CONFLICT(filename, arrangement) DO UPDATE SET
                        seconds_total = song_stats.seconds_total + excluded.seconds_total,
+                       last_played_at = excluded.last_played_at,
                        updated_at = excluded.updated_at""",
                 (filename, int(arrangement), float(seconds)),
             )

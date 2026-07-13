@@ -101,6 +101,10 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
+            // A 4xx/5xx JSON error body must read as FAILURE — callers
+            // re-queue accrued seconds on null, and a parsed error object
+            // would silently drop them.
+            if (!r.ok) return null;
             try { return await r.json(); } catch (e) { return null; }
         } catch (e) { return null; /* offline / endpoint absent — non-fatal */ }
     }

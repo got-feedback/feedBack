@@ -105,6 +105,19 @@ def test_duplicate_exception_key_is_rejected():
         gate._parse_exceptions(textwrap.dedent(doc), "test")
 
 
+@pytest.mark.parametrize("doc", [
+    "- just\n- a\n- list\n",                 # list at top level
+    "exceptions: not-a-list\n",              # scalar where list expected
+    "exceptions:\n  - just-a-string\n",      # non-mapping entry
+    "exceptions: [\n",                       # invalid YAML
+])
+def test_malformed_exceptions_fail_legibly(doc):
+    # Malformed shapes must exit with a ::error::, not an AttributeError
+    # traceback — CI output has to say what to fix.
+    with pytest.raises(SystemExit):
+        gate._parse_exceptions(doc, "test")
+
+
 def test_exception_without_issue_is_rejected():
     # No tracking issue, no exception — entries are debt and debt is tracked.
     doc = """

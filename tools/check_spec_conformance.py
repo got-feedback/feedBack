@@ -182,9 +182,25 @@ def _parse_exceptions(text: str, origin: str) -> dict[str, str]:
     """Parse an exceptions document into {key: tracking issue}."""
     import yaml  # runtime dep (PyYAML is already in requirements.txt)
 
-    data = yaml.safe_load(text) or {}
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        _fail(f"{origin}: not valid YAML — {e}")
+        sys.exit(1)
+    # A malformed shape (list/string at top level, non-mapping entry) must fail
+    # with a CI-legible error, not an AttributeError traceback.
+    if not isinstance(data, dict):
+        _fail(f"{origin}: top level must be a mapping with an 'exceptions' list, got {type(data).__name__}")
+        sys.exit(1)
+    entries = data.get("exceptions") or []
+    if not isinstance(entries, list):
+        _fail(f"{origin}: 'exceptions' must be a list, got {type(entries).__name__}")
+        sys.exit(1)
     out: dict[str, str] = {}
-    for entry in data.get("exceptions") or []:
+    for entry in entries:
+        if not isinstance(entry, dict):
+            _fail(f"{origin}: each exception must be a mapping with 'key' and 'issue', got {type(entry).__name__}")
+            sys.exit(1)
         key, issue = entry.get("key"), entry.get("issue")
         if not key or not issue:
             _fail(f"{origin}: every exception needs both 'key' and 'issue'")

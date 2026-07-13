@@ -104,18 +104,21 @@ branch.
 
 Known, and worth fixing in follow-ups rather than blocking on:
 
-- **Layer 1 is name-heuristic.** It recognises manifest dicts bound to locals named in `MANIFEST_VARS`
-  (`manifest`, `mf`) plus the `load_manifest(...)` call form. This works because the loaders use a uniform
-  idiom, but it is fragile against a refactor that renames the local. The `readers-complete` guard limits the
-  blast radius — a module that touches manifest keys can't go unscanned — but a *renamed local inside a
-  scanned module* would still slip. The hardening step is to route all manifest access through a single
-  declared `KNOWN_MANIFEST_KEYS` registry in `lib/sloppak.py`; the gate then compares registry against schema
-  exactly instead of inferring.
+- **Layer 1's receiver detection is heuristic.** Locals *assigned from* `load_manifest(...)` are discovered
+  flow-aware whatever they're called (chart.py's `m` taught us that), and the inline
+  `(load_manifest(p) or {}).get(...)` form is recognised — but a manifest that arrives as a **function
+  parameter** is only recognised by name (`MANIFEST_VARS`: `manifest`, `mf`). A parameter called something
+  else would slip. The hardening step is to route all manifest access through a single declared
+  `KNOWN_MANIFEST_KEYS` registry in `lib/sloppak.py`; the gate then compares registry against schema exactly
+  instead of inferring.
 - **Layer 1 covers top-level keys only.** Nested structure (`arrangements[].file`, `.id`, `.notation`) isn't
   checked. Extending to it means walking the schema's `$ref` subschemas.
 - **Layer 1 recognises `get`, `setdefault`, and subscripts** as key access. `update()` and `pop()` aren't
   used against a feedpak manifest anywhere in the tree, so they're deliberately not special-cased rather than
-  speculatively handled — but note `KEY_OPS` (which drives `readers-complete`) doesn't look for them either.
+  speculatively handled. `readers-complete` reuses the same scanner (`keys_touched()`), so this blind spot is
+  shared, not doubled: a module using only unrecognised access forms would evade both. Keys passed as literal
+  *call arguments* to helpers (`_gap_fill_manifest_absent(manifest, "album")` in `lib/routers/song.py`) are
+  likewise unseen.
 - **Layer 4 can't catch unknown keys**, because `manifest.schema.json` sets `additionalProperties: true` and
   the reference validator deliberately "treats unknown keys/files as forward-compatible". Fixing this
   properly belongs in the spec (tighten the schema, or give the validator a `--strict` mode). Until then,

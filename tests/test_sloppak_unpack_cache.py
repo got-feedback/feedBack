@@ -55,8 +55,10 @@ def _cap_mb(monkeypatch, mb):
 
 
 def test_read_member_bytes_does_not_unpack(tmp_path, monkeypatch):
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     pack = _zip_pack(dlc / "song.feedpak")
 
     data = sloppak_mod.read_member_bytes(pack, "arrangements/lead.json")
@@ -69,15 +71,18 @@ def test_read_member_bytes_does_not_unpack(tmp_path, monkeypatch):
 
 
 def test_read_member_bytes_missing_member_is_none(tmp_path):
-    dlc = tmp_path / "dlc"; dlc.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
     pack = _zip_pack(dlc / "song.feedpak")
     assert sloppak_mod.read_member_bytes(pack, "arrangements/nope.json") is None
     assert sloppak_mod.read_member_bytes(pack, "") is None
 
 
 def test_unpack_cache_evicts_lru_to_stay_under_cap(tmp_path, monkeypatch):
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _cap_mb(monkeypatch, 1)                       # 1 MB — holds ~2 of our 400 KB packs
 
     for i in range(6):
@@ -104,8 +109,10 @@ def test_eviction_drops_the_source_cache_entry(tmp_path, monkeypatch):
     stale path survives, every stem 404s for the rest of the process instead of
     re-unpacking — a silently broken song, not a slow one.
     """
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _cap_mb(monkeypatch, 1)
 
     for i in range(6):
@@ -124,8 +131,10 @@ def test_eviction_drops_the_source_cache_entry(tmp_path, monkeypatch):
 def test_get_cached_source_dir_self_heals_after_manual_delete(tmp_path, monkeypatch):
     """Telling a user to delete sloppak_cache/ to reclaim disk must be safe."""
     import shutil
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _cap_mb(monkeypatch, 0)                       # eviction off — isolate the delete
     _zip_pack(dlc / "song.feedpak")
 
@@ -143,8 +152,10 @@ def test_get_cached_source_dir_self_heals_after_manual_delete(tmp_path, monkeypa
 
 
 def test_cap_of_zero_disables_eviction(tmp_path, monkeypatch):
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _cap_mb(monkeypatch, 0)
     for i in range(4):
         _zip_pack(dlc / f"song{i}.feedpak")
@@ -157,7 +168,8 @@ def test_read_member_bytes_normalizes_non_canonical_names(tmp_path):
     """A manifest may name a member './arrangements/lead.json' — valid, and it
     resolved fine once unpacked. Reading the zip member by the raw string would
     KeyError and silently report no tones. Same trap read_cover_bytes already hit."""
-    dlc = tmp_path / "dlc"; dlc.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
     pack = _zip_pack(dlc / "song.feedpak")
 
     assert sloppak_mod.read_member_bytes(pack, "./arrangements/lead.json") == ARR
@@ -166,7 +178,8 @@ def test_read_member_bytes_normalizes_non_canonical_names(tmp_path):
 
 
 def test_read_member_bytes_rejects_zip_slip(tmp_path):
-    dlc = tmp_path / "dlc"; dlc.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
     pack = _zip_pack(dlc / "song.feedpak")
     assert sloppak_mod.read_member_bytes(pack, "../../etc/passwd") is None
     assert sloppak_mod.read_member_bytes(pack, "/etc/passwd") is None
@@ -187,8 +200,10 @@ def test_eviction_never_deletes_an_in_flight_unpack(tmp_path, monkeypatch):
     import threading
 
     big = b"\x00" * (700 * 1024)
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _cap_mb(monkeypatch, 1)
     for i in range(3):
         _zip_pack(dlc / f"song{i}.feedpak", stem_bytes=big)
@@ -229,7 +244,8 @@ def test_read_member_bytes_finds_backslash_members(tmp_path):
     """Windows-authored packs store members as 'arrangements\\lead.json'.
     _unpack_zip() normalizes those on extract, so unpack-then-read found them.
     An exact getinfo() would not — and we'd silently report the song has no tones."""
-    dlc = tmp_path / "dlc"; dlc.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
     pack = dlc / "win.feedpak"
     with zipfile.ZipFile(pack, "w") as zf:
         zf.writestr("manifest.yaml", yaml.safe_dump({"title": "w"}))
@@ -242,7 +258,8 @@ def test_read_member_bytes_finds_non_canonical_STORED_names(tmp_path):
     """The archive itself may store './arrangements/lead.json'. _unpack_zip()
     normalizes stored names on extract, so unpack-then-read resolved it. Both the
     requested path and the stored name must be normalized, or the tones vanish."""
-    dlc = tmp_path / "dlc"; dlc.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
     pack = dlc / "odd.feedpak"
     with zipfile.ZipFile(pack, "w") as zf:
         zf.writestr("manifest.yaml", yaml.safe_dump({"title": "o"}))
@@ -256,7 +273,8 @@ def test_read_member_bytes_matches_unpack_last_write_wins(tmp_path):
     writes them in order and the LAST one is what ends up on disk. Reading the
     raw member by exact name would hand back the first — stale arrangement data
     that no unpacked read would ever have produced."""
-    dlc = tmp_path / "dlc"; dlc.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
     pack = dlc / "dupe.feedpak"
     with zipfile.ZipFile(pack, "w") as zf:
         zf.writestr("manifest.yaml", yaml.safe_dump({"title": "d"}))
@@ -270,8 +288,10 @@ def test_failed_unpack_does_not_leave_the_dir_un_evictable(tmp_path, monkeypatch
     """A dir marked in-flight is skipped by eviction. If a failed unpack leaves the
     marker behind, that dir becomes permanently un-evictable — a slow leak of
     exactly the thing this cap exists to prevent."""
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _cap_mb(monkeypatch, 1)
     _zip_pack(dlc / "boom.feedpak")
 

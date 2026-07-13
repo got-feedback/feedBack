@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import shutil
 import threading
 import zipfile
@@ -81,6 +82,116 @@ _unpack_semaphore = threading.BoundedSemaphore(_UNPACK_MAX_CONCURRENCY)
 _unpack_locks: dict[str, threading.Lock] = {}
 _unpack_locks_guard = threading.Lock()
 
+# Destinations with an unpack in flight right now. Eviction MUST skip these: two
+# unpacks run concurrently, so one finishing could otherwise rmtree the other's
+# half-written directory and leave that resolver caching an incomplete song.
+_unpacking: set[Path] = set()
+_unpacking_guard = threading.Lock()
+
+# Cap the unpack cache. Stems are already-compressed audio, so an unpacked song
+# is ~1.1x its zip — the cache is effectively a second, DECOMPRESSED copy of
+# every song it holds, and it used to grow without any bound at all. A tester
+# reached 60 GB from a 1800-song library: their whole library, unpacked, because
+# one caller looped the library calling load_song(). Nothing ever deleted any of
+# it — not even when the song itself was deleted.
+#
+# Default 4 GB ≈ 130 average songs of recency, which is far more than the "the
+# song I'm playing, and the last few I played" that this cache actually exists
+# to serve. Override with FEEDBACK_SLOPPAK_CACHE_MAX_MB (0 disables eviction).
+def _unpack_cache_cap_bytes() -> int:
+    raw = os.environ.get("FEEDBACK_SLOPPAK_CACHE_MAX_MB", "").strip()
+    try:
+        mb = int(raw) if raw else 4096
+    except ValueError:
+        mb = 4096
+    return max(0, mb) * 1024 * 1024
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _touch(path: Path) -> None:
+    """Bump mtime so the LRU sweep below treats this song as recently used.
+
+    Reading files out of an unpacked dir doesn't change the DIRECTORY's mtime,
+    so without this the song you are actively playing looks as stale as one you
+    unpacked days ago — and a burst of unpacks could evict it mid-song.
+    """
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
+
+
+def _evict_unpack_cache(root: Path, keep: Path | None = None) -> None:
+    """Bound the unpack cache: drop least-recently-used songs until under the cap.
+
+    `keep` is never evicted — it's the song the caller just resolved, i.e. almost
+    certainly the one about to be played.
+
+    Evicting a directory MUST also drop its `_source_cache` entry. Otherwise
+    get_cached_source_dir() keeps handing out a path that no longer exists and
+    the media route 404s on every stem instead of re-unpacking (it only falls
+    back to resolve_source_dir when the cache returns None).
+    """
+    cap = _unpack_cache_cap_bytes()
+    if cap <= 0:
+        return
+    try:
+        entries = []
+        total = 0
+        for d in root.iterdir():
+            if not d.is_dir():
+                continue
+            try:
+                size = _dir_size(d)
+                mtime = d.stat().st_mtime
+            except OSError:
+                continue
+            entries.append((mtime, size, d))
+            total += size
+        if total <= cap:
+            return
+
+        keep_resolved = keep.resolve() if keep else None
+        entries.sort(key=lambda e: e[0])          # oldest first
+        for _mtime, size, d in entries:
+            if total <= cap:
+                break
+            try:
+                if keep_resolved and d.resolve() == keep_resolved:
+                    continue
+            except OSError:
+                continue
+            # Check-and-delete under ONE hold of the guard. Releasing between the
+            # two would let a resolver mark this dest in-flight and start writing
+            # into it in the gap, and we'd rmtree a song mid-unpack. A resolver
+            # that blocks here simply proceeds afterwards — _unpack_zip recreates
+            # the directory anyway.
+            with _unpacking_guard:
+                if d in _unpacking:
+                    continue                      # another thread is writing this
+                shutil.rmtree(d, ignore_errors=True)
+            if d.exists():
+                continue                          # couldn't remove — don't claim the bytes back
+            total -= size
+            with _source_lock:
+                for fn, (cached_dir, _m, _s) in list(_source_cache.items()):
+                    if cached_dir == d:
+                        _source_cache.pop(fn, None)
+            log.info("sloppak: evicted %s from the unpack cache (%.0f MB)",
+                     d.name, size / 1e6)
+    except OSError:
+        log.warning("sloppak: unpack-cache eviction failed", exc_info=True)
+
 
 def _unpack_lock_for(filename: str) -> threading.Lock:
     """Return a stable per-file lock so concurrent unpacks of the same sloppak
@@ -145,10 +256,17 @@ def resolve_source_dir(
                       re-unpacks if mtime/size changed, then returns that dir.
 
     Caches the resolution so subsequent calls are ~free.
+
+    NOTE: this writes the WHOLE pack — every stem — to disk. Only call it for a
+    song you are about to play. To read a *part* of a song (an arrangement, the
+    lyrics, a tone blob), use read_member_bytes(): unpacking a pack to read a few
+    KB of JSON is ~45x write amplification, and doing it in a loop over the
+    library fills the disk with a decompressed copy of every song.
     """
     path = dlc_root / filename
     stat = path.stat()
     mtime, size = stat.st_mtime, stat.st_size
+    guarded: Path | None = None   # a dir WE unpacked, shielded from eviction
 
     with _source_lock:
         cached = _source_cache.get(filename)
@@ -159,42 +277,76 @@ def resolve_source_dir(
                 and cached_size == size
                 and cached_dir.exists()
             ):
+                # Mark it recently-used before returning — see _touch().
+                if cached_dir != path:
+                    _touch(cached_dir)
                 return cached_dir
 
-    if path.is_dir():
-        resolved = path
-    else:
-        # Zip form — unpack to the cache. Serialize per-file (so concurrent
-        # callers don't rmtree + re-extract the same dest at once) and cap
-        # global unpack concurrency (so a burst can't saturate disk/CPU).
-        dest = unpack_cache_root / _safe_id(filename)
-        with _unpack_lock_for(filename):
-            # Re-check the cache inside the per-file lock — a prior holder may
-            # have just finished unpacking this exact (mtime, size).
-            with _source_lock:
-                cached = _source_cache.get(filename)
-            if (
-                cached
-                and cached[1] == mtime
-                and cached[2] == size
-                and cached[0].exists()
-            ):
-                resolved = cached[0]
-            else:
-                with _unpack_semaphore:
-                    _unpack_zip(path, dest)
-                resolved = dest
+    try:
+        if path.is_dir():
+            resolved = path
+        else:
+            # Zip form — unpack to the cache. Serialize per-file (so concurrent
+            # callers don't rmtree + re-extract the same dest at once) and cap
+            # global unpack concurrency (so a burst can't saturate disk/CPU).
+            dest = unpack_cache_root / _safe_id(filename)
+            with _unpack_lock_for(filename):
+                # Re-check the cache inside the per-file lock — a prior holder may
+                # have just finished unpacking this exact (mtime, size).
+                with _source_lock:
+                    cached = _source_cache.get(filename)
+                if (
+                    cached
+                    and cached[1] == mtime
+                    and cached[2] == size
+                    and cached[0].exists()
+                ):
+                    resolved = cached[0]
+                else:
+                    # Shield `dest` from eviction from the moment we start writing
+                    # until it is safely in _source_cache. `keep` only shields it
+                    # from OUR OWN sweep — a concurrent resolver sweeping with a
+                    # different `keep` would delete it, and we would then cache and
+                    # return a path that no longer exists. The `finally` below
+                    # releases it on EVERY exit, including a failed unpack: leaving
+                    # a dest marked in-flight would make it un-evictable forever.
+                    with _unpacking_guard:
+                        _unpacking.add(dest)
+                    guarded = dest
+                    with _unpack_semaphore:
+                        _unpack_zip(path, dest)
+                    resolved = dest
+                    # The only moment this cache grows. Sweep here rather than on a
+                    # timer so it can never drift far past the cap.
+                    _evict_unpack_cache(unpack_cache_root, keep=dest)
 
-    with _source_lock:
-        _source_cache[filename] = (resolved, mtime, size)
-    return resolved
+        with _source_lock:
+            _source_cache[filename] = (resolved, mtime, size)
+        return resolved
+    finally:
+        if guarded is not None:
+            with _unpacking_guard:
+                _unpacking.discard(guarded)
 
 
 def get_cached_source_dir(filename: str) -> Path | None:
-    """Return the cached source dir for a sloppak if one is known."""
+    """Return the cached source dir for a sloppak if one is known AND still there.
+
+    The existence check is load-bearing: callers (media.py) only fall back to
+    resolve_source_dir() when this returns None, so handing back a path that has
+    been evicted — or that the user deleted by hand to reclaim disk — would 404
+    every stem for the rest of the process instead of re-unpacking.
+    """
     with _source_lock:
         cached = _source_cache.get(filename)
-        return cached[0] if cached else None
+        if not cached:
+            return None
+        src = cached[0]
+        if not src.is_dir():
+            _source_cache.pop(filename, None)
+            return None
+        _touch(src)
+        return src
 
 
 # ── Manifest + song loading ───────────────────────────────────────────────────
@@ -231,6 +383,82 @@ def load_manifest(path: Path) -> dict:
     if path.is_dir():
         return _read_manifest(path)
     return _read_manifest_from_zip(path)
+
+
+_ZIP_ROOT = Path("/_root").resolve()
+
+
+def _zip_member_key(name: str) -> str | None:
+    """Canonical lookup key for a zip member name, or None if it escapes the root.
+
+    Collapses './', 'a/../b' and backslash separators — the same normalization
+    _unpack_zip()/safe_join() apply when extracting. Both the name the caller asks
+    for AND the names the archive actually stores must go through this, or a pack
+    that stores './arrangements/lead.json' unpacks fine but reads back as missing.
+    """
+    safe = safe_join(_ZIP_ROOT, name or "")
+    # None → escapes the root; == root → a degenerate name like "." or "a/..".
+    if safe is None or safe == _ZIP_ROOT:
+        return None
+    return safe.relative_to(_ZIP_ROOT).as_posix()
+
+
+def read_member_bytes(path: Path, rel: str) -> bytes | None:
+    """Return the bytes of ONE file inside a sloppak, or None if it isn't there.
+
+    For a zipped sloppak this opens that single member instead of unpacking the
+    archive — the same trick read_cover_bytes() uses to keep the library grid
+    from exploding every pack just to show a cover.
+
+    Reach for this whenever you want a *part* of a song (an arrangement's JSON,
+    the lyrics, a tone blob) rather than a song you're about to play. The
+    alternative, load_song(), calls resolve_source_dir() and writes the WHOLE
+    pack — every stem — into the unpack cache. That is a ~45x write amplification
+    when all you wanted was a few KB of JSON, and looping the library on it
+    unpacks the entire library (got-feedBack/feedBack: a tester hit 60 GB that
+    way). Stems are already-compressed audio, so an unpacked song is ~1.1x its
+    zip: the cache becomes a second, decompressed copy of everything it touches.
+    """
+    rel = (rel or "").strip()
+    if not rel:
+        return None
+
+    if path.is_dir():
+        target = safe_join(path.resolve(), rel)
+        if target is None or not target.is_file():
+            return None
+        try:
+            return target.read_bytes()
+        except OSError:
+            return None
+
+    # Zip form — read just that member, no unpack. Zip-slip is rejected before we
+    # open anything, and both sides of the comparison are normalized, so a
+    # non-canonical-but-valid name ('./arrangements/lead.json') resolves the same
+    # way it did when we unpacked first.
+    member = _zip_member_key(rel)
+    if member is None:
+        log.warning("sloppak: rejected unsafe member name %r in %r", rel, path)
+        return None
+    try:
+        with zipfile.ZipFile(str(path), "r") as zf:
+            # Match on the NORMALIZED stored name, and take the LAST match — the
+            # archive may store './x' or a backslash path (Windows tooling), and
+            # if it stores two names that normalize to the same file, _unpack_zip
+            # writes them in order so the last one wins. Reading the raw member by
+            # exact name would miss the first case and return the wrong bytes in
+            # the second. A pack has a handful of members; the scan is free.
+            info = None
+            for cand in zf.infolist():
+                if _zip_member_key(cand.filename) == member:
+                    info = cand
+            if info is None or info.is_dir():
+                return None
+            with zf.open(info) as f:
+                return f.read()
+    except (zipfile.BadZipFile, OSError, RuntimeError) as e:
+        log.warning("sloppak: failed to read %r from %s: %s", rel, path.name, e)
+        return None
 
 
 _COVER_MEDIA_TYPES = {

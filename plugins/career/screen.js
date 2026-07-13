@@ -1116,17 +1116,21 @@
         // the set ending gives it back (unlike "Play here", which is an
         // explicit persistent choice on the venue card).
         let restore = null;
-        try {
-            if (prop.venue_id) {
+        if (prop.venue_id) {
+            // Capture the restore snapshot BEFORE any write: if a later write
+            // (or setViz) throws, the stage must still be returnable.
+            try {
                 restore = {
                     venue: localStorage.getItem(VENUE_OVERRIDE_KEY),
                     viz: localStorage.getItem('vizSelection'),
                 };
+            } catch (_) { restore = null; }
+            try {
                 localStorage.setItem(VENUE_OVERRIDE_KEY, prop.venue_id);
                 localStorage.setItem('vizSelection', 'venue');
                 if (typeof window.setViz === 'function') window.setViz('venue');
-            }
-        } catch (_) { restore = null; /* viz optional */ }
+            } catch (_) { /* viz optional — restore stays intact */ }
+        }
         _appliedManifestVenue = null;
         _ppGigRun = {
             songs: prop.songs,

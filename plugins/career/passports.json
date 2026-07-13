@@ -3,6 +3,13 @@
         "songs": 5,
         "min_stars": 2
     },
+    "families": [
+        { "key": "metal", "match": ["metal", "djent", "grindcore", "thrash", "doom"] },
+        { "key": "blues", "match": ["blues"] },
+        { "key": "jazz", "match": ["jazz", "bebop", "swing", "bossa"] },
+        { "key": "funk", "match": ["funk", "disco"] },
+        { "key": "rock", "match": ["rock", "punk", "grunge", "shoegaze"] }
+    ],
     "genres": {
         "blues": { "virtuoso_nodes": { "guitar": ["blues_shuffle"] } },
         "rock": { "virtuoso_nodes": { "guitar": ["rock_power_backbeat"] } },

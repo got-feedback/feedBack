@@ -276,12 +276,33 @@ def _library_genres():
                   key=lambda r: (-r["songs_in_library"], r["genre_key"]))
 
 
+def _genre_family(gkey):
+    """First family whose keyword appears in the genre key (substring — MB's
+    vocabulary is open: 'metalcore' must hit the 'metal' family without an
+    exact alias). List order decides ambiguity: families are checked top to
+    bottom, so 'blues rock' lands on whichever of blues/rock is listed first."""
+    for fam in _state["passports_content"].get("families") or []:
+        if not isinstance(fam, dict):
+            continue
+        for kw in fam.get("match") or []:
+            if isinstance(kw, str) and kw and kw in gkey:
+                return fam.get("key")
+    return None
+
+
 def _badge_requirement(gkey, instrument="guitar"):
     cfg = _state["passports_content"]
     req = dict(cfg.get("badge_requirement") or {})
     req.setdefault("songs", 5)
     req.setdefault("min_stars", 2)
-    override = (cfg.get("genres") or {}).get(gkey)
+    # Exact per-genre override wins; otherwise the genre inherits its FAMILY's
+    # requirement — so 'death metal' / 'metalcore' passports carry the metal
+    # drill without curating every MB sub-genre by hand.
+    genres_cfg = cfg.get("genres") or {}
+    override = genres_cfg.get(gkey)
+    if not isinstance(override, dict):
+        family = _genre_family(gkey)
+        override = genres_cfg.get(family) if family else None
     if isinstance(override, dict):
         req.update(override)
     # virtuoso_nodes: {instrument: [node_ids]} — a passport only carries its

@@ -208,3 +208,40 @@ def test_drill_state_merge_is_gained_only(client, meta_db):
     p = _passport(client)
     assert p["drills"]["cleared"] == ["blues_shuffle"]
     assert p["badge"] == "earned"
+
+
+def test_genre_families_inherit_drills(client, meta_db):
+    # 'death metal' has no exact entry — it inherits the metal family's drill.
+    for i in range(5):
+        meta_db.add(f"dm{i}.feedpak", 0, 0.9, genre="Death Metal", arrangements=LEAD)
+    _open(client, "guitar", "Death Metal")
+    p = _passport(client, "guitar", "death metal")
+    assert p["drills"]["required"] == ["melodic_metal_gallop"]
+    assert p["badge"] == "in_progress"
+    # 'metalcore' (single word) matches by substring, no alias needed.
+    _open(client, "guitar", "Metalcore")
+    assert _passport(client, "guitar", "metalcore")["drills"]["required"] == \
+        ["melodic_metal_gallop"]
+    # 'blues rock' resolves by family LIST ORDER: blues comes before rock.
+    _open(client, "guitar", "Blues Rock")
+    assert _passport(client, "guitar", "blues rock")["drills"]["required"] == \
+        ["blues_shuffle"]
+    # A genre outside every family stays songs-only.
+    _open(client, "guitar", "Reggae")
+    assert _passport(client, "guitar", "reggae")["drills"]["required"] == []
+    # Exact per-genre entries still beat the family (the shipped 'metal' entry
+    # IS the exact entry for genre key 'metal').
+    _open(client, "guitar", "Metal")
+    assert _passport(client, "guitar", "metal")["drills"]["required"] == \
+        ["melodic_metal_gallop"]
+
+
+def test_family_drills_stay_per_instrument(client, meta_db):
+    # Family inheritance must not leak guitar drills onto other instruments.
+    keys_arr = [{"type": "lead", "name": "Keys"}]
+    for i in range(5):
+        meta_db.add(f"kdm{i}.feedpak", 0, 0.9, genre="Death Metal", arrangements=keys_arr)
+    _open(client, "keys", "Death Metal")
+    p = _passport(client, "keys", "death metal")
+    assert p["drills"]["required"] == []
+    assert p["badge"] == "earned"

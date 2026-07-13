@@ -4,9 +4,13 @@
     "version": "0.1.0",
     "bundled": true,
     "private": false,
-    "description": "Career mode — gig your way from a local bar to the arena. Earn stars per song; the crowd reacts to how you play.",
+    "description": "Career mode \u2014 gig your way from a local bar to the arena. Earn stars per song; the crowd reacts to how you play.",
     "screen": "screen.html",
     "script": "screen.js",
     "styles": "assets/career.css",
-    "routes": "routes.py"
+    "routes": "routes.py",
+    "settings": {
+        "html": "settings.html",
+        "category": "system"
+    }
 }

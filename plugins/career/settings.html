@@ -1,0 +1,21 @@
+<div class="space-y-3 text-sm">
+    <label class="flex items-center justify-between gap-4">
+        <span>
+            <span class="text-gray-200 font-medium">Crowd sound reactions</span>
+            <span class="block text-xs text-gray-500">Cheers when the crowd's mood rises, boos when it drops. Uses each venue's own recordings.</span>
+        </span>
+        <input type="checkbox" id="career-sfx-toggle" class="accent-cyan-500 w-4 h-4">
+    </label>
+</div>
+<script>
+(function () {
+    'use strict';
+    var KEY = 'feedBack-venue-crowd-sfx';
+    var box = document.getElementById('career-sfx-toggle');
+    if (!box) return;
+    try { box.checked = localStorage.getItem(KEY) === 'on'; } catch (e) { /* ok */ }
+    box.addEventListener('change', function () {
+        try { localStorage.setItem(KEY, box.checked ? 'on' : 'off'); } catch (e) { /* ok */ }
+    });
+}());
+</script>

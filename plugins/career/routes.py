@@ -116,9 +116,10 @@ def _validate_pack_dir(pack_dir: Path):
     for name in (manifest.get("stingers") or {}).values():
         if name and (not PACK_FILENAME_RE.fullmatch(name) or not (pack_dir / name).is_file()):
             raise ValueError(f"stinger file '{name}' invalid or missing")
-    for name in (manifest.get("intro") or {}).values():
-        if name and (not PACK_FILENAME_RE.fullmatch(name) or not (pack_dir / name).is_file()):
-            raise ValueError(f"intro file '{name}' invalid or missing")
+    for block in ("intro", "sfx"):
+        for name in (manifest.get(block) or {}).values():
+            if name and (not PACK_FILENAME_RE.fullmatch(name) or not (pack_dir / name).is_file()):
+                raise ValueError(f"{block} file '{name}' invalid or missing")
 
 
 def _download_pack(venue_id, pack, progress):

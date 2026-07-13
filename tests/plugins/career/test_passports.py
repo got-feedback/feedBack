@@ -358,3 +358,16 @@ def test_gig_propose_backfills_from_surplus_qualifying(client, meta_db):
     res = client.post("/api/plugins/career/gigs/propose",
                       json={"instrument": "guitar", "genre": "Ska", "size": 5})
     assert len(res.json()["songs"]) == 5
+
+
+def test_gig_propose_backfill_offset_survives_stakes(client, meta_db):
+    # 4 qualifying + 1 near-bar stake, size 5: the stake must not shift the
+    # qualifying backfill window past eligible songs.
+    for i in range(4):
+        meta_db.add(f"q{i}.feedpak", 0, 0.9, genre="Reggae", arrangements=LEAD)
+    meta_db.add("near.feedpak", 0, 0.7, genre="Reggae", arrangements=LEAD)
+    res = client.post("/api/plugins/career/gigs/propose",
+                      json={"instrument": "guitar", "genre": "Reggae", "size": 5})
+    files = [s["filename"] for s in res.json()["songs"]]
+    assert len(files) == 5 and len(set(files)) == 5
+    assert "near.feedpak" in files

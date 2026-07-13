@@ -722,18 +722,20 @@ def setup(app, context):
         # first gig is how stubs start. random per call = free re-roll.
         random.shuffle(qualifying)
         rest.sort(key=lambda s: -s["best_accuracy"])
-        picks = qualifying[:max(1, size - cfg["stakes_songs"])]
+        qtaken = max(1, size - cfg["stakes_songs"])
+        picks = qualifying[:qtaken]
         for s in rest:
             if len(picks) >= size:
                 break
             picks.append(s)
         # Surplus qualifying songs backfill a short set — a mature passport
-        # with no near-bar songs left must still fill the bill.
-        for s in qualifying[len(picks):] if len(picks) < size else []:
+        # with no near-bar songs left must still fill the bill. Offset by how
+        # many QUALIFYING songs were taken, not len(picks): rest's stakes
+        # additions would otherwise skip eligible qualifying songs entirely.
+        for s in qualifying[qtaken:]:
             if len(picks) >= size:
                 break
-            if s not in picks:
-                picks.append(s)
+            picks.append(s)
         if len(picks) < size:
             exclude = {s["filename"] for s in picks}
             picks.extend(_unplayed_genre_songs(gkey, exclude, size - len(picks)))

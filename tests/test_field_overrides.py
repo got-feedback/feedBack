@@ -273,3 +273,51 @@ def test_title_keyset_paging_is_complete_with_overrides(client, server):
         if not cursor:
             break
     assert sorted(seen) == ["a.archive", "b.archive", "c.archive"]   # each exactly once
+
+
+def test_enrichment_genre_fallback_precedence(client, server):
+    # Precedence: override → pack genre → MusicBrainz enrichment (matched only).
+    _put(server, "a.archive", title="A", genre="Rock")   # pack wins over enrichment
+    _put(server, "b.archive", title="B", genre="")       # falls back to enrichment
+    _put(server, "c.archive", title="C", genre="")       # override beats enrichment
+    _put(server, "d.archive", title="D", genre="")       # unmatched candidate: ignored
+    ins = "INSERT INTO song_enrichment (filename, match_state, genres) VALUES (?, ?, ?)"
+    server.meta_db.conn.execute(ins, ("a.archive", "matched", '["metal"]'))
+    server.meta_db.conn.execute(ins, ("b.archive", "matched", '["progressive rock", "rock"]'))
+    server.meta_db.conn.execute(ins, ("c.archive", "matched", '["jazz"]'))
+    server.meta_db.conn.execute(ins, ("d.archive", "review", '["country"]'))
+    _put(server, "e.archive", title="E", genre="")       # manual pin is trusted too
+    server.meta_db.conn.execute(ins, ("e.archive", "manual", '["ska"]'))
+    server.meta_db.conn.commit()
+    server.meta_db.set_song_override("c.archive", "genre", value="City Pop")
+
+    genres = client.get("/api/library/genres").json()["genres"]
+    assert "Rock" in genres                 # pack value kept for a
+    assert "metal" not in genres            # enrichment never overrides a pack genre
+    assert "progressive rock" in genres     # b: enrichment primary ([0]) surfaces
+    assert "City Pop" in genres and "jazz" not in genres   # override beats enrichment
+    assert "country" not in genres          # review/failed candidates never leak
+    assert "ska" in genres                  # user-pinned (manual) matches count
+
+    # Filtering by the enriched genre finds the song.
+    r = client.get("/api/library", params={"genre": "progressive rock"}).json()
+    assert [s["filename"] for s in r["songs"]] == ["b.archive"]
+
+
+def test_no_enrichment_and_no_overrides_uses_plain_column(server):
+    _put(server, "a.archive", title="A", genre="Rock")
+    assert server.meta_db._effective_genre_expr() == "genre"
+
+
+def test_overrides_without_enrichment_table_stay_safe(server):
+    # A stand-in scenario: overrides exist but song_enrichment is gone — the
+    # expression must not reference the missing table.
+    server.meta_db.conn.execute("DROP TABLE song_enrichment")
+    _put(server, "a.archive", title="A", genre="")
+    server.meta_db.set_song_override("a.archive", "genre", value="City Pop")
+    expr = server.meta_db._effective_genre_expr()
+    assert "song_enrichment" not in expr
+    # And it still evaluates: the override surfaces through the facet query.
+    row = server.meta_db.conn.execute(
+        f"SELECT {expr} FROM songs WHERE filename = 'a.archive'").fetchone()
+    assert row[0] == "City Pop"

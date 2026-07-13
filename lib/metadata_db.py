@@ -1085,16 +1085,31 @@ class MetadataDB:
         vals["artist"], vals["title"] = self._romaji_display(filename, vals["artist"], vals["title"])
         return vals
 
-    # Effective genre = a per-song genre OVERRIDE (Fix-metadata popup) else the
-    # scanned pack genre. Applied at FILTER/FACET time (like the P4 artist alias)
-    # so a corrected genre is browsable — the correlated subquery is used ONLY
-    # when genre overrides actually exist; the common case stays on the plain
-    # indexed `genre` column. Genre stays a library-only overlay (it isn't a
-    # write-to-file field), so it never touches the pack.
-    _EFFECTIVE_GENRE_SQL = (
+    # Effective genre precedence: per-song OVERRIDE (Fix-metadata popup) →
+    # scanned pack genre → MusicBrainz enrichment primary genre (matched/manual rows
+    # only — a 'review'/'failed' candidate's genres could belong to the wrong
+    # recording). Applied at FILTER/FACET time (like the P4 artist alias) so a
+    # corrected or enriched genre is browsable. The vast majority of converted
+    # packs carry no `genres` manifest key, so without the enrichment leg the
+    # genre facet (and career passports) starve on real libraries. The
+    # correlated subqueries are used ONLY when overrides/enrichment genres
+    # actually exist; the common case stays on the plain indexed `genre`
+    # column. Genre stays a library-only overlay (it isn't a write-to-file
+    # field), so it never touches the pack.
+    _EFFECTIVE_GENRE_OVERRIDE_SQL = (
         "COALESCE((SELECT o.value FROM song_field_override o "
         "WHERE o.filename = songs.filename AND o.field = 'genre' "
         "AND o.value IS NOT NULL AND o.value != ''), genre)"
+    )
+    _EFFECTIVE_GENRE_SQL = (
+        "COALESCE((SELECT o.value FROM song_field_override o "
+        "WHERE o.filename = songs.filename AND o.field = 'genre' "
+        "AND o.value IS NOT NULL AND o.value != ''), "
+        "NULLIF(genre, ''), "
+        "(SELECT json_extract(e.genres, '$[0]') FROM song_enrichment e "
+        "WHERE e.filename = songs.filename AND e.match_state IN ('matched', 'manual') "
+        "AND e.genres IS NOT NULL AND e.genres NOT IN ('', '[]')), "
+        "'')"
     )
 
     def _has_genre_overrides(self) -> bool:
@@ -1102,9 +1117,25 @@ class MetadataDB:
             "SELECT 1 FROM song_field_override WHERE field = 'genre' "
             "AND value IS NOT NULL AND value != '' LIMIT 1").fetchone() is not None
 
+    def _has_enrichment_genres(self) -> bool:
+        try:
+            return self.conn.execute(
+                "SELECT 1 FROM song_enrichment WHERE match_state IN ('matched', 'manual') "
+                "AND genres IS NOT NULL AND genres NOT IN ('', '[]') "
+                "LIMIT 1").fetchone() is not None
+        except sqlite3.OperationalError:
+            return False  # stand-ins / DBs without the enrichment table
+
     def _effective_genre_expr(self) -> str:
-        """`genre` normally; the override-aware COALESCE only when overrides exist."""
-        return self._EFFECTIVE_GENRE_SQL if self._has_genre_overrides() else "genre"
+        """`genre` normally; the enrichment-aware COALESCE only when trusted
+        enrichment genres exist (which also proves the table exists — a
+        stand-in DB without song_enrichment must never receive SQL that
+        references it); the override-only form when just overrides exist."""
+        if self._has_enrichment_genres():
+            return self._EFFECTIVE_GENRE_SQL
+        if self._has_genre_overrides():
+            return self._EFFECTIVE_GENRE_OVERRIDE_SQL
+        return "genre"
 
     def set_song_tags(self, filename: str, tags) -> list:
         """Replace ALL of a song's tags with the given set (each normalized;

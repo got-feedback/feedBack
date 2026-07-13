@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passport walls: genre badges computed on read from `song_stats` × the library's
   effective genre — Bronze = N genre songs at K★, data-driven in
   `plugins/career/passports.json`, default 5 songs at 2★ — plus qualifying-song
-  "ticket stubs", the library genre list, and drill status), `POST
-  /passports/commit` (instrument commitment), `POST /passports/open` (open a genre
+  "ticket stubs", the library genre list, and drill status), `POST /passports/commit`
+  (instrument commitment), `POST /passports/open` (open a genre
   passport), and `POST /drill-state` (intake for the relayed Virtuoso
   `virtuoso.progress` snapshot, so drill requirements can gate badges
   server-side). Badges are never stored; the only persisted state (commitments,
@@ -35,6 +35,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   localStorage snapshot to the drill-state intake on `virtuoso:progress` bus
   events (debounced, plus a one-time bootstrap), closing the
   fires-into-a-void seam without touching the virtuoso plugin.
+- **CI gate: core must stay faithful to the feedpak spec (`feedpak-spec` job).** feedpak is published as
+  an open format with its own repo, normative spec, JSON Schemas, and reference validator — but nothing
+  stopped core from reading a manifest key the spec never defined, which is exactly what happened with
+  `original_audio` (#583 → #933). `tools/check_spec_conformance.py` now enforces four surface properties
+  in CI: (1) **key-coverage** — every manifest key core reads *or writes* is declared in the spec's
+  `manifest.schema.json`, found by walking the AST of `lib/sloppak.py`, `lib/enrichment.py`, and
+  `lib/songmeta.py`, `lib/gp2notation.py`, and `lib/routers/ws_highway.py` (writes are gated too — including
+  `setdefault()` — and reported separately: a key core writes lands in every pack we emit, so an undeclared
+  one seeds the ecosystem with non-spec data; a **readers-complete** guard fails the build if that module
+  list falls behind the codebase); (2) **allowlist-closed** — `feedpak-spec-exceptions.yml` never grows;
+  (3) **forward** — core's `load_song()` ingests every example pack the spec ships;
+  (4) **reverse** — every pack committed here passes the spec's own `tools/validate.py` (7/7 pass today).
+  The gate verifies against the spec repo's **HEAD** — the app must conform to the living spec, and the
+  flow is self-serve: a gated PR opens a FEP, the spec PR merges, re-running checks goes green. Nothing to
+  pin, nothing to bump. Each run logs the spec SHA it verified against so results are reproducible.
+  **There is no in-repo escape hatch, by design.** A blocked PR has exactly one route: land the key in the
+  spec via the [FEP process](https://github.com/got-feedback/feedpak-spec/blob/main/CONTRIBUTING.md), then
+  re-run the PR's checks — the gate verifies against the spec's HEAD, so it goes green once the key is real. `feedpak-spec-exceptions.yml` is a **closed
+  grandfather list** for keys that predate the gate, not a bypass: a fourth check (**allowlist-closed**)
+  diffs it against the base branch and fails any PR that *adds* an entry, so it may only shrink.
+  `original_audio` is grandfathered there against #933 so the gate lands green and starts blocking the
+  *next* instance immediately; the gate takes no position on how #933 resolves (the expected outcome is
+  removing the key, since the spec already carries the mixdown as a stem — not adopting it). Docs:
+  [docs/feedpak-spec-gate.md](docs/feedpak-spec-gate.md).
 
 ### Removed
 - **The classic v2 UI shell is gone — v3 is the only UI (R3a).** `static/index.html`, the

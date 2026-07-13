@@ -124,6 +124,94 @@ jobs:
           print(f"Validated {len(manifests)} manifest(s) — OK")
           EOF
 
+  feedpak-spec:
+    # Guard that core stays faithful to the feedpak format spec, which lives in
+    # its own repo (got-feedback/feedpak-spec) and is the contract third-party
+    # packers and players build against. Four surface checks: core reads/writes
+    # only manifest keys the spec declares (and the scanned-module list can't
+    # fall behind); the exception allowlist never grows, so the FEP process is
+    # the only way a new key lands; core ingests the spec's example packs; packs
+    # committed here pass the spec's reference validator. Motivated by
+    # #933, where a manifest key (`original_audio`) shipped in core without ever
+    # reaching the spec.
+    #
+    # The gate checks against the spec repo's HEAD, deliberately: the app must
+    # conform to the LIVING spec, always. The dev flow is self-serve — a gated
+    # PR opens a FEP, the spec PR merges, re-running this job goes green; no
+    # pin file to bump, nothing to maintain. Accepted trade-off: a BREAKING
+    # spec change (rare, deliberate, MAJOR per the spec's compatibility policy)
+    # reddens every PR here until core conforms — which is the correct
+    # org-wide signal that the app is out of conformance. The normal FEP is
+    # additive and can never redden this job.
+    name: feedpak-spec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # This job runs repository code (tools/check_spec_conformance.py) and
+        # never pushes; don't leave the token in git config for it.
+        # fetch-depth: 0 so the base branch is available — the gate must prove
+        # the exception allowlist didn't grow in this PR.
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Check out feedpak-spec at HEAD
+        uses: actions/checkout@v4
+        with:
+          repository: got-feedback/feedpak-spec
+          ref: main
+          path: .feedpak-spec
+          persist-credentials: false
+
+      - name: Record the spec commit this run verified against
+        # HEAD-tracking means CI results can differ across time on the same
+        # commit. Log the exact spec SHA so a red run is reproducible.
+        run: git -C .feedpak-spec rev-parse HEAD
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # CI-only: the spec's reference validator needs jsonschema. Not a
+          # runtime dependency — this gate never runs on the serve/Docker path
+          # (constitution Principle I). Pinned for the same reason the spec SHA
+          # is: an upstream release must not turn this job red on a PR that
+          # changed neither this repo nor the spec.
+          pip install 'jsonschema==4.26.0'
+
+      - name: Fetch the base branch's exception allowlist
+        id: baseline
+        run: |
+          # The allowlist is closed: it grandfathers keys that predate this gate
+          # and may only shrink. Prove that by diffing against the base branch —
+          # without this, anyone could append an entry and route around the FEP
+          # process from inside this repo.
+          #
+          # Resolve the base rather than hardcoding `main`: ship-ci.yml also runs
+          # this workflow for PRs into release/** and for pushes to release/**,
+          # where a main baseline would diff against the wrong branch.
+          #   PR   -> the branch it merges into
+          #   push -> the branch itself (its tip already contains the change, so
+          #           this is a no-op; enforcement happens at PR time)
+          BASE="${{ github.event.pull_request.base.ref || github.ref_name }}"
+          echo "diffing the allowlist against origin/$BASE"
+          git fetch --no-tags --depth=1 origin "$BASE"
+          if git cat-file -e FETCH_HEAD:feedpak-spec-exceptions.yml 2>/dev/null; then
+            git show FETCH_HEAD:feedpak-spec-exceptions.yml > "$RUNNER_TEMP/baseline-exceptions.yml"
+            echo "args=--baseline-exceptions $RUNNER_TEMP/baseline-exceptions.yml" >> "$GITHUB_OUTPUT"
+          else
+            # Only true until the PR that introduces this gate lands.
+            echo "args=--bootstrap-allowlist" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check feedpak spec conformance
+        run: python tools/check_spec_conformance.py --spec .feedpak-spec ${{ steps.baseline.outputs.args }}
+
   lint:
     # Maintainer/CI-only size + module-hygiene gate (constitution Principle I:
     # dev tooling, never on the serve/Docker path — same category as

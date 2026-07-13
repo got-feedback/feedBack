@@ -1,0 +1,50 @@
+# CLOSED grandfather list — manifest keys core reads or writes that predate the
+# spec-conformance gate and that the feedpak spec does not define.
+#
+# Please don't add entries here — CI will flag any PR that grows this list, so
+# it can only shrink over time. That's by design, not distrust: the moment the
+# app touches a key the spec doesn't define, every teammate's PR starts failing
+# the conformance gate too, and whoever added the key is the only person who
+# can fix it. The FEP process below avoids putting anyone in that spot. The
+# feedpak spec's own governance is explicit:
+#
+#   "This repository defines the format only. Applications that read or write
+#    feedpak ... track this spec as a dependency; they do not drive it.
+#    A change is not part of the format until it lands here."
+#     — got-feedback/feedpak-spec, GOVERNANCE.md
+#
+# So a new manifest key goes through the feedpak Enhancement Proposal (FEP)
+# process — see feedpak-spec/CONTRIBUTING.md:
+#
+#   1. Open a FEP issue on got-feedback/feedpak-spec describing the problem, the
+#      on-disk shape, backward compatibility, and the version bump implied.
+#   2. Land one PR there updating the normative spec, the JSON Schemas, an
+#      example that exercises it, and the changelog — together.
+#   3. Back here, re-run this PR's checks. The gate verifies against the spec's
+#      HEAD, so once your key is in the spec, the gate goes green.
+#
+# That's the supported route — and usually a quick one for additive keys. If
+# your PR is blocked by this gate, a FEP will get you unblocked properly; an
+# entry here won't (CI rejects it).
+#
+# Entries below exist ONLY because they predate the gate. Each is debt with a
+# tracking issue, and each disappears when its issue is fixed. The gate also
+# fails if an entry goes stale — the spec caught up, or core no longer reads or
+# writes the key — so this file cannot quietly become a place drift hides.
+
+exceptions:
+  - key: original_audio
+    issue: https://github.com/got-feedback/feedback/issues/933
+    reason: >-
+      Added by #583 (the full mix played while every stem fader sits at unity,
+      since demucs recombination is lossy). Core, lib/enrichment.py, and the
+      stems plugin all depend on it, but it never went through a FEP and the
+      spec does not define it — the drift this gate exists to prevent.
+
+      The resolution is REMOVAL, not a FEP: the spec already carries the mixdown
+      as a stem ({id: full, file: stems/full.ogg}), so this key added a second,
+      redundant location for audio to a format that already had one. See #933.
+
+      Grandfathered so the gate can land green and start blocking the *next*
+      instance immediately, rather than blocking on #933. This entry goes away
+      when core no longer reads or writes the key.

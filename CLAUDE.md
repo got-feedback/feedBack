@@ -588,6 +588,21 @@ tab, key/scale annotations, etc.). Published as **feedpak**; this codebase still
 **sloppak** name internally — same on-disk format. [docs/sloppak-spec.md](docs/sloppak-spec.md) is
 a local pointer + code map.
 
+**The spec is sacrosanct — read it BEFORE changing how this app reads or writes packs.** The
+spec repo defines the format; this app merely implements it ("a change is not part of the format
+until it lands here" — feedpak-spec/GOVERNANCE.md). Any new manifest key, file, or directory the
+app touches must land in the spec **first**, via the
+[FEP process](https://github.com/got-feedback/feedpak-spec/blob/main/CONTRIBUTING.md) (proposal
+issue → one spec PR updating spec + schemas + example + changelog → then re-run your PR's checks
+here; the gate verifies against the spec's HEAD, so it goes green the moment your key is real).
+CI enforces this: the `feedpak-spec` job
+([docs/feedpak-spec-gate.md](docs/feedpak-spec-gate.md)) fails any PR whose code touches a
+manifest key the spec doesn't declare, and there is **no in-repo bypass** — the exceptions
+file is a closed grandfather list that only shrinks. If the format seems to be missing something
+you need, that's a FEP conversation, not a workaround. (Cautionary tale: `original_audio`, #933 —
+shipped without a spec entry, and third-party packers reverse-engineered a folder convention out
+of a code comment.)
+
 **Key code:**
 - `lib/sloppak.py` — format detection, zip/directory resolution, metadata extraction, song loading
 - `lib/sloppak_convert.py` — sloppak assembly pipeline, Demucs stem splitting

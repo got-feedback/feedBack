@@ -143,3 +143,15 @@ def test_drill_state_validation(client):
     huge = {"byNode": {"pad": "x" * (300 * 1024)}}
     assert client.post("/api/plugins/career/drill-state",
                        json=huge).status_code == 413
+
+
+def test_hours_odometer_sums_seconds_per_instrument_and_genre(client, meta_db):
+    both = [{"type": "lead", "name": "Lead"}, {"type": "bass", "name": "Bass"}]
+    # Two lead arrangements' time sums; the bass row stays on the bass passport.
+    meta_db.add("a.feedpak", 0, 0.8, genre="Blues", arrangements=both, seconds_total=600)
+    meta_db.add("b.feedpak", 0, 0.8, genre="Blues", arrangements=both, seconds_total=300)
+    meta_db.add("b.feedpak", 1, 0.9, genre="Blues", arrangements=both, seconds_total=1200)
+    _open(client, "guitar")
+    _open(client, "bass")
+    assert _passport(client, "guitar")["seconds_total"] == 900
+    assert _passport(client, "bass")["seconds_total"] == 1200

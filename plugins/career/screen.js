@@ -466,17 +466,27 @@
         }
     }
 
+    // Honest hours odometer (Stage 5 post-cap). Below a minute of history
+    // there is nothing meaningful to show.
+    function fmtHours(seconds) {
+        const s = Number(seconds) || 0;
+        if (s < 60) return '';
+        if (s < 3600) return `${Math.round(s / 60)} min`;
+        return `${(s / 3600).toFixed(1).replace(/\.0$/, '')} h`;
+    }
+
     function ppCoverHTML(inst, p) {
         const rot = ppJitter(inst + p.genre_key, 1.6).toFixed(2);
         const stamp = p.badge === 'earned'
             ? `<span class="pp-stamp pp-stamp-mini" style="--pp-rot:${ppJitter(p.genre_key, 8).toFixed(1)}deg">BRONZE</span>`
             : '';
         const stubs = p.qualifying_count === 1 ? '1 stub' : `${p.qualifying_count} stubs`;
+        const hours = fmtHours(p.seconds_total);
         return `<button class="pp-cover pp-leather-${esc(inst)}" data-pp-open="${esc(p.genre_key)}" style="transform:rotate(${rot}deg)">
             <span class="pp-cover-title">${esc(p.genre.toUpperCase())}</span>
             <span class="pp-cover-inst">${esc(ppLabel(inst))} passport</span>
             ${stamp}
-            <span class="pp-cover-sub">${stubs}</span>
+            <span class="pp-cover-sub">${stubs}${hours ? ` · ${hours}` : ''}</span>
         </button>`;
     }
 
@@ -568,6 +578,9 @@
             </div>
             <div class="pp-invite">${need === 1 ? `One more ${starGl} song mints this stamp.` : `${need} more ${starGl} songs mint this stamp.`}</div>`;
         }
+        const hours = fmtHours(p.seconds_total);
+        const odometer = hours
+            ? `<div class="pp-hours">${hours} in ${esc(p.genre)}</div>` : '';
         let drills = '';
         const reqNodes = (p.drills || {}).required || [];
         if (reqNodes.length) {
@@ -589,7 +602,7 @@
             <div class="pp-book">
                 <div class="pp-page pp-page-left">
                     <div class="pp-page-head">${esc(p.genre)} — ${esc(ppLabel(inst))}</div>
-                    ${badgeArea}${drills}
+                    ${badgeArea}${odometer}${drills}
                 </div>
                 <div class="pp-page pp-page-right">
                     <div class="pp-page-head">Ticket stubs</div>
@@ -792,6 +805,7 @@
     // the badge-diff logic; nothing here touches the DOM.
     window.__careerPassportTest = {
         ppKey, ppJitter, ppLabel, detectNewBadges, seenBadges, markBadgeSeen,
+        fmtHours,
     };
 
     if (document.readyState === 'loading') {

@@ -614,6 +614,14 @@ class MetadataDB:
             )
         """)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_song_stats_recent ON song_stats(last_played_at DESC)")
+        # Cumulative wall-clock play time (career "hours in genre" odometer).
+        # Fed by the same POST /api/stats the recorder already sends; additive
+        # + idempotent like every other song_stats change.
+        try:
+            self.conn.execute(
+                "ALTER TABLE song_stats ADD COLUMN seconds_total REAL NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
         # Playlists + the reserved "Saved for Later" system playlist. Additive.
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS playlists (
@@ -901,6 +909,9 @@ class MetadataDB:
                     "best_accuracy": max(cur["best_accuracy"] or 0.0, r["best_accuracy"] or 0.0),
                     "last_score": newer["last_score"], "last_accuracy": newer["last_accuracy"],
                     "last_position": newer["last_position"],
+                    # Play time is additive: both encodings' hours belong to
+                    # the one canonical song.
+                    "seconds_total": (cur.get("seconds_total") or 0.0) + (r.get("seconds_total") or 0.0),
                     "last_played_at": newer["last_played_at"], "updated_at": newer["updated_at"],
                 }
             # Atomic swap: clear and reinsert the canonicalized set in one txn.
@@ -1693,7 +1704,8 @@ class MetadataDB:
     # ── Per-song practice stats ───────────────────────────────────────────---
     _STATS_COLS = (
         "filename", "arrangement", "plays", "best_score", "best_accuracy",
-        "last_score", "last_accuracy", "last_position", "last_played_at", "updated_at",
+        "last_score", "last_accuracy", "last_position", "seconds_total",
+        "last_played_at", "updated_at",
     )
 
     def _stats_row(self, filename: str, arrangement: int) -> dict | None:
@@ -2060,8 +2072,9 @@ class MetadataDB:
             self.conn.commit()
 
     def record_session(self, filename: str, arrangement: int, *, score: int,
-                       accuracy: float, last_position=None) -> dict:
-        """Record a scored play: plays += 1, best_* = max, last_* = new."""
+                       accuracy: float, last_position=None, seconds: float = 0) -> dict:
+        """Record a scored play: plays += 1, best_* = max, last_* = new.
+        `seconds` (wall-clock play time from the recorder) accrues."""
         from song_score import merge_stats
         with self._lock:
             existing = self._stats_row(filename, int(arrangement))
@@ -2071,8 +2084,9 @@ class MetadataDB:
             self.conn.execute(
                 """INSERT INTO song_stats
                        (filename, arrangement, plays, best_score, best_accuracy,
-                        last_score, last_accuracy, last_position, last_played_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+                        last_score, last_accuracy, last_position, seconds_total,
+                        last_played_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
                            strftime('%Y-%m-%d %H:%M:%f','now'), strftime('%Y-%m-%d %H:%M:%f','now'))
                    ON CONFLICT(filename, arrangement) DO UPDATE SET
                        plays = excluded.plays,
@@ -2081,32 +2095,53 @@ class MetadataDB:
                        last_score = excluded.last_score,
                        last_accuracy = excluded.last_accuracy,
                        last_position = excluded.last_position,
+                       seconds_total = song_stats.seconds_total + excluded.seconds_total,
                        last_played_at = excluded.last_played_at,
                        updated_at = excluded.updated_at""",
                 (filename, int(arrangement), merged["plays"], merged["best_score"],
                  merged["best_accuracy"], merged["last_score"], merged["last_accuracy"],
-                 merged["last_position"]),
+                 merged["last_position"], float(seconds or 0)),
             )
             self.conn.commit()
         return self._stats_row(filename, int(arrangement))
 
-    def touch_position(self, filename: str, arrangement: int, last_position: float) -> dict:
+    def touch_position(self, filename: str, arrangement: int, last_position: float,
+                       seconds: float = 0) -> dict:
         """Persist just the resume position (no plays/score change), so
         Continue-Playing works for non-scored plays. Also stamps
         last_played_at — both /api/stats/recent and /api/session/continue
         filter/order on it, so a position-only touch must set it or the song
-        never surfaces as 'recent' / 'continue playing'."""
+        never surfaces as 'recent' / 'continue playing'. `seconds` accrues
+        wall-clock play time (career hours odometer)."""
         with self._lock:
             self.conn.execute(
                 """INSERT INTO song_stats (filename, arrangement, last_position,
-                                           last_played_at, updated_at)
-                   VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'),
+                                           seconds_total, last_played_at, updated_at)
+                   VALUES (?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'),
                            strftime('%Y-%m-%d %H:%M:%f','now'))
                    ON CONFLICT(filename, arrangement) DO UPDATE SET
                        last_position = excluded.last_position,
+                       seconds_total = song_stats.seconds_total + excluded.seconds_total,
                        last_played_at = excluded.last_played_at,
                        updated_at = excluded.updated_at""",
-                (filename, int(arrangement), float(last_position)),
+                (filename, int(arrangement), float(last_position), float(seconds or 0)),
+            )
+            self.conn.commit()
+        return self._stats_row(filename, int(arrangement))
+
+    def add_play_seconds(self, filename: str, arrangement: int, seconds: float) -> dict:
+        """Accrue wall-clock play time only (no plays/score/position change) —
+        the recorder's seconds-only flush for unscored plays that ran to the
+        song's natural end (no resume position to touch there: `song:ended`
+        must not overwrite Continue with the end-of-song offset)."""
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO song_stats (filename, arrangement, seconds_total, updated_at)
+                   VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
+                   ON CONFLICT(filename, arrangement) DO UPDATE SET
+                       seconds_total = song_stats.seconds_total + excluded.seconds_total,
+                       updated_at = excluded.updated_at""",
+                (filename, int(arrangement), float(seconds)),
             )
             self.conn.commit()
         return self._stats_row(filename, int(arrangement))

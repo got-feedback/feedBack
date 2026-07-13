@@ -26,7 +26,8 @@ class FakeMetaDb:
         self.conn.execute(
             """CREATE TABLE song_stats (
                    filename TEXT, arrangement TEXT, best_accuracy REAL,
-                   last_played_at TEXT
+                   last_played_at TEXT,
+                   seconds_total REAL NOT NULL DEFAULT 0
                )"""
         )
         self.conn.execute(
@@ -37,9 +38,10 @@ class FakeMetaDb:
         )
 
     def add(self, filename, arrangement, best_accuracy, in_library=True,
-            genre="", arrangements=None, last_played_at=None):
-        self.conn.execute("INSERT INTO song_stats VALUES (?, ?, ?, ?)",
-                          (filename, arrangement, best_accuracy, last_played_at))
+            genre="", arrangements=None, last_played_at=None, seconds_total=0):
+        self.conn.execute("INSERT INTO song_stats VALUES (?, ?, ?, ?, ?)",
+                          (filename, arrangement, best_accuracy, last_played_at,
+                           seconds_total))
         if in_library:
             self.conn.execute(
                 "INSERT INTO songs SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS "

@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Click or wait ~4s to dismiss; `prefers-reduced-motion` gets the existing
   chime + notification only. The stamp still slams into the passport book on
   next open, unchanged.
+- **Hours-per-genre odometer (career passports)** — the app now measures real
+  play time: the stats recorder accrues **wall-clock** seconds across
+  play/resume ↔ pause/stop/end spans (wall time, not song position — position
+  deltas double-count A-B loops and mis-read seeks; single spans clamp at 2h
+  against suspend/sleep inflation) and piggybacks them as `seconds` on the
+  `POST /api/stats` calls it already makes. New additive
+  `song_stats.seconds_total` column; a seconds-only POST banks time for
+  unscored plays that run to the song's natural end without touching the
+  resume position (and still counts as playing today for the streak).
+  Passports surface it honestly: "14.2 h in Blues" under the badge and on the
+  shelf cover — a true fact that only grows, never a target or a meter.
 - **Career passports (backend)** — the badge-journey layer on top of career stars.
   New career-plugin endpoints: `GET /api/plugins/career/passports` (per-instrument
   passport walls: genre badges computed on read from `song_stats` × the library's

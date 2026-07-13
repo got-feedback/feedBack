@@ -466,3 +466,12 @@
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 }
 .pp-ceremony-sub { font-size: 0.8rem; color: #d1d5db; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
+
+/* Hours odometer (Stage 5 post-cap — a true fact, never a meter) */
+.pp-hours {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    color: #8a7a5e;
+    margin-top: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}

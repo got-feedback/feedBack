@@ -452,3 +452,52 @@ def test_award_xp_negative_reversal_clamps_at_zero(server):
     db.award_xp(50, "minigames")
     assert db.award_xp(-50, "minigames") == 0      # exact reversal
     assert db.award_xp(-999, "minigames") == 0     # over-reverse clamps at 0
+
+
+# ── Wall-clock play-time accrual (career hours odometer) ─────────────────────
+
+def test_seconds_accrue_on_scored_and_position_posts(client):
+    r = client.post("/api/stats", json={"filename": "s.archive", "score": 400,
+                                        "accuracy": 0.6, "seconds": 120})
+    assert r.status_code == 200
+    assert r.json()["stats"]["seconds_total"] == pytest.approx(120)
+    # Position-only touch accrues too.
+    r2 = client.post("/api/stats", json={"filename": "s.archive",
+                                         "lastPlayPosition": 12.5, "seconds": 30})
+    assert r2.json()["stats"]["seconds_total"] == pytest.approx(150)
+    # A POST without seconds leaves the total alone.
+    r3 = client.post("/api/stats", json={"filename": "s.archive", "lastPlayPosition": 20.0})
+    assert r3.json()["stats"]["seconds_total"] == pytest.approx(150)
+
+
+def test_seconds_only_post_accrues_without_touching_position(client):
+    client.post("/api/stats", json={"filename": "s.archive", "lastPlayPosition": 42.0})
+    r = client.post("/api/stats", json={"filename": "s.archive", "seconds": 90})
+    assert r.status_code == 200
+    row = r.json()["stats"]
+    assert row["seconds_total"] == pytest.approx(90)
+    # No plays counted, resume position untouched (song:ended must not
+    # overwrite Continue with the end-of-song offset).
+    assert row["plays"] == 0
+    assert row["last_position"] == pytest.approx(42.0)
+    # Still counts as playing today for the streak.
+    assert r.json()["progress"]["current_streak"] == 1
+
+
+@pytest.mark.parametrize("bad", [True, "soon", -5, 0, 6 * 3600 + 1])
+def test_seconds_validation_rejects_junk(client, bad):
+    r = client.post("/api/stats", json={"filename": "s.archive",
+                                        "lastPlayPosition": 1.0, "seconds": bad})
+    assert r.status_code == 400
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity"])
+def test_seconds_validation_rejects_nonfinite(client, token):
+    # json= cannot serialize non-finite floats; python's json.loads (and thus
+    # the server's body parse) accepts the bare tokens, so send raw.
+    r = client.post(
+        "/api/stats",
+        content=f'{{"filename": "s.archive", "lastPlayPosition": 1.0, "seconds": {token}}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 400

@@ -76,6 +76,22 @@ def api_record_stats(data: dict):
     last_pos = data.get("lastPlayPosition", data.get("last_position"))
     if isinstance(last_pos, bool):   # float(False)=0.0 would otherwise store a bogus position
         return JSONResponse({"error": "lastPlayPosition must be a finite number"}, status_code=400)
+    # Optional wall-clock play time (career hours odometer). Bounded per POST:
+    # the recorder flushes on pause/stop/end, so a single delta beyond 6h is a
+    # clock artifact (suspend/sleep), not practice.
+    seconds = data.get("seconds")
+    if seconds is not None:
+        if isinstance(seconds, bool):
+            return JSONResponse({"error": "seconds must be a positive number"}, status_code=400)
+        try:
+            seconds = float(seconds)
+            if not math.isfinite(seconds):
+                raise ValueError("non-finite")
+        except (TypeError, ValueError, OverflowError):
+            return JSONResponse({"error": "seconds must be a positive number"}, status_code=400)
+        if not (0 < seconds <= 6 * 3600):
+            return JSONResponse({"error": "seconds must be between 0 and 21600"}, status_code=400)
+    seconds = seconds or 0.0
 
     # A scored session needs BOTH score and accuracy. Exactly one provided is
     # ambiguous — don't silently fall through to the position-only branch.
@@ -115,7 +131,8 @@ def api_record_stats(data: dict):
             except (TypeError, ValueError, OverflowError):
                 return JSONResponse({"error": "lastPlayPosition must be a finite number"}, status_code=400)
         row = appstate.meta_db.record_session(filename, arrangement, score=score,
-                                     accuracy=accuracy, last_position=last_pos)
+                                     accuracy=accuracy, last_position=last_pos,
+                                     seconds=seconds)
         # Unified XP + streak side-effects — never let these drop the stat write.
         progress = None
         try:
@@ -152,6 +169,21 @@ def api_record_stats(data: dict):
             log.warning("stats side-effects (progression) failed", exc_info=True)
         return {"stats": row, "progress": progress, "progression": progression_summary}
 
+    # Seconds-only accrual: an unscored play that ran to the song's natural
+    # end has play time to bank but no resume position to touch (song:ended
+    # must not overwrite Continue with the end-of-song offset). Still counts
+    # as playing today for the streak below.
+    if last_pos is None and seconds:
+        row = appstate.meta_db.add_play_seconds(filename, arrangement, seconds)
+        progress = None
+        try:
+            from datetime import date
+            appstate.meta_db.record_active_day(date.today().isoformat())
+            progress = appstate.meta_db.get_progress()
+        except Exception:
+            log.warning("stats side-effects (streak) failed", exc_info=True)
+        return {"stats": row, "progress": progress}
+
     # Position-only touch.
     if last_pos is None:
         return JSONResponse(
@@ -162,7 +194,7 @@ def api_record_stats(data: dict):
         pos = float(last_pos)
         if not math.isfinite(pos):
             raise ValueError("non-finite")
-        row = appstate.meta_db.touch_position(filename, arrangement, pos)
+        row = appstate.meta_db.touch_position(filename, arrangement, pos, seconds=seconds)
     except (TypeError, ValueError, OverflowError):
         return JSONResponse({"error": "lastPlayPosition must be a finite number"}, status_code=400)
     # A resume session still counts as playing today: advance the streak (no XP —

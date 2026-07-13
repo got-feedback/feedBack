@@ -203,21 +203,24 @@ def _instrument_of(arrangements, arrangement):
 
 
 def _played_by_instrument_genre():
-    """(instrument, genre_key) → {filename: stub dict}. Best accuracy per
-    (instrument, song); the JOIN keeps the same dead-song filter as _stars()."""
+    """((instrument, genre_key) → {filename: stub dict},
+        (instrument, genre_key) → total played seconds).
+    Best accuracy per (instrument, song); seconds sum across every
+    arrangement row; the JOIN keeps the same dead-song filter as _stars()."""
     db = _state["meta_db"]
     if db is None:
-        return {}
+        return {}, {}
     thresholds = _state["content"]["star_accuracy_thresholds"]
     rows = db.conn.execute(
         "SELECT s.filename, s.arrangement, s.best_accuracy, s.last_played_at, "
-        "       songs.title, songs.artist, songs.arrangements, "
+        "       s.seconds_total, songs.title, songs.artist, songs.arrangements, "
         f"      {_genre_expr(db)} "
         "FROM song_stats s JOIN songs ON songs.filename = s.filename"
     ).fetchall()
     arrs_cache = {}
     out = {}
-    for filename, arrangement, acc, played_at, title, artist, arrs_json, genre in rows:
+    seconds = {}
+    for filename, arrangement, acc, played_at, secs, title, artist, arrs_json, genre in rows:
         gkey = _genre_key(genre)
         if not gkey:
             continue
@@ -227,10 +230,12 @@ def _played_by_instrument_genre():
             except (TypeError, ValueError):
                 arrs_cache[filename] = None
         instrument = _instrument_of(arrs_cache[filename], arrangement)
+        key = (instrument, gkey)
+        seconds[key] = seconds.get(key, 0.0) + (secs or 0.0)
         acc = acc or 0.0
-        stub = out.setdefault((instrument, gkey), {}).get(filename)
+        stub = out.setdefault(key, {}).get(filename)
         if stub is None:
-            out[(instrument, gkey)][filename] = {
+            out[key][filename] = {
                 "filename": filename,
                 "title": title or filename,
                 "artist": artist or "",
@@ -245,7 +250,7 @@ def _played_by_instrument_genre():
             acc = stub["best_accuracy"]
             stub["best_accuracy"] = round(acc, 4)
             stub["stars"] = sum(1 for t in thresholds if acc >= t)
-    return out
+    return out, seconds
 
 
 def _library_genres():
@@ -307,7 +312,7 @@ def _passports_view():
     cfg = _state["passports_content"]
     graded = set(cfg.get("graded_instruments") or [])
     st = _career_state()
-    played = _played_by_instrument_genre()
+    played, played_seconds = _played_by_instrument_genre()
     received_at, by_node = _drill_by_node()
     instruments = {}
     for inst in cfg.get("instruments") or []:
@@ -345,6 +350,9 @@ def _passports_view():
                 "graded": is_graded,
                 "songs": songs,
                 "qualifying_count": qualifying,
+                # Honest hours odometer (Stage 5 post-cap): a true fact that
+                # only grows — never a target, never a meter.
+                "seconds_total": round(played_seconds.get((inst, gkey), 0.0), 1),
                 "drills": {"required": required, "cleared": cleared},
                 "badge": badge,
             })

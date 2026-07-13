@@ -27,7 +27,60 @@
     let cur = null;             // active session
     let recordedThisSession = false;
 
+    // Wall-clock play time (career hours odometer). Accrued across
+    // play/resume ↔ pause/stop/ended spans — wall time, NOT song position:
+    // position deltas double-count A-B loops and mis-read seeks.
+    let playingSince = 0;       // performance.now() at span start, 0 while not playing
+    let accruedSeconds = 0;     // played time not yet sent
+    // Failed seconds keep their song identity — restoring them into the
+    // global accumulator would let the NEXT song claim them after a session
+    // switch. Bounded; oldest dropped beyond the cap (honest loss beats
+    // misattribution).
+    let pendingSeconds = [];    // [{filename, arrangement, seconds}] awaiting retry
+
+    function queuePendingSeconds(filename, arrangement, seconds) {
+        pendingSeconds.push({ filename, arrangement, seconds });
+        if (pendingSeconds.length > 20) pendingSeconds.shift();
+    }
+
+    function retryPendingSeconds() {
+        if (!pendingSeconds.length) return;
+        const batch = pendingSeconds;
+        pendingSeconds = [];
+        for (const body of batch) {
+            post(body).then((r) => { if (r == null) queuePendingSeconds(body.filename, body.arrangement, body.seconds); });
+        }
+    }
+
+    function clockStart() { if (!playingSince) playingSince = performance.now(); }
+    function clockStop() {
+        if (!playingSince) return;
+        const delta = (performance.now() - playingSince) / 1000;
+        playingSince = 0;
+        // A single unbroken span beyond 2h of wall clock is a suspend/sleep
+        // artifact, not practice — clamp it.
+        if (Number.isFinite(delta) && delta > 0) accruedSeconds += Math.min(delta, 7200);
+    }
+    // Take whatever has accrued (closing any open span) for sending; the
+    // caller restores it if the POST fails so the time isn't lost.
+    function takeSeconds() {
+        clockStop();
+        const s = Math.round(accruedSeconds);
+        accruedSeconds = 0;
+        return s > 0 ? s : 0;
+    }
+    // Unsent seconds belong to the outgoing song/arrangement — flush before
+    // a session reset would re-attribute them.
+    function flushSeconds() {
+        const s = takeSeconds();
+        if (!s) return;
+        if (!cur || !cur.filename) return; // no session to attribute to — drop
+        const body = { filename: cur.filename, arrangement: cur.arrangement, seconds: s };
+        post(body).then((r) => { if (r == null) queuePendingSeconds(body.filename, body.arrangement, s); });
+    }
+
     function reset(filename, arrangement) {
+        flushSeconds();
         cur = {
             filename: filename || null,
             arrangement: Number.isFinite(arrangement) ? arrangement : 0,
@@ -84,6 +137,7 @@
         if (!cur || !cur.filename || recordedThisSession) return;
         if (!cur.scored || (cur.hits + cur.misses) <= 0) return;  // no real scoring this session
         recordedThisSession = true;
+        const seconds = takeSeconds();
         const body = {
             filename: cur.filename,
             arrangement: cur.arrangement,
@@ -94,7 +148,9 @@
             bestStreak: cur.bestStreak,
             lastPlayPosition: Number.isFinite(position) ? position : cur.lastTime,
         };
+        if (seconds) body.seconds = seconds;
         post(body).then(async (response) => {
+            if (response == null && seconds) queuePendingSeconds(body.filename, body.arrangement, seconds);
             await notifyProgression(response, body, !!natural);
             // Refresh the profile badge AFTER the progression state moved so
             // the rank/dB it renders are post-award values.
@@ -112,7 +168,10 @@
         // Allow 0: restarting a song and stopping at the very beginning must be
         // able to clear a stale Continue offset. Only negatives are invalid.
         if (!Number.isFinite(position) || position < 0) return;
-        post({ filename: cur.filename, arrangement: cur.arrangement, lastPlayPosition: position });
+        const seconds = takeSeconds();
+        const body = { filename: cur.filename, arrangement: cur.arrangement, lastPlayPosition: position };
+        if (seconds) body.seconds = seconds;
+        post(body).then((r) => { if (r == null && seconds) queuePendingSeconds(body.filename, body.arrangement, seconds); });
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────────--
@@ -164,13 +223,28 @@
         });
     });
 
+    // ── Play-time clock ───────────────────────────────────────────────────--
+    sm.on('song:play', () => { clockStart(); retryPendingSeconds(); });
+    sm.on('song:resume', clockStart);
+
     // ── Finalize / resume-position ────────────────────────────────────────--
-    sm.on('song:ended', (e) => finalizeScored(e && e.detail && e.detail.time, true));
-    sm.on('song:pause', (e) => touchPosition(e && e.detail && e.detail.time));
+    sm.on('song:ended', (e) => {
+        clockStop();
+        finalizeScored(e && e.detail && e.detail.time, true);
+        // Unscored natural end: no finalize POST and no position touch
+        // (Continue must not point at the end of the song) — bank the play
+        // time on its own.
+        flushSeconds();
+    });
+    sm.on('song:pause', (e) => {
+        clockStop();
+        touchPosition(e && e.detail && e.detail.time);
+    });
     sm.on('song:stop', (e) => {
         // Record the scored session if it wasn't already (e.g. user closed the
         // player before the track ended), then persist the resume position.
         // Not a natural end — no calibration-retry prompt for deliberate quits.
+        clockStop();
         const t = e && e.detail && e.detail.time;
         finalizeScored(t, false);
         touchPosition(t);

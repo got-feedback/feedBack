@@ -126,3 +126,15 @@ test('seenBadges tolerates corrupt stored values', () => {
         assert.equal(w.notifications.length, 1, `stored ${bad}`);
     }
 });
+
+test('fmtHours: silent under a minute, minutes under an hour, tenths after', () => {
+    const { fmtHours } = load().__careerPassportTest;
+    assert.equal(fmtHours(0), '');
+    assert.equal(fmtHours(59), '');
+    assert.equal(fmtHours(60), '1 min');
+    assert.equal(fmtHours(1800), '30 min');
+    assert.equal(fmtHours(3600), '1 h');
+    assert.equal(fmtHours(51120), '14.2 h');
+    assert.equal(fmtHours(null), '');
+    assert.equal(fmtHours('junk'), '');
+});

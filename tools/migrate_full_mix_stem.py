@@ -261,14 +261,53 @@ def verify_zip(path: Path) -> str:
     return "ok"
 
 
+def migrate_pack(path: Path, dry_run: bool) -> str:
+    """Dispatch by pack form. ZIP-file packs are rewritten in place; directory
+    (authoring) packs are REPORTED, not rewritten.
+
+    A single-file pack is replaced atomically — a fully-built temp archive
+    swapped in with one os.replace(), so an interrupted run leaves it either
+    fully migrated or untouched. A directory can't be swapped that way (no
+    atomic replace of a populated directory), so an in-place rewrite could leave
+    an authoring pack half-migrated. Rather than risk that, directory packs are
+    surfaced as `dir-form-unsupported` (a problem status, so the run's exit code
+    and summary flag them) for the operator to re-pack or migrate as a `.feedpak`.
+    """
+    if path.is_dir():
+        return "dir-form-unsupported"
+    return migrate_zip(path, dry_run)
+
+
+def verify_pack(path: Path) -> str:
+    """Verify a pack; directory (authoring) packs are reported, see migrate_pack."""
+    if path.is_dir():
+        return "dir-form-unsupported"
+    return verify_zip(path)
+
+
 def iter_packs(root: Path):
+    """Yield every pack under `root`. A pack is a suffix-named ZIP FILE or a
+    suffix-named DIRECTORY (the authoring form) — both are discovered so a
+    directory-form pack is never silently walked past. A directory pack is
+    yielded whole, not descended into: its `stems/` and `arrangements/` are pack
+    contents, not packs. (migrate/verify then report directory packs rather than
+    rewriting them in place — see migrate_pack.)"""
     if root.is_file():
         yield root
         return
-    for dirpath, _dirnames, filenames in os.walk(root):
+    # A directory whose OWN name is a pack suffix is a single directory-form
+    # pack passed directly, not a tree of packs to search.
+    if root.name.endswith(PACK_EXTS):
+        yield root
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
         for fn in sorted(filenames):
             if fn.endswith(PACK_EXTS):
                 yield Path(dirpath) / fn
+        for dn in sorted(dn for dn in dirnames if dn.endswith(PACK_EXTS)):
+            yield Path(dirpath) / dn
+        # Don't descend INTO a pack directory — its contents aren't packs.
+        dirnames[:] = [dn for dn in dirnames if not dn.endswith(PACK_EXTS)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -288,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no packs found under {args.root}", file=sys.stderr)
         return 2
 
-    action = verify_zip if args.verify else (lambda p: migrate_zip(p, args.dry_run))
+    action = verify_pack if args.verify else (lambda p: migrate_pack(p, args.dry_run))
 
     def work(pack: Path) -> str:
         """Never raise. One unreadable pack must not kill a 50,000-pack run.

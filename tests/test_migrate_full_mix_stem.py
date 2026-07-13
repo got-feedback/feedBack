@@ -315,3 +315,62 @@ def test_a_corrupt_archive_is_reported_not_fatal(tmp_path: Path, capsys):
     assert "migrated" in out
     assert mig.verify_zip(good) == "ok"  # the healthy pack still got migrated
     assert bad.read_bytes() == b"this is not a zip file at all"  # untouched
+
+
+# ── Directory-form (authoring) packs are discovered, not silently skipped ────
+
+def _write_dir_pack(path: Path, manifest: dict, files: dict[str, bytes] | None = None) -> Path:
+    """Build a directory-form pack (`song.sloppak/`), the authoring shape."""
+    files = files or {
+        "original/full.ogg": b"MIXDOWN",
+        "stems/guitar.ogg": b"g",
+        "stems/drums.ogg": b"d",
+        "arrangements/lead.json": b"{}",
+    }
+    path.mkdir()
+    (path / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False))
+    for name, data in files.items():
+        p = path / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    return path
+
+
+def test_iter_packs_discovers_directory_form_packs(tmp_path: Path):
+    """A `song.sloppak/` directory is a pack; os.walk must yield it whole and
+    NOT descend into it (its stems/ are contents, not packs)."""
+    d = _write_dir_pack(tmp_path / "song.sloppak", _manifest())
+    z = _write_pack(tmp_path / "other.feedpak", _manifest())
+    found = set(mig.iter_packs(tmp_path))
+    assert d in found and z in found
+    # Nothing inside the directory pack was yielded as its own pack.
+    assert not any(d in p.parents for p in found)
+
+
+def test_iter_packs_yields_a_directly_passed_dir_pack(tmp_path: Path):
+    d = _write_dir_pack(tmp_path / "song.sloppak", _manifest())
+    assert list(mig.iter_packs(d)) == [d]
+
+
+def test_directory_form_pack_is_reported_not_silently_skipped(tmp_path: Path, capsys):
+    """The migrator rewrites single-file packs atomically; a directory can't be
+    swapped that way, so it is surfaced as a problem rather than vanishing from
+    the run (the silent-skip this guards against) or being rewritten unsafely."""
+    d = _write_dir_pack(tmp_path / "song.sloppak", _manifest())
+    good = _write_pack(tmp_path / "good.feedpak", _manifest())
+
+    rc = mig.main([str(tmp_path)])
+    out = capsys.readouterr().out
+
+    assert rc == 1                              # a reported problem fails the exit code
+    assert "dir-form-unsupported" in out
+    assert mig.verify_zip(good) == "ok"         # the zip pack still migrated
+    # The directory pack is untouched: legacy key intact, mixdown not moved.
+    manifest = yaml.safe_load((d / "manifest.yaml").read_text())
+    assert manifest.get("original_audio") == "original/full.ogg"
+    assert (d / "original" / "full.ogg").read_bytes() == b"MIXDOWN"
+
+
+def test_verify_reports_directory_form_packs(tmp_path: Path):
+    d = _write_dir_pack(tmp_path / "song.sloppak", _manifest())
+    assert mig.verify_pack(d) == "dir-form-unsupported"

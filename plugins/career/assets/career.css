@@ -257,6 +257,7 @@
 /* The rubber stamp */
 .pp-stamp {
     --pp-rot: 0deg;
+
     position: relative;
     display: flex;
     flex-direction: column;

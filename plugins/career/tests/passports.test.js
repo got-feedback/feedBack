@@ -6,8 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function load() {
-    const store = {};
+function load(seed) {
+    const store = Object.assign({}, seed);
     const window = {
         console,
         localStorage: {
@@ -80,4 +80,22 @@ test('detectNewBadges notifies once per badge, never after it is seen', () => {
     t.markBadgeSeen('guitar', 'blues');
     // JSON-compare: vm objects carry a foreign Object prototype.
     assert.equal(JSON.stringify(t.seenBadges()), '{"guitar/blues":1}');
+
+    // Fresh session (new vm, empty notify cache) with the badge already seen:
+    // detection must stay silent.
+    const w2 = load({ 'feedBack-career-badges-seen': '{"guitar/blues":1}' });
+    w2.__careerPassportTest.detectNewBadges(view);
+    assert.equal(w2.notifications.length, 0);
+});
+
+test('seenBadges tolerates corrupt stored values', () => {
+    for (const bad of ['null', '[1,2]', '"x"', '{{{']) {
+        const w = load({ 'feedBack-career-badges-seen': bad });
+        const t = w.__careerPassportTest;
+        assert.equal(JSON.stringify(t.seenBadges()), '{}', `stored ${bad}`);
+        // And detection still works on top of the recovered empty state.
+        t.detectNewBadges({ instruments: { guitar: { passports: [
+            { genre_key: 'blues', genre: 'Blues', badge: 'earned' }] } } });
+        assert.equal(w.notifications.length, 1, `stored ${bad}`);
+    }
 });

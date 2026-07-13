@@ -33,6 +33,7 @@
     let _pp = null;              // last /passports view
     let _ppRelayTimer = 0;
     let _ppBook = null;          // {inst, gkey} of the open spread
+    let _ppReturnFocus = null;   // element to refocus when the book closes
     let _ppBootstrapped = false;
     let _ppNotified = {};        // badges chimed this session (slam still pending)
 
@@ -276,7 +277,9 @@
         venues.classList.toggle('hidden', tab !== 'venues');
         pp.classList.toggle('hidden', tab !== 'passports');
         document.querySelectorAll('#plugin-career .career-tab').forEach((b) => {
-            b.classList.toggle('active', b.dataset.careerTab === tab);
+            const active = b.dataset.careerTab === tab;
+            b.classList.toggle('active', active);
+            b.setAttribute('aria-selected', active ? 'true' : 'false');
         });
     }
 
@@ -289,7 +292,12 @@
     }
 
     function seenBadges() {
-        try { return JSON.parse(lsGet(PP_SEEN_KEY) || '{}'); } catch (_) { return {}; }
+        try {
+            const seen = JSON.parse(lsGet(PP_SEEN_KEY) || '{}');
+            // Guard non-object JSON (a stray "null" or array) — a broken
+            // stored value must not throw on every passport refresh.
+            return seen && typeof seen === 'object' && !Array.isArray(seen) ? seen : {};
+        } catch (_) { return {}; }
     }
 
     function badgeId(inst, gkey) { return inst + '/' + gkey; }
@@ -475,7 +483,7 @@
             : `Play ${esc(p.genre)} songs at ${starGl} to collect ticket stubs.`;
         const stubsHTML = stubs.length ? stubs.map(ppStubHTML).join('')
             : `<div class="pp-stub-empty">${emptyLine}</div>`;
-        return `<div class="pp-book-wrap" data-pp-close-bg="1">
+        return `<div class="pp-book-wrap" data-pp-close-bg="1" role="dialog" aria-modal="true" aria-label="${esc(p.genre)} ${esc(ppLabel(inst))} passport">
             <div class="pp-book">
                 <div class="pp-page pp-page-left">
                     <div class="pp-page-head">${esc(p.genre)} — ${esc(ppLabel(inst))}</div>
@@ -501,9 +509,12 @@
         const overlay = $('pp-overlay');
         if (!p || !overlay) return;
         _ppBook = { inst, gkey };
+        _ppReturnFocus = document.activeElement;
         const pending = p.badge === 'earned' && !seenBadges()[badgeId(inst, gkey)];
         overlay.innerHTML = ppBookHTML(inst, p, pending);
         overlay.classList.remove('hidden');
+        const close = overlay.querySelector('.pp-book-close');
+        if (close) close.focus();
         sfx('page');
         // Double rAF so the cover's closed state paints before the transition.
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -530,6 +541,11 @@
         _ppBook = null;
         const overlay = $('pp-overlay');
         if (overlay) { overlay.classList.add('hidden'); overlay.innerHTML = ''; }
+        if (_ppReturnFocus && typeof _ppReturnFocus.focus === 'function' &&
+            document.contains(_ppReturnFocus)) {
+            _ppReturnFocus.focus();
+        }
+        _ppReturnFocus = null;
     }
 
     function commitInstrument(inst, after) {

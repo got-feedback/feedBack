@@ -56,6 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine (`app.js`, `highway.js`, `playSong`, `showScreen`, the capability registry).
 
 ### Fixed
+- **Career passports review polish** — the passport tabs and book overlay carry
+  proper ARIA semantics (`aria-selected`/`aria-controls`/`tabpanel`;
+  `role="dialog"` + `aria-modal` with focus moved to the close button on open
+  and restored on close), and a corrupt stored seen-badges value (e.g. a stray
+  `"null"`) can no longer throw on every passport refresh.
 - **The packaged desktop app could not start (`ModuleNotFoundError: No module named
   'appstate'`).** feedback-desktop's `scripts/bundle-slopsmith.sh` copies a *hardcoded
   list* of core files into the app bundle — `server.py`, `VERSION`, `lib/`, `data/`,

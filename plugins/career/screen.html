@@ -4,11 +4,11 @@
         <div id="career-stars-summary" class="text-sm text-gray-400"></div>
     </div>
     <div class="career-tabs" role="tablist">
-        <button class="career-tab" data-career-tab="venues" role="tab">Venues</button>
-        <button class="career-tab" data-career-tab="passports" role="tab">Passports</button>
+        <button class="career-tab" data-career-tab="venues" role="tab" id="career-tab-btn-venues" aria-controls="career-tab-venues">Venues</button>
+        <button class="career-tab" data-career-tab="passports" role="tab" id="career-tab-btn-passports" aria-controls="career-tab-passports">Passports</button>
     </div>
 
-    <div id="career-tab-venues">
+    <div id="career-tab-venues" role="tabpanel" aria-labelledby="career-tab-btn-venues">
         <p class="text-sm text-gray-400 mb-4">Earn stars by playing songs well — 60% accuracy is a star, 75% two, 85% three. Stars unlock bigger stages, and the crowd plays along with you.</p>
         <div id="career-progress-wrap" class="mb-6">
             <div class="career-bar-track">
@@ -26,7 +26,7 @@
         </div>
     </div>
 
-    <div id="career-tab-passports" class="hidden">
+    <div id="career-tab-passports" class="hidden" role="tabpanel" aria-labelledby="career-tab-btn-passports">
         <p class="text-sm text-gray-400 mb-4">Commit to an instrument, pick a genre, and stamp your way to its badge — five ★★ songs mint a Bronze. Your passport wall is who you are as a musician.</p>
         <div id="pp-instruments" class="pp-instruments"></div>
         <div id="pp-shelf-wrap" class="mt-5">

@@ -311,7 +311,7 @@ def check_key_coverage(spec: Path) -> bool:
 
 
 def check_forward(spec: Path) -> bool:
-    """Layer 2 — core must ingest every example pack the spec ships."""
+    """Layer 3 — core must ingest every example pack the spec ships."""
     examples_dir = spec / "examples"
     if not examples_dir.is_dir():
         _fail(f"{examples_dir} is missing — wrong path or bad checkout?")
@@ -366,7 +366,7 @@ def check_forward(spec: Path) -> bool:
 
 
 def check_reverse(spec: Path) -> bool:
-    """Layer 3 — packs committed here must pass the spec's reference validator."""
+    """Layer 4 — packs committed here must pass the spec's reference validator."""
     packs = sorted({p for g in PACK_GLOBS for p in REPO.glob(g)})
     if not packs:
         print("  reverse: no committed packs — skipped")

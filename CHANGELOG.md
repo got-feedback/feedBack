@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attributed via the existing progression arrangement→instrument mapping;
   non-graded instruments (bass, drums) render shown-not-judged — repertoire
   without a pass bar, never a false badge denial.
+- **Career passports (UI)** — the Career screen gains a Passports tab beside
+  Venues: a physical per-instrument passport book (embossed leather cover, 3D
+  page-turn) with a wax-seal commitment ceremony (Stage 0), rubber-stamp badge
+  slam with ink bleed and deterministic per-genre jitter, qualifying songs as
+  collected ticket stubs, and unopened genres as an "Explore next"
+  travel-brochure rack (invitations, never greyed-out slots or completion
+  meters). Badge earns chime + notify immediately; the stamp slam plays when
+  the passport is next opened. Four small synthesized sound effects ship as
+  plugin assets. The career screen also relays the Virtuoso `virtuoso.progress`
+  localStorage snapshot to the drill-state intake on `virtuoso:progress` bus
+  events (debounced, plus a one-time bootstrap), closing the
+  fires-into-a-void seam without touching the virtuoso plugin.
 
 ### Removed
 - **The classic v2 UI shell is gone — v3 is the only UI (R3a).** `static/index.html`, the

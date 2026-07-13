@@ -3,19 +3,40 @@
         <h1 class="text-2xl font-bold text-white">Career</h1>
         <div id="career-stars-summary" class="text-sm text-gray-400"></div>
     </div>
-    <p class="text-sm text-gray-400 mb-4">Earn stars by playing songs well — 60% accuracy is a star, 75% two, 85% three. Stars unlock bigger stages, and the crowd plays along with you.</p>
-    <div id="career-progress-wrap" class="mb-6">
-        <div class="career-bar-track">
-            <div id="career-progress-bar" class="career-bar-fill" style="width:0%"></div>
-        </div>
-        <div id="career-progress-label" class="text-xs text-gray-500 mt-1"></div>
+    <div class="career-tabs" role="tablist">
+        <button class="career-tab" data-career-tab="venues" role="tab">Venues</button>
+        <button class="career-tab" data-career-tab="passports" role="tab">Passports</button>
     </div>
-    <div id="career-venues" class="career-venues"></div>
-    <div class="mt-8">
-        <div class="flex items-end justify-between flex-wrap gap-2 mb-2">
-            <h2 class="text-lg font-semibold text-white">Your star collection</h2>
-            <div id="career-star-summary" class="text-xs text-gray-400"></div>
+
+    <div id="career-tab-venues">
+        <p class="text-sm text-gray-400 mb-4">Earn stars by playing songs well — 60% accuracy is a star, 75% two, 85% three. Stars unlock bigger stages, and the crowd plays along with you.</p>
+        <div id="career-progress-wrap" class="mb-6">
+            <div class="career-bar-track">
+                <div id="career-progress-bar" class="career-bar-fill" style="width:0%"></div>
+            </div>
+            <div id="career-progress-label" class="text-xs text-gray-500 mt-1"></div>
         </div>
-        <div id="career-star-list" class="career-star-list"></div>
+        <div id="career-venues" class="career-venues"></div>
+        <div class="mt-8">
+            <div class="flex items-end justify-between flex-wrap gap-2 mb-2">
+                <h2 class="text-lg font-semibold text-white">Your star collection</h2>
+                <div id="career-star-summary" class="text-xs text-gray-400"></div>
+            </div>
+            <div id="career-star-list" class="career-star-list"></div>
+        </div>
+    </div>
+
+    <div id="career-tab-passports" class="hidden">
+        <p class="text-sm text-gray-400 mb-4">Commit to an instrument, pick a genre, and stamp your way to its badge — five ★★ songs mint a Bronze. Your passport wall is who you are as a musician.</p>
+        <div id="pp-instruments" class="pp-instruments"></div>
+        <div id="pp-shelf-wrap" class="mt-5">
+            <div id="pp-shelf" class="pp-shelf"></div>
+        </div>
+        <div id="pp-rack-wrap" class="mt-8">
+            <h2 class="text-lg font-semibold text-white mb-1">Explore next</h2>
+            <p class="text-xs text-gray-500 mb-3">More genres, whenever you want them — your wall is complete as it is.</p>
+            <div id="pp-rack" class="pp-rack"></div>
+        </div>
     </div>
 </div>
+<div id="pp-overlay" class="pp-overlay hidden"></div>

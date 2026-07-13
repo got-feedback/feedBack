@@ -17,11 +17,24 @@
     const PREV_VIZ_KEY = 'feedBack-career-prev-viz';
     const POLL_MS = 2000;
 
+    // Passports (the badge-journey layer; see routes.py — badges are computed
+    // server-side, this file only renders and relays).
+    const PP_SEEN_KEY = 'feedBack-career-badges-seen';
+    const PP_INST_KEY = 'feedBack-career-instrument';
+    const PP_TAB_KEY = 'feedBack-career-tab';
+    const PP_LABELS = { guitar: 'Guitar', bass: 'Bass', keys: 'Keys', drums: 'Drums' };
+    const PP_BROCHURE_ART = ['🎸', '🎷', '🎹', '🥁', '🎺', '🎻', '🎤', '🪕'];
+
     let _state = null;
     let _pollTimer = 0;
     let _appliedManifestVenue = null;
     let _manifestReqGen = 0; // invalidates in-flight manifest fetches
     let _prevUnlockedIds = null;
+    let _pp = null;              // last /passports view
+    let _ppRelayTimer = 0;
+    let _ppBook = null;          // {inst, gkey} of the open spread
+    let _ppBootstrapped = false;
+    let _ppNotified = {};        // badges chimed this session (slam still pending)
 
     function $(id) { return document.getElementById(id); }
 
@@ -219,9 +232,386 @@
         render(state);
         schedulePoll(state);
         pushCrowdManifest(state);
+        refreshPassports(); // independent fetch; failures don't touch venues
+    }
+
+    // ── Passports ─────────────────────────────────────────────────────────
+
+    function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+    function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* ok */ } }
+
+    function ppLabel(inst) {
+        return PP_LABELS[inst] || (inst.charAt(0).toUpperCase() + inst.slice(1));
+    }
+
+    function ppKey(genre) {
+        return String(genre || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    }
+
+    function ppHash(seed) {
+        let h = 0;
+        for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+        return h;
+    }
+
+    // Deterministic per-key jitter (sin-hash): stamps and stubs land slightly
+    // askew, the same way on every visit.
+    function ppJitter(seed, range) {
+        return (Math.abs(Math.sin(ppHash(seed))) * 2 - 1) * range;
+    }
+
+    function sfx(name) {
+        try {
+            const a = new Audio(`${API}/assets/sfx/${name}.mp3`);
+            a.volume = 0.45;
+            a.play().catch(() => { /* autoplay policy — silent is fine */ });
+        } catch (_) { /* no Audio — fine */ }
+    }
+
+    function showCareerTab(tab) {
+        lsSet(PP_TAB_KEY, tab);
+        const venues = $('career-tab-venues');
+        const pp = $('career-tab-passports');
+        if (!venues || !pp) return;
+        venues.classList.toggle('hidden', tab !== 'venues');
+        pp.classList.toggle('hidden', tab !== 'passports');
+        document.querySelectorAll('#plugin-career .career-tab').forEach((b) => {
+            b.classList.toggle('active', b.dataset.careerTab === tab);
+        });
+    }
+
+    function activeInstrument() {
+        const list = (_pp && _pp.config && _pp.config.instruments) || [];
+        const saved = lsGet(PP_INST_KEY);
+        if (saved && list.includes(saved)) return saved;
+        const committed = list.find((i) => ((_pp.instruments || {})[i] || {}).committed_at);
+        return committed || list[0] || 'guitar';
+    }
+
+    function seenBadges() {
+        try { return JSON.parse(lsGet(PP_SEEN_KEY) || '{}'); } catch (_) { return {}; }
+    }
+
+    function badgeId(inst, gkey) { return inst + '/' + gkey; }
+
+    function markBadgeSeen(inst, gkey) {
+        const seen = seenBadges();
+        seen[badgeId(inst, gkey)] = 1;
+        lsSet(PP_SEEN_KEY, JSON.stringify(seen));
+    }
+
+    // New badge → chime + notification once per session; the stamp SLAM plays
+    // when the passport is next opened (and only then is the badge marked
+    // seen, so a pending slam survives a reload).
+    function detectNewBadges(view) {
+        const seen = seenBadges();
+        for (const inst of Object.keys(view.instruments || {})) {
+            for (const p of (view.instruments[inst].passports || [])) {
+                const id = badgeId(inst, p.genre_key);
+                if (p.badge !== 'earned' || seen[id] || _ppNotified[id]) continue;
+                _ppNotified[id] = true;
+                sfx('chime');
+                if (window.fbNotify && typeof window.fbNotify.show === 'function') {
+                    window.fbNotify.show({
+                        big: true, icon: '🛂', accent: '#b45309',
+                        title: 'Badge earned!',
+                        message: `${p.genre} — Bronze, ready to stamp into your ${ppLabel(inst)} passport.`,
+                    });
+                }
+            }
+        }
+    }
+
+    // Relay the Virtuoso drill snapshot (localStorage doc, not the thin bus
+    // payload) to the server intake, debounced across event bursts.
+    function relayDrillState() {
+        clearTimeout(_ppRelayTimer);
+        _ppRelayTimer = setTimeout(() => {
+            let snap = null;
+            try { snap = JSON.parse(lsGet('virtuoso.progress') || 'null'); } catch (_) { /* corrupt */ }
+            if (!snap || typeof snap !== 'object' || !snap.byNode || typeof snap.byNode !== 'object') return;
+            fetch(`${API}/drill-state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: snap.mode, xp: snap.xp, byNode: snap.byNode }),
+            }).then(() => refreshPassports()).catch(() => { /* next event retries */ });
+        }, 1500);
+    }
+
+    async function refreshPassports() {
+        let view;
+        try {
+            const res = await fetch(`${API}/passports`);
+            if (!res.ok) return;
+            view = await res.json();
+        } catch (_) { return; }
+        _pp = view;
+        detectNewBadges(view);
+        renderPassports();
+        if (!_ppBootstrapped) {
+            _ppBootstrapped = true;
+            // First run on this browser: seed the server with the local drill
+            // snapshot if it has never received one.
+            if (!(view.drill_state || {}).received_at) relayDrillState();
+        }
+    }
+
+    function ppCoverHTML(inst, p) {
+        const rot = ppJitter(inst + p.genre_key, 1.6).toFixed(2);
+        const stamp = p.badge === 'earned'
+            ? `<span class="pp-stamp pp-stamp-mini" style="--pp-rot:${ppJitter(p.genre_key, 8).toFixed(1)}deg">BRONZE</span>`
+            : '';
+        const stubs = p.qualifying_count === 1 ? '1 stub' : `${p.qualifying_count} stubs`;
+        return `<button class="pp-cover pp-leather-${esc(inst)}" data-pp-open="${esc(p.genre_key)}" style="transform:rotate(${rot}deg)">
+            <span class="pp-cover-title">${esc(p.genre.toUpperCase())}</span>
+            <span class="pp-cover-inst">${esc(ppLabel(inst))} passport</span>
+            ${stamp}
+            <span class="pp-cover-sub">${stubs}</span>
+        </button>`;
+    }
+
+    function renderShelf(inst, data) {
+        const shelf = $('pp-shelf');
+        if (!shelf) return;
+        if (!data.committed_at) {
+            shelf.innerHTML = `<div class="pp-commit-card">
+                <div class="pp-commit-cover pp-leather-${esc(inst)}">
+                    <span class="pp-cover-title">${esc(ppLabel(inst).toUpperCase())}</span>
+                    <span class="pp-cover-inst">passport</span>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-200 font-medium mb-1">Pick up the ${esc(ppLabel(inst).toLowerCase())}.</div>
+                    <div class="text-xs text-gray-400 mb-2">Press your seal to commit — then choose a genre below and go deep.</div>
+                    <button class="career-btn career-btn-primary" data-pp-commit="${esc(inst)}">Press the seal</button>
+                </div>
+            </div>`;
+            return;
+        }
+        const books = (data.passports || []).map((p) => ppCoverHTML(inst, p)).join('');
+        shelf.innerHTML = books ||
+            '<div class="text-xs text-gray-500">Your shelf is ready — open your first genre passport below.</div>';
+    }
+
+    function renderRack(inst, data) {
+        const rack = $('pp-rack');
+        if (!rack || !_pp) return;
+        const openedKeys = new Set((data.passports || []).map((p) => p.genre_key));
+        const genres = (_pp.genres || []).filter((g) => !openedKeys.has(g.genre_key));
+        if (!genres.length) {
+            rack.innerHTML = '<div class="text-xs text-gray-500">No further genres in your library yet — new songs bring new brochures.</div>';
+            return;
+        }
+        rack.innerHTML = genres.map((g) => {
+            const art = PP_BROCHURE_ART[Math.abs(ppHash(g.genre_key)) % PP_BROCHURE_ART.length];
+            return `<button class="pp-brochure" data-pp-genre="${esc(g.genre)}">
+                <span class="pp-brochure-art" aria-hidden="true">${art}</span>
+                <span class="pp-brochure-name">${esc(g.genre)}</span>
+                <span class="pp-brochure-sub">${g.songs_in_library === 1 ? '1 song' : `${g.songs_in_library} songs`} in your library</span>
+            </button>`;
+        }).join('');
+    }
+
+    function renderPassports() {
+        const host = $('pp-instruments');
+        if (!host || !_pp) return;
+        const inst = activeInstrument();
+        const data = (_pp.instruments || {})[inst] || { passports: [] };
+        host.innerHTML = ((_pp.config || {}).instruments || []).map((i) => {
+            const d = (_pp.instruments || {})[i] || {};
+            const earned = (d.passports || []).filter((p) => p.badge === 'earned').length;
+            const committed = !!d.committed_at;
+            return `<button class="pp-inst${i === inst ? ' active' : ''}${committed ? '' : ' uncommitted'}" data-pp-inst="${esc(i)}">
+                ${esc(ppLabel(i))}${earned ? ` <span class="pp-inst-badges">⚡${earned}</span>` : ''}${committed ? '' : ' <span class="pp-inst-plus">+</span>'}
+            </button>`;
+        }).join('');
+        renderShelf(inst, data);
+        renderRack(inst, data);
+    }
+
+    function ppStubHTML(s) {
+        const date = (s.last_played_at || '').slice(0, 10);
+        return `<div class="pp-stub" style="transform:rotate(${ppJitter(s.filename, 1.2).toFixed(2)}deg)">
+            <span class="pp-stub-stars">${'★'.repeat(s.stars)}</span>
+            <span class="pp-stub-title">${esc(s.title)}</span>
+            ${s.artist ? `<span class="pp-stub-artist">${esc(s.artist)}</span>` : ''}
+            <span class="pp-stub-meta">${date ? `${esc(date)} · ` : ''}best ${(s.best_accuracy * 100).toFixed(0)}%</span>
+        </div>`;
+    }
+
+    function ppBookHTML(inst, p, pendingSlam) {
+        const req = p.requirement || {};
+        const need = Math.max(0, (req.songs || 0) - p.qualifying_count);
+        const starGl = '★'.repeat(req.min_stars || 0);
+        let badgeArea = '';
+        if (p.badge === 'shown_not_judged') {
+            badgeArea = `<div class="pp-snj">Shown, not judged — your ${esc(ppLabel(inst).toLowerCase())} repertoire speaks for itself.</div>`;
+        } else if (p.badge === 'earned') {
+            badgeArea = `<div class="pp-stamp pp-stamp-page${pendingSlam ? ' pp-stamp-hidden' : ''}" style="--pp-rot:${ppJitter(p.genre_key, 7).toFixed(1)}deg">
+                <span class="pp-stamp-genre">${esc(p.genre.toUpperCase())}</span>
+                <span class="pp-stamp-tier">BRONZE</span>
+            </div>
+            <div class="pp-gold-note">Gold rung coming — improvise it, verified.</div>`;
+        } else {
+            badgeArea = `<div class="pp-stamp pp-stamp-page pp-stamp-ghost" style="--pp-rot:${ppJitter(p.genre_key, 7).toFixed(1)}deg">
+                <span class="pp-stamp-genre">${esc(p.genre.toUpperCase())}</span>
+                <span class="pp-stamp-tier">BRONZE</span>
+            </div>
+            <div class="pp-invite">${need === 1 ? `One more ${starGl} song mints this stamp.` : `${need} more ${starGl} songs mint this stamp.`}</div>`;
+        }
+        let drills = '';
+        const reqNodes = (p.drills || {}).required || [];
+        if (reqNodes.length) {
+            const cleared = new Set((p.drills || {}).cleared || []);
+            drills = `<div class="pp-drills">${reqNodes.map((n) =>
+                `<div class="pp-drill${cleared.has(n) ? ' cleared' : ''}">${cleared.has(n) ? '✓' : '○'} ${esc(n)}</div>`).join('')}</div>`;
+        }
+        // Graded instruments collect stubs at the badge bar; shown-not-judged
+        // instruments have no bar — every played genre song is repertoire.
+        const stubs = p.badge === 'shown_not_judged'
+            ? (p.songs || [])
+            : (p.songs || []).filter((s) => s.qualifies);
+        const emptyLine = p.badge === 'shown_not_judged'
+            ? `Play ${esc(p.genre)} songs to fill this page.`
+            : `Play ${esc(p.genre)} songs at ${starGl} to collect ticket stubs.`;
+        const stubsHTML = stubs.length ? stubs.map(ppStubHTML).join('')
+            : `<div class="pp-stub-empty">${emptyLine}</div>`;
+        return `<div class="pp-book-wrap" data-pp-close-bg="1">
+            <div class="pp-book">
+                <div class="pp-page pp-page-left">
+                    <div class="pp-page-head">${esc(p.genre)} — ${esc(ppLabel(inst))}</div>
+                    ${badgeArea}${drills}
+                </div>
+                <div class="pp-page pp-page-right">
+                    <div class="pp-page-head">Ticket stubs</div>
+                    <div class="pp-stubs">${stubsHTML}</div>
+                </div>
+                <div class="pp-book-cover pp-leather-${esc(inst)}">
+                    <span class="pp-cover-title">${esc(p.genre.toUpperCase())}</span>
+                    <span class="pp-cover-inst">${esc(ppLabel(inst))} passport</span>
+                </div>
+                <button class="pp-book-close" data-pp-close="1" aria-label="Close">✕</button>
+            </div>
+        </div>`;
+    }
+
+    function openBook(inst, gkey) {
+        if (!_pp) return;
+        const p = (((_pp.instruments || {})[inst] || {}).passports || [])
+            .find((x) => x.genre_key === gkey);
+        const overlay = $('pp-overlay');
+        if (!p || !overlay) return;
+        _ppBook = { inst, gkey };
+        const pending = p.badge === 'earned' && !seenBadges()[badgeId(inst, gkey)];
+        overlay.innerHTML = ppBookHTML(inst, p, pending);
+        overlay.classList.remove('hidden');
+        sfx('page');
+        // Double rAF so the cover's closed state paints before the transition.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            const book = overlay.querySelector('.pp-book');
+            if (book) book.classList.add('open');
+        }));
+        if (pending) {
+            setTimeout(() => {
+                if (!_ppBook || _ppBook.gkey !== gkey || _ppBook.inst !== inst) return;
+                const stamp = overlay.querySelector('.pp-stamp-page');
+                const book = overlay.querySelector('.pp-book');
+                if (!stamp) return;
+                stamp.classList.remove('pp-stamp-hidden');
+                stamp.classList.add('pp-slam');
+                if (book) book.classList.add('pp-shake');
+                sfx('stamp');
+                markBadgeSeen(inst, gkey);
+                renderPassports(); // the shelf cover gains its mini-stamp
+            }, 950);
+        }
+    }
+
+    function closeBook() {
+        _ppBook = null;
+        const overlay = $('pp-overlay');
+        if (overlay) { overlay.classList.add('hidden'); overlay.innerHTML = ''; }
+    }
+
+    function commitInstrument(inst, after) {
+        fetch(`${API}/passports/commit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instrument: inst }),
+        }).then(() => refreshPassports())
+            .then(() => { if (after) after(); })
+            .catch(() => { /* server restarting; user retries */ });
+    }
+
+    // Stage 0 — the wax seal. Purely theatrical: the overlay plays the press,
+    // the POST commits, the shelf re-renders committed.
+    function sealCeremony(inst, after) {
+        const overlay = $('pp-overlay');
+        if (!overlay) { commitInstrument(inst, after); return; }
+        overlay.innerHTML = `<div class="pp-book-wrap">
+            <div class="pp-commit-cover pp-ceremony pp-leather-${esc(inst)}">
+                <span class="pp-cover-title">${esc(ppLabel(inst).toUpperCase())}</span>
+                <span class="pp-cover-inst">passport</span>
+                <span class="pp-wax"><span>${esc(ppLabel(inst).charAt(0))}</span></span>
+            </div>
+        </div>`;
+        overlay.classList.remove('hidden');
+        setTimeout(() => sfx('seal'), 450);
+        setTimeout(() => {
+            overlay.classList.add('hidden');
+            overlay.innerHTML = '';
+            commitInstrument(inst, after);
+        }, 1500);
+    }
+
+    function openGenre(inst, genre) {
+        fetch(`${API}/passports/open`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instrument: inst, genre }),
+        }).then((res) => { if (!res.ok) throw new Error('open ' + res.status); })
+            .then(() => refreshPassports())
+            .then(() => openBook(inst, ppKey(genre)))
+            .catch(() => { /* validation/restart; rack stays */ });
     }
 
     function onClick(e) {
+        const tabBtn = e.target.closest('[data-career-tab]');
+        const instBtn = e.target.closest('[data-pp-inst]');
+        const commitBtn = e.target.closest('[data-pp-commit]');
+        const coverBtn = e.target.closest('[data-pp-open]');
+        const brochureBtn = e.target.closest('[data-pp-genre]');
+        if (tabBtn) {
+            showCareerTab(tabBtn.dataset.careerTab);
+            return;
+        }
+        if (instBtn) {
+            lsSet(PP_INST_KEY, instBtn.dataset.ppInst);
+            renderPassports();
+            return;
+        }
+        if (commitBtn) {
+            sealCeremony(commitBtn.dataset.ppCommit);
+            return;
+        }
+        if (coverBtn) {
+            openBook(activeInstrument(), coverBtn.dataset.ppOpen);
+            return;
+        }
+        if (brochureBtn) {
+            const inst = activeInstrument();
+            const genre = brochureBtn.dataset.ppGenre;
+            const committed = _pp && ((_pp.instruments || {})[inst] || {}).committed_at;
+            // Opening your first passport on an instrument IS the commitment —
+            // the seal ceremony runs first, then the passport opens.
+            if (committed) openGenre(inst, genre);
+            else sealCeremony(inst, () => openGenre(inst, genre));
+            return;
+        }
+        if (e.target.closest('[data-pp-close]') ||
+            (e.target.dataset && e.target.dataset.ppCloseBg)) {
+            closeBook();
+            return;
+        }
         const dlBtn = e.target.closest('[data-career-download]');
         const delBtn = e.target.closest('[data-career-delete]');
         const playBtn = e.target.closest('[data-career-play]');
@@ -268,9 +658,23 @@
         if (sm && typeof sm.on === 'function') {
             // New song stats can add stars → thresholds may cross mid-session.
             sm.on('stats:recorded', () => refresh());
+            // Virtuoso's progress emits are the drill-state relay trigger; the
+            // payload is a thin delta, so the relay reads the full localStorage
+            // snapshot instead (see relayDrillState).
+            sm.on('virtuoso:progress', relayDrillState);
         }
+        showCareerTab(lsGet(PP_TAB_KEY) === 'passports' ? 'passports' : 'venues');
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && _ppBook) closeBook();
+        });
         refresh();
     }
+
+    // Test seam (bare-vm harness, see plugins/career/tests/): pure helpers +
+    // the badge-diff logic; nothing here touches the DOM.
+    window.__careerPassportTest = {
+        ppKey, ppJitter, ppLabel, detectNewBadges, seenBadges, markBadgeSeen,
+    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot);

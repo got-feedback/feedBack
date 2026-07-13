@@ -674,6 +674,7 @@
                 if (!stamp) return;
                 stamp.classList.remove('pp-stamp-hidden');
                 stamp.classList.add('pp-slam');
+                stamp.classList.add('pp-tilt'); // freshly slammed = trading card too
                 if (book) book.classList.add('pp-shake');
                 sfx('stamp');
                 markBadgeSeen(inst, gkey);
@@ -764,6 +765,9 @@
     }
 
     function onTiltLeave() {
+        // Cancel any queued frame: it closes over the departed card and would
+        // re-apply tilt vars after the pointer has left.
+        if (_tiltRaf) { cancelAnimationFrame(_tiltRaf); _tiltRaf = 0; }
         if (_tiltEl) { resetTilt(_tiltEl); _tiltEl = null; }
     }
 

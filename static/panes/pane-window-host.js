@@ -74,24 +74,65 @@
             if (node.tagName === 'LINK' && have.has(node.href)) return;
             try { doc.head.insertBefore(node.cloneNode(true), anchor); } catch (e) { /* skip a node we can't clone */ }
         });
-        // Carry the theme/scale hooks the app hangs on <html> and <body>. v3 keys
-        // off these for its colour tokens and interface scale, and a panel that
-        // lands without them renders in the wrong palette at the wrong size.
-        //
-        // MERGE, don't assign: pane.html sets `class="fb-pane-window"` on <html>,
-        // and panes.css hangs the pane window's own chrome off it. Overwriting the
-        // class list would take that with it and the window would lose its own
-        // layout — the app's classes and the pane document's are both wanted.
+        _syncChrome(doc);
+    }
+
+    // The theme/scale hooks the app hangs on <html> and <body>. v3 keys off these
+    // for its colour tokens and its interface scale, and a panel that lands without
+    // them renders in the wrong palette at the wrong size.
+    //
+    // MERGE, don't assign: pane.html sets `class="fb-pane-window"` on <html>, and
+    // panes.css hangs the pane window's own chrome off it. Overwriting the class
+    // list would take that with it and the window would lose its own layout — the
+    // app's classes and the pane document's are both wanted.
+    //
+    // Re-run on every theme/scale change for as long as the pane is open (see
+    // _followChrome). A one-time snapshot would leave an already-open pane rendering
+    // at the old scale the moment the user touched Interface size — "looks identical"
+    // has to keep being true, not merely start out true.
+    function _syncChrome(doc) {
         try {
             document.documentElement.classList.forEach((c) => doc.documentElement.classList.add(c));
             document.body.classList.forEach((c) => doc.body.classList.add(c));
             // The inline style on <html> carries the interface-scale custom property
-            // (--fb-scale). Merge it in rather than replacing the attribute, for the
-            // same reason.
-            const scale = document.documentElement.style.cssText;
-            if (scale) doc.documentElement.style.cssText += ';' + scale;
-        } catch (e) { /* non-fatal */ }
+            // (--fb-scale). Assign it wholesale: unlike the class lists, pane.html
+            // sets no inline style of its own, so there is nothing here to preserve —
+            // and merging by concatenation would grow the attribute without bound as
+            // the user dragged the scale slider.
+            doc.documentElement.style.cssText = document.documentElement.style.cssText;
+        } catch (e) { /* the window may be closing under us */ }
     }
+
+    // paneId -> stop following the app's theme/scale
+    const chromeFollowers = new Map();
+
+    function _followChrome(paneId, doc) {
+        const bus = window.feedBack;
+        if (!bus || typeof bus.on !== 'function') return;
+        const sync = () => _syncChrome(doc);
+        bus.on('scale:changed', sync);
+        bus.on('theme:changed', sync);
+        bus.on('v3:cosmetics-applied', sync);
+        chromeFollowers.set(paneId, () => {
+            bus.off('scale:changed', sync);
+            bus.off('theme:changed', sync);
+            bus.off('v3:cosmetics-applied', sync);
+        });
+    }
+
+    function _unfollowChrome(paneId) {
+        const off = chromeFollowers.get(paneId);
+        if (off) { off(); chromeFollowers.delete(paneId); }
+    }
+
+    // How long a "we cannot even see the pop-out's document" condition has to persist
+    // before we call it fatal. A SecurityError means the window is not reachable from
+    // this realm at all, and waiting cannot fix that — but we give it a moment anyway
+    // rather than bailing on the first tick, because a throw *during* the navigation
+    // from about:blank to /pane would otherwise take down a pop-out that was about to
+    // work perfectly. A second is far more than that transition needs, and far less
+    // than the 10s a user would otherwise stare at a detached panel for.
+    const UNREACHABLE_GRACE_MS = 1000;
 
     // Wait for the REAL pane document.
     //
@@ -103,14 +144,6 @@
     // So we do not trust readyState, and we do not trust 'load' (which may have
     // fired for about:blank before we could listen). We wait for the one thing that
     // only exists in the document we actually want: pane.html's #fb-pane-root.
-    // How long a "we cannot even see the pop-out's document" condition has to persist
-    // before we call it fatal. A SecurityError means the window is not reachable from
-    // this realm at all, and waiting cannot fix that — but we give it a moment anyway
-    // rather than bailing on the first tick, because a throw *during* the navigation
-    // from about:blank to /pane would otherwise take down a pop-out that was about to
-    // work perfectly. A second is far more than that transition needs, and far less
-    // than the 10s a user would otherwise stare at a detached panel for.
-    const UNREACHABLE_GRACE_MS = 1000;
 
     function _whenReady(w, onReady, onFail) {
         const deadline = performance.now() + 10000;
@@ -190,6 +223,10 @@
         root.appendChild(doc.adoptNode(el));
         doc.title = spec.title + ' — fee[dB]ack';
 
+        // Keep the pane window's theme and interface scale in step with the app for
+        // as long as it is open. Stopped in unplace().
+        _followChrome(spec.id, doc);
+
         // THE ELEMENT MUST LEAVE BEFORE THE DOCUMENT DIES.
         //
         // When the user closes a pane window, its document is torn down — and the
@@ -267,6 +304,7 @@
     }
 
     function unplace(id, el) {
+        _unfollowChrome(id);
         // Hand the element back unmarked. The manager returns it to its home right
         // after this, and it must arrive as the plugin left it — a panel that
         // stayed .fb-paned would come back with its own positioning stripped.

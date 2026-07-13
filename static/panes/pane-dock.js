@@ -104,7 +104,11 @@
     function focus(id) {
         const card = cards.get(id);
         if (!card) return;
-        card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        // Honour prefers-reduced-motion, as the flash animation below already does
+        // in panes.css. A smooth scroll is motion too, and a user who asked for less
+        // of it meant this as well.
+        const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        card.scrollIntoView({ block: 'nearest', behavior: calm ? 'auto' : 'smooth' });
         // Re-trigger the flash even if the class is still there — repeat focus of
         // the same card would otherwise be a no-op animation.
         card.classList.remove('is-flash');

@@ -14,5 +14,9 @@
     "intro": {
         "video": "intro.mp4",
         "audio": "bar-ambience.mp3"
+    },
+    "sfx": {
+        "up": "sfx-up.mp3",
+        "down": "sfx-down.mp3"
     }
 }

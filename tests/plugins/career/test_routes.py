@@ -208,8 +208,10 @@ def _write_feedpak(dlc, name, title="T"):
 
 
 def test_gig_prepare_extracts_every_song_up_front(tmp_path, meta_db):
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     for n in ("one.feedpak", "two.feedpak", "three.feedpak"):
         _write_feedpak(dlc, n)
 
@@ -229,8 +231,10 @@ def test_gig_prepare_extracts_every_song_up_front(tmp_path, meta_db):
 
 
 def test_gig_prepare_is_idempotent_on_a_warm_cache(tmp_path, meta_db):
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _write_feedpak(dlc, "one.feedpak")
     client = _career_client_with_library(tmp_path, meta_db, dlc, cache)
 
@@ -243,8 +247,10 @@ def test_gig_prepare_is_idempotent_on_a_warm_cache(tmp_path, meta_db):
 def test_one_bad_feedpak_does_not_stop_the_set(tmp_path, meta_db):
     # A corrupt pak in the setlist must not block the gig: the play itself will
     # surface the error exactly as it does outside a gig. Slow beats blocked.
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _write_feedpak(dlc, "good.feedpak")
     (dlc / "bad.feedpak").write_bytes(b"not a zip at all")
 
@@ -281,8 +287,10 @@ def test_prepare_rejects_a_non_list_songs_value(tmp_path, meta_db, client):
 
 
 def test_prepare_ignores_non_string_and_blank_entries(tmp_path, meta_db):
-    dlc = tmp_path / "dlc"; dlc.mkdir()
-    cache = tmp_path / "cache"; cache.mkdir()
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
     _write_feedpak(dlc, "good.feedpak")
     client = _career_client_with_library(tmp_path, meta_db, dlc, cache)
     body = client.post("/api/plugins/career/gigs/prepare",
@@ -291,14 +299,51 @@ def test_prepare_ignores_non_string_and_blank_entries(tmp_path, meta_db):
     assert body["failed"] == []
 
 
-def test_prepare_caps_the_setlist(tmp_path, meta_db, client):
-    # This endpoint unpacks zips — an arbitrary caller must not be able to ask
-    # for unbounded work. A setlist is a handful of songs.
+def test_prepare_caps_the_setlist(tmp_path, meta_db):
+    # This endpoint unpacks zips — an arbitrary caller must not be able to ask for
+    # unbounded work.
+    #
+    # The first version of this test asserted `prepared == 0` against a fixture
+    # with NO library: the endpoint exits before extraction there, so it passed
+    # whether or not the cap existed. Give it a real library, ask for far more than
+    # the cap, and assert the endpoint only ever considered MAX_GIG_SONGS of them.
     import routes as career_routes
     assert career_routes.MAX_GIG_SONGS <= 64
-    res = client.post("/api/plugins/career/gigs/prepare",
-                      json={"songs": [f"s{i}.feedpak" for i in range(500)]})
-    assert res.status_code == 200
-    # No library in this fixture, so nothing prepares — the point is it did not
-    # try to walk 500 entries.
-    assert res.json()["prepared"] == 0
+
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    client = _career_client_with_library(tmp_path, meta_db, dlc, cache)
+
+    n = career_routes.MAX_GIG_SONGS + 50
+    # None of these exist, so every song the endpoint LOOKS AT lands in `failed`.
+    # That makes `failed` an exact count of how many it considered.
+    body = client.post("/api/plugins/career/gigs/prepare",
+                       json={"songs": [f"missing{i}.feedpak" for i in range(n)]}).json()
+    assert body["prepared"] == 0
+    assert len(body["failed"]) == career_routes.MAX_GIG_SONGS, (
+        f"the endpoint must consider at most MAX_GIG_SONGS "
+        f"({career_routes.MAX_GIG_SONGS}), not all {n}"
+    )
+
+
+def test_prepare_refuses_to_escape_the_library(tmp_path, meta_db):
+    # resolve_source_dir() does a bare `dlc_root / filename` with no containment
+    # guard, so a crafted path would walk straight out of the library. Every
+    # filename must go through _resolve_dlc_path first.
+    dlc = tmp_path / "dlc"
+    dlc.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (tmp_path / "outside.feedpak").write_bytes(b"secret")
+    client = _career_client_with_library(tmp_path, meta_db, dlc, cache)
+
+    for evil in ("../outside.feedpak", "..\\outside.feedpak",
+                 "a/../../outside.feedpak", "/etc/passwd", "C:/Windows/x.feedpak"):
+        body = client.post("/api/plugins/career/gigs/prepare",
+                           json={"songs": [evil]}).json()
+        assert body["prepared"] == 0, f"{evil!r} must never be prepared"
+        assert body["failed"] == [evil]
+    # Nothing outside the library may have been unpacked.
+    assert list(cache.iterdir()) == []

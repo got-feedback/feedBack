@@ -47,6 +47,7 @@ from fastapi import Body, HTTPException
 from fastapi.responses import FileResponse
 
 import sloppak
+from dlc_paths import _resolve_dlc_path
 from progression import instrument_for_arrangement
 
 PLUGIN_ID = "career"
@@ -774,10 +775,20 @@ def setup(app, context):
         if dlc_root is None or cache_root is None:
             return {"ok": False, "prepared": 0, "failed": files, "error": "no library"}
 
+        root = Path(dlc_root)
         prepared, failed = 0, []
         for fn in files:
+            # CONTAINMENT FIRST. resolve_source_dir() does a bare
+            # `dlc_root / filename` with no guard, so a crafted `../..` would
+            # walk straight out of the library. Every other filename-bound
+            # handler validates through _resolve_dlc_path; so does this one.
+            safe = _resolve_dlc_path(root, fn)
+            if safe is None:
+                _state["log"].warning("career: gig pre-extract rejected unsafe path %r", fn)
+                failed.append(fn)
+                continue
             try:
-                sloppak.resolve_source_dir(fn, Path(dlc_root), Path(cache_root))
+                sloppak.resolve_source_dir(fn, root, Path(cache_root))
                 prepared += 1
             except Exception as exc:   # noqa: BLE001 — one bad pak can't sink the set
                 _state["log"].warning("career: gig pre-extract failed for %s: %s", fn, exc)

@@ -75,3 +75,24 @@ test('the prepare route degrades instead of failing', () => {
         'a host without the library resolvers must degrade, not 500 — pre-extraction ' +
         'is an optimisation and can never be why a gig will not start');
 });
+
+// ── the prepare must never be able to BLOCK the gig (CodeRabbit, #971) ──────
+//
+// A bare `await fetch(...)` only rejects on a network error. A server that
+// accepts the connection and then never answers hangs forever — and the gig
+// would never start. That would make this optimisation the exact thing it
+// promises never to be: the reason you cannot play.
+
+test('the prepare fetch is bounded — a hung server cannot block the gig', () => {
+    const fn = extractBlock(CAREER, 'async function prepareGigSongs(');
+    assert.match(fn, /AbortController/, 'the request must be abortable');
+    assert.match(fn, /setTimeout\([\s\S]{0,40}abort\s*\(\s*\)/,
+        'a hung request must be aborted, not awaited forever');
+    assert.match(fn, /signal:\s*ctrl\.signal/, 'the signal must actually be passed to fetch');
+    assert.match(fn, /clearTimeout/, 'the timer must be cleared on the happy path');
+    assert.match(CAREER, /const\s+PREPARE_TIMEOUT_MS\s*=\s*\d+/, 'the ceiling must be named');
+    // The button must be restored however we leave — otherwise a timeout strands
+    // the poster on "Preparing set…" with Play disabled: unplayable.
+    assert.match(fn, /finally\s*\{[\s\S]{0,220}btn\.disabled\s*=\s*false/,
+        'the Play button must be re-enabled on EVERY path, including the abort');
+});

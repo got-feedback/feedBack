@@ -54,6 +54,9 @@ VENUE_ID_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
 PACK_FILENAME_RE = re.compile(r"^[a-z0-9_-]{1,64}\.(mp4|webm|mp3|json)$")
 REQUIRED_LOOPS = ("bored", "neutral", "engaged", "ecstatic")
 DOWNLOAD_CHUNK = 1024 * 256
+# A setlist is a handful of songs; this endpoint unpacks zips, so cap the work an
+# arbitrary caller can ask for.
+MAX_GIG_SONGS = 32
 
 _lock = threading.Lock()
 _state = {
@@ -750,7 +753,13 @@ def setup(app, context):
         bad feedpak must not block the set from starting (the play itself will
         surface the error, exactly as it does outside a gig).
         """
-        files = [str(f) for f in ((body or {}).get("songs") or []) if f]
+        raw = (body or {}).get("songs")
+        # A str is iterable: without the list check, "abc" would prepare three
+        # one-character "songs". Cap the count too — this endpoint unpacks zips,
+        # so an oversized list is real work, and a setlist is a handful of songs.
+        if not isinstance(raw, list):
+            return {"ok": True, "prepared": 0, "failed": []}
+        files = [f for f in raw if isinstance(f, str) and f.strip()][:MAX_GIG_SONGS]
         if not files:
             return {"ok": True, "prepared": 0, "failed": []}
 

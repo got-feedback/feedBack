@@ -269,3 +269,36 @@ def test_gig_prepare_empty_setlist(tmp_path, meta_db, client):
     res = client.post("/api/plugins/career/gigs/prepare", json={"songs": []})
     assert res.status_code == 200
     assert res.json() == {"ok": True, "prepared": 0, "failed": []}
+
+
+def test_prepare_rejects_a_non_list_songs_value(tmp_path, meta_db, client):
+    # A str is iterable: without the list check, "abc" would prepare three
+    # one-character "songs".
+    for bad in ("abc", 42, {"a": 1}, None):
+        res = client.post("/api/plugins/career/gigs/prepare", json={"songs": bad})
+        assert res.status_code == 200
+        assert res.json()["prepared"] == 0
+
+
+def test_prepare_ignores_non_string_and_blank_entries(tmp_path, meta_db):
+    dlc = tmp_path / "dlc"; dlc.mkdir()
+    cache = tmp_path / "cache"; cache.mkdir()
+    _write_feedpak(dlc, "good.feedpak")
+    client = _career_client_with_library(tmp_path, meta_db, dlc, cache)
+    body = client.post("/api/plugins/career/gigs/prepare",
+                       json={"songs": ["good.feedpak", "", "   ", 7, None, {"x": 1}]}).json()
+    assert body["prepared"] == 1
+    assert body["failed"] == []
+
+
+def test_prepare_caps_the_setlist(tmp_path, meta_db, client):
+    # This endpoint unpacks zips — an arbitrary caller must not be able to ask
+    # for unbounded work. A setlist is a handful of songs.
+    import routes as career_routes
+    assert career_routes.MAX_GIG_SONGS <= 64
+    res = client.post("/api/plugins/career/gigs/prepare",
+                      json={"songs": [f"s{i}.feedpak" for i in range(500)]})
+    assert res.status_code == 200
+    # No library in this fixture, so nothing prepares — the point is it did not
+    # try to walk 500 entries.
+    assert res.json()["prepared"] == 0

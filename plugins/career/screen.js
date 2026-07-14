@@ -12,6 +12,10 @@
     'use strict';
 
     const API = '/api/plugins/career';
+    // Unpacking a setlist is real work (zips, possibly on a slow/network drive),
+    // so this is generous — but it is a CEILING, not a wait. Past it we start the
+    // gig and let the first play extract lazily, as it always did.
+    const PREPARE_TIMEOUT_MS = 60000;
     const VENUE_OVERRIDE_KEY = 'feedBack-career-venue';
     const NO_VENUE = '__none__';
     const PREV_VIZ_KEY = 'feedBack-career-prev-viz';
@@ -1136,14 +1140,26 @@
     async function prepareGigSongs(prop, btn) {
         const label = btn && btn.textContent;
         if (btn) { btn.disabled = true; btn.textContent = 'Preparing set…'; }
+        // A bare `await fetch(...)` only rejects on a network ERROR — a server
+        // that accepts the connection and then never answers hangs forever, and
+        // the gig would never start. That would make this optimisation the very
+        // thing it promises never to be: the reason you cannot play. Give up
+        // waiting and let the first play extract lazily, exactly as before.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), PREPARE_TIMEOUT_MS);
         try {
             await fetch(`${API}/gigs/prepare`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ songs: prop.songs.map((s) => s.filename) }),
+                signal: ctrl.signal,
             });
-        } catch (_) { /* start anyway — first play will extract as it always did */ }
-        if (btn) { btn.disabled = false; if (label) btn.textContent = label; }
+        } catch (_) {
+            // abort, offline, non-2xx — all the same: start the gig anyway.
+        } finally {
+            clearTimeout(timer);
+            if (btn) { btn.disabled = false; if (label) btn.textContent = label; }
+        }
     }
 
     async function startGig(btn) {

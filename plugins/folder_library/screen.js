@@ -878,6 +878,115 @@ function createFolderSurface(cfg) {
     var _dragRafId         = null;
     var _DRAG_THRESH = 5, _DRAG_ZONE = 150, _DRAG_SPEED = 50;
 
+    // ── Windowed song lists ─────────────────────────────────────────────
+    // A song list used to render EVERY song it held. On a flat 50,944-song
+    // library that is one <div> with 50,938 children and ~1.3 MILLION DOM nodes
+    // (~25 per row) — ~4.2 GB of renderer RSS, for a screen the user may not
+    // even be looking at. It also poisons unrelated code: any
+    // `document.querySelector` miss anywhere in the app must walk that whole
+    // tree, which is how song_preview's per-frame menu check ended up eating
+    // ~50% of the renderer and dropping the app to 2.7 fps (feedBack#965).
+    //
+    // So render only what is on screen. Rows are uniform height (and grid cards
+    // uniform size), so the window is pure arithmetic — no per-row observers.
+    // Off-window rows are represented by padding on the list itself rather than
+    // spacer elements: a spacer <div> would become a grid ITEM in grid view and
+    // shift the columns, whereas padding works identically for both layouts.
+    var VIRTUAL_MIN = 200;   // below this, render everything — no behaviour change
+    var VIRTUAL_BUFFER = 6;  // rows kept rendered above/below the viewport
+    var _virtualCleanups = [];
+
+    // Which slice of the list is on screen. Pure arithmetic — kept separate from
+    // the DOM so it can be tested directly (see tests/virtual_list.test.js).
+    //
+    //   top   : list's offset relative to the scroller viewport's top. NEGATIVE
+    //           once the user has scrolled the list's start above the fold.
+    //   rows  : total ROWS (grid packs `perRow` songs into one row; list view is 1)
+    //
+    // Returns the song index range [start, end) to render, plus how many ROWS of
+    // padding stand in for the songs above and below it.
+    function _visibleWindow(top, viewportH, itemH, perRow, rows, total) {
+        if (!(itemH > 0) || !(rows > 0)) return { start: 0, end: total, padRowsTop: 0, padRowsBottom: 0 };
+        var firstRow = Math.max(0, Math.floor(-top / itemH) - VIRTUAL_BUFFER);
+        var lastRow = Math.min(rows, Math.ceil((-top + viewportH) / itemH) + VIRTUAL_BUFFER);
+        // Scrolled entirely past the list (either direction): keep one row alive
+        // rather than emptying it, so the padding math stays anchored.
+        if (lastRow <= firstRow) {
+            firstRow = Math.min(firstRow, rows - 1);
+            lastRow = firstRow + 1;
+        }
+        return {
+            start: firstRow * perRow,
+            end: Math.min(total, lastRow * perRow),
+            padRowsTop: firstRow,
+            padRowsBottom: Math.max(0, rows - lastRow),
+        };
+    }
+
+    function _clearVirtualLists() {
+        _virtualCleanups.forEach(function (fn) { try { fn(); } catch (_) {} });
+        _virtualCleanups = [];
+    }
+
+    // Fill `list` with `songs`, windowed when the list is big enough to matter.
+    // `make(song)` builds one row/card.
+    function _fillSongList(list, songs, make) {
+        var sorted = _sortSongs(songs);
+        if (sorted.length <= VIRTUAL_MIN) {
+            sorted.forEach(function (s) { list.appendChild(make(s)); });
+            return;
+        }
+
+        var scroller = _getScrollEl();
+        var basePadTop = parseFloat(window.getComputedStyle(list).paddingTop) || 0;
+        var basePadBot = parseFloat(window.getComputedStyle(list).paddingBottom) || 0;
+
+        // Measure one real row once — no hardcoded row height to drift out of
+        // sync with the CSS.
+        var probe = make(sorted[0]);
+        probe.style.visibility = 'hidden';
+        list.appendChild(probe);
+        var itemH = probe.getBoundingClientRect().height || 44;
+        var perRow = 1;
+        if (_view === 'grid') {
+            var cw = probe.getBoundingClientRect().width || 150;
+            var gap = 12;
+            perRow = Math.max(1, Math.floor((list.clientWidth + gap) / (cw + gap)));
+            itemH += gap;
+        }
+        list.removeChild(probe);
+
+        var rows = Math.ceil(sorted.length / perRow);
+        var raf = 0, lastStart = -1, lastEnd = -1;
+
+        function paint() {
+            raf = 0;
+            // Where the list sits relative to the scroller's viewport.
+            var top = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+            var vh = scroller.clientHeight || window.innerHeight;
+            var w = _visibleWindow(top, vh, itemH, perRow, rows, sorted.length);
+            if (w.start === lastStart && w.end === lastEnd) return;   // nothing moved
+            lastStart = w.start; lastEnd = w.end;
+
+            var frag = document.createDocumentFragment();
+            for (var i = w.start; i < w.end; i++) frag.appendChild(make(sorted[i]));
+            list.textContent = '';
+            list.style.paddingTop = (basePadTop + w.padRowsTop * itemH) + 'px';
+            list.style.paddingBottom = (basePadBot + w.padRowsBottom * itemH) + 'px';
+            list.appendChild(frag);
+        }
+        function onScroll() { if (!raf) raf = window.requestAnimationFrame(paint); }
+
+        scroller.addEventListener('scroll', onScroll, { passive: true });
+        window.addEventListener('resize', onScroll);
+        _virtualCleanups.push(function () {
+            scroller.removeEventListener('scroll', onScroll);
+            window.removeEventListener('resize', onScroll);
+            if (raf) window.cancelAnimationFrame(raf);
+        });
+        paint();
+    }
+
     function _getScrollEl() {
         var el = _treeEl();
         while (el && el !== document.documentElement) {
@@ -1159,8 +1268,8 @@ function createFolderSurface(cfg) {
 
         var _listPopulated = open;
         function _populateList() {
-            _sortSongs(folder.songs).forEach(function (s) {
-                list.appendChild(_view === 'grid' ? _songCard(s, folder.path) : _songRow(s, folder.path));
+            _fillSongList(list, folder.songs, function (s) {
+                return _view === 'grid' ? _songCard(s, folder.path) : _songRow(s, folder.path);
             });
             (folder.children || []).forEach(function (child) {
                 childrenWrap.appendChild(_folderSection(child, depth + 1));
@@ -1195,8 +1304,10 @@ function createFolderSurface(cfg) {
         hdr.addEventListener('click', function () {
             if (_query()) return;
             var nowOpen = content.style.display === 'none';
-            if (nowOpen && !_listPopulated) { _populateList(); _listPopulated = true; }
+            // Show BEFORE populating: a windowed list measures a real row and the
+            // scroller viewport, and both are zero while display:none.
             content.style.display = nowOpen ? '' : 'none';
+            if (nowOpen && !_listPopulated) { _populateList(); _listPopulated = true; }
             chev.style.transform  = nowOpen ? 'rotate(90deg)' : '';
             if (nowOpen) _openFolders.add(folder.path);
             else         _openFolders.delete(folder.path);
@@ -1245,8 +1356,8 @@ function createFolderSurface(cfg) {
         }
         var _populated = _unsortedOpen;
         function _populate() {
-            _sortSongs(songs).forEach(function (s) {
-                list.appendChild(_view === 'grid' ? _songCard(s, '') : _songRow(s, ''));
+            _fillSongList(list, songs, function (s) {
+                return _view === 'grid' ? _songCard(s, '') : _songRow(s, '');
             });
         }
         if (_unsortedOpen) { _populate(); } else { list.style.display = 'none'; }
@@ -1255,8 +1366,9 @@ function createFolderSurface(cfg) {
         hdr.addEventListener('click', function () {
             if (_query()) return;
             _unsortedOpen = list.style.display === 'none';
-            if (_unsortedOpen && !_populated) { _populate(); _populated = true; }
+            // Show BEFORE populating — see the folder toggle above.
             list.style.display = _unsortedOpen ? (_view === 'grid' ? 'grid' : '') : 'none';
+            if (_unsortedOpen && !_populated) { _populate(); _populated = true; }
             chev.style.transform = _unsortedOpen ? 'rotate(90deg)' : '';
             _store(cfg.unsortedKey, String(_unsortedOpen));
         });
@@ -1340,6 +1452,10 @@ function createFolderSurface(cfg) {
     // ── Render ──────────────────────────────────────────────────────────
     function _render() {
         _hoveredFolder = null; // DOM is rebuilt; discard any stale reference
+        // Drop the scroll listeners of the previous render's windowed lists —
+        // their `list` nodes are about to be detached, and a surviving listener
+        // would keep painting into orphaned DOM (and leak on every re-render).
+        _clearVirtualLists();
         var treeEl = _treeEl();
         if (!treeEl) return;
         var data = _filtered();
@@ -1451,6 +1567,7 @@ function createFolderSurface(cfg) {
 
     // ── Unload (lib surface) ────────────────────────────────────────────
     function _unload() {
+        _clearVirtualLists();   // don't leave scroll listeners behind on teardown
         if (!cfg.searchInputId) return;
         var el = _el(cfg.searchInputId);
         if (el) el.style.maxWidth = '';
@@ -1554,6 +1671,8 @@ function createFolderSurface(cfg) {
         init: _init,
         onScreenChanged: _onScreenChanged,
         render: _render,
+        // Pure window arithmetic, exposed for tests (no DOM needed).
+        __test: { visibleWindow: _visibleWindow, VIRTUAL_MIN: VIRTUAL_MIN, VIRTUAL_BUFFER: VIRTUAL_BUFFER },
     };
 }
 
@@ -1656,6 +1775,7 @@ if (!window.__folderLibraryLib) {
     window.folderLibrary = {
         load:   function (force) { return _lib.load(force); },
         unload: function ()      { _lib.unload(); },
+        __test: _lib.__test,
     };
 
     // Auto-load if folder view was already active when this script was injected.

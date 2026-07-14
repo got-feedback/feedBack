@@ -62,7 +62,7 @@ and is a monolith in its own right, to be split per-table once the router train
 lands) · `static/v3/songs.js` (4,134) · `static/capabilities/audio-session.js`
 (2,974) · `plugins/highway_3d/screen.js` (15,656) · `plugins/keys_highway_3d/screen.js`
 (3,780) · `plugins/drum_highway_3d/screen.js` (3,597) · `plugins/career/screen.js`
-(1,516 — career v3 gigs pushed it over; split plan: carve the gig block into a
+(1,530 — career v3 gigs + gold pushed it over; split plan: carve the gig block into a
 `scriptType: module` file when career work next touches it) — and every monolith with a PR
 train in the refactor plan. Test files (e.g. `tests/test_plugins.py`) are out of scope
 by policy — the norm governs source files.

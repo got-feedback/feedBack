@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Gold tier (career passports)** — an earned badge turns **gold** when
+  Virtuoso verifies an improvised jam in the passport's style (the
+  `gold_improv` artifact relays with the drill snapshot; a genre inherits its
+  family's style, gained-only, and gold never substitutes for the badge bar
+  itself). Gold gets its own ceremony, stamp slam, foil chip, and gold ink on
+  the shelf cover, profile wall, and passport card; the bronze page's "Gold
+  rung coming" preview becomes a live invitation to jam it.
 - **Gigs (the career verb, frontend)** — book a gig from any opened passport:
   a gig poster proposes the setlist (re-roll for a different bill; save or
   copy the poster as a PNG), "Play the gig" hands the set to the play queue

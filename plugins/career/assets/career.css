@@ -525,7 +525,18 @@
     pointer-events: none;
 }
 
-/* Gold foil preview — honest "coming", never earnable-looking. */
+/* Gold ink — a REAL gold badge (comb-verified improv). */
+.pp-stamp-gold {
+    border-color: #b8860b;
+    color: #a97b1b;
+    box-shadow: inset 0 0 0 3px #f3e8c8, inset 0 0 0 4px #b8860b;
+}
+.pp-stamp-mini.pp-stamp-gold {
+    color: #f0c75e;
+    border-color: #f0c75e;
+    box-shadow: none;
+}
+/* Gold foil chip — rendered only alongside an earned gold stamp. */
 .pp-gold-foil {
     position: relative;
     overflow: hidden;
@@ -535,8 +546,8 @@
     margin-top: 0.9rem;
     padding: 0.28rem 0.85rem;
     border-radius: 999px;
-    border: 2px dashed #c8b273;
-    color: #a8946d;
+    border: 2px solid #d9a253;
+    color: #c89040;
     font-size: 0.58rem;
     font-weight: 700;
     letter-spacing: 0.32em;

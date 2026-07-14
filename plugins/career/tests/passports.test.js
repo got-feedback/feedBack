@@ -198,3 +198,52 @@ test('gig runner lifecycle: advance on ended, abandon on dead-queue stop', () =>
     t.onGigSongStop();
     assert.equal(t.getGigRun(), null);
 });
+
+test('a gold upgrade notifies even when the bronze moment was already seen', () => {
+    // Bronze seen under the legacy un-suffixed id; the badge then turns gold.
+    const w = load({ 'feedBack-career-badges-seen': '{"guitar/blues":1}' });
+    const t = w.__careerPassportTest;
+    const view = { instruments: { guitar: { passports: [
+        { genre_key: 'blues', genre: 'Blues', badge: 'gold' }] } } };
+    t.detectNewBadges(view);
+    assert.equal(w.notifications.length, 1);
+    assert.match(w.notifications[0].title, /Gold/);
+    // Same session: no duplicate.
+    t.detectNewBadges(view);
+    assert.equal(w.notifications.length, 1);
+    // Gold slam seen → fresh session stays silent.
+    t.markBadgeSeen('guitar', 'blues', 'gold');
+    const w2 = load({ 'feedBack-career-badges-seen': JSON.stringify(t.seenBadges()) });
+    w2.__careerPassportTest.detectNewBadges(view);
+    assert.equal(w2.notifications.length, 0);
+});
+
+test('a gold slam marks the bronze moment seen too — never both ceremonies', () => {
+    const w = load();
+    const t = w.__careerPassportTest;
+    t.markBadgeSeen('guitar', 'blues', 'gold');
+    const seen = JSON.parse(JSON.stringify(t.seenBadges()));
+    assert.equal(seen['guitar/blues@gold'], 1);
+    assert.equal(seen['guitar/blues'], 1);
+    // A later view where the badge reads 'earned' (e.g. gold state lost
+    // server-side) must not replay the bronze ceremony.
+    const view = { instruments: { guitar: { passports: [
+        { genre_key: 'blues', genre: 'Blues', badge: 'earned' }] } } };
+    const w2 = load({ 'feedBack-career-badges-seen': JSON.stringify(seen) });
+    w2.__careerPassportTest.detectNewBadges(view);
+    assert.equal(w2.notifications.length, 0);
+});
+
+test('careerTotals counts gold badges on the wall', () => {
+    const t = load().__careerPassportTest;
+    t.setView({
+        config: { instruments: ['guitar'] },
+        instruments: { guitar: { committed_at: 1, gig_count: 0, passports: [
+            { genre_key: 'blues', genre: 'Blues', badge: 'gold', seconds_total: 60 },
+            { genre_key: 'funk', genre: 'Funk', badge: 'in_progress', seconds_total: 0 },
+        ] } },
+    });
+    const totals = t.careerTotals();
+    assert.equal(totals.badges, 1);
+    assert.equal(totals.walls[0].earned[0].badge, 'gold');
+});

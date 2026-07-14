@@ -437,10 +437,17 @@ def _err_body(resp) -> str:
     the ones a 300-char cap decapitates. The cap survives so a server answering with a 2 MB HTML
     error page can't dump a novel into a log line.
     """
-    text = getattr(resp, "text", "") or ""
+    # Strip FIRST, then measure: a body that is 300 chars of JSON and 3900 of trailing whitespace
+    # is not a long body, and truncating it would cut real content to make room for blanks.
+    text = (getattr(resp, "text", "") or "").strip()
     if len(text) <= _MAX_ERR_BODY:
-        return text.strip()
-    return text[:_MAX_ERR_BODY].strip() + f"\n… [truncated, {len(text)} chars total]"
+        return text
+    # The marker has to fit INSIDE the cap, not be appended past it — otherwise _MAX_ERR_BODY is
+    # a suggestion rather than a bound, and the one caller who trusts it (a log line, a job record
+    # persisted to disk) is the one who gets surprised.
+    marker = f"\n… [truncated, {len(text)} chars total]"
+    keep = max(0, _MAX_ERR_BODY - len(marker))
+    return text[:keep].rstrip() + marker
 
 
 def transcribe_vocals_remote(
@@ -453,7 +460,17 @@ def transcribe_vocals_remote(
     min_word_score: float = 0.35,
     progress_cb: ProgressCB = None,
 ) -> list[dict]:
-    """POST the vocal stem to `{server_url}/align` and parse the response.
+    """POST the vocal stem to `{server_url}/transcribe` and parse the response.
+
+    NOT `/align` — that endpoint is forced alignment ("here are the lyrics,
+    tell me when each word is sung") and its `text` field is required. We
+    have no lyrics; producing them is the point. Posting there returned a
+    422 from FastAPI's validation layer before the server's handler ran, so
+    remote transcription never worked at all
+    (feedBack-plugin-stem-splitter#17).
+
+    Requires a feedBack-demucs-server carrying `/transcribe`; an older one
+    answers 404 and the raised error says so.
 
     Expects the server to respond with a JSON object carrying a `words` (or
     `segments`) field in WhisperX's native shape; `_whisperx_to_sloppak`

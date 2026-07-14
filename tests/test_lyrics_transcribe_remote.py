@@ -119,6 +119,29 @@ def test_a_server_error_surfaces_the_whole_body(vocals):
     assert "CUDA out of memory" in str(exc.value)
 
 
+def test_the_cap_is_a_bound_not_a_suggestion():
+    """The truncation marker must fit INSIDE _MAX_ERR_BODY, not be appended past it.
+
+    Otherwise the cap is advisory, and the callers who trust it — a log line, a job record
+    persisted to disk and re-read on every load — are the ones that get surprised."""
+    from lyrics_transcribe import _MAX_ERR_BODY, _err_body
+
+    body = _err_body(_Resp(text="x" * 500_000))
+    assert len(body) <= _MAX_ERR_BODY, (
+        f"body is {len(body)} chars, over the {_MAX_ERR_BODY} cap it claims to enforce"
+    )
+    assert "truncated" in body and "500000" in body
+
+
+def test_trailing_whitespace_is_not_content():
+    # A 300-char JSON body followed by 3900 blanks is not a long body, and cutting real content
+    # to make room for whitespace would be a silly way to lose the diagnosis.
+    from lyrics_transcribe import _err_body
+
+    payload = '{"detail":"nope"}'
+    assert _err_body(_Resp(text=payload + " " * 8000)) == payload
+
+
 def test_a_404_says_the_server_is_too_old(vocals):
     # A server predating the /transcribe endpoint answers 404. The message must carry that
     # through rather than swallowing it, or "transcription does nothing" is all anyone sees.

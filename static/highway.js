@@ -1159,6 +1159,17 @@ function createHighway() {
             ' (user ' + hwState._renderScale.toFixed(2) + ' / auto ' + hwState._autoScale.toFixed(2) + ')';
     }
 
+    // Optional renderer capability: "my picture keeps moving even when the chart
+    // clock is stopped". Anything a renderer animates on its own clock (the 3D
+    // highway's venue video + crowd) has to opt out of the paused-frame throttle
+    // or it renders at 10 fps while the song is paused. Absent / throwing =
+    // false, so every existing renderer keeps the throttle unchanged.
+    function _rendererNeedsContinuousFrames() {
+        const r = hwState._renderer;
+        if (!r || typeof r.needsContinuousFrames !== 'function') return false;
+        try { return r.needsContinuousFrames() === true; } catch (_) { return false; }
+    }
+
     function draw() {
         hwState.animFrame = requestAnimationFrame(draw);
         if (!hwState.canvas || !hwState._renderer) return;
@@ -1223,7 +1234,15 @@ function createHighway() {
             const _nowP = performance.now();
             if (_nowP - hwState._chartLastAdvanceAt > _CHART_MAX_INTERP_MS) {
                 _paused = true;
-                if (_nowP - hwState._lastPausedDrawAt < _PAUSED_FRAME_INTERVAL_MS) return;
+                // ...unless the renderer says its picture is NOT static while
+                // paused. The throttle assumes a paused chart is a still frame,
+                // but a renderer can own content on a clock of its own — the 3D
+                // highway draws the venue's video backdrop and its reactive crowd
+                // into this same canvas, so throttling the highway throttled the
+                // whole room to 10 fps whenever the song was paused. Optional
+                // method: renderers that don't implement it keep the throttle.
+                if (!_rendererNeedsContinuousFrames()
+                    && _nowP - hwState._lastPausedDrawAt < _PAUSED_FRAME_INTERVAL_MS) return;
                 hwState._lastPausedDrawAt = _nowP;
             }
         }

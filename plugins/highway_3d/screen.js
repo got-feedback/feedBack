@@ -15388,6 +15388,27 @@
                 });
             },
 
+            // The host throttles paused frames to ~10 fps, on the assumption
+            // that a paused chart is a static picture and re-rendering it is
+            // pure waste (highway-constants._PAUSED_FRAME_INTERVAL_MS).
+            //
+            // That stopped being true when the venue landed. The venue backdrop
+            // is a PLAYING VIDEO and the crowd reacts on its own clock, and they
+            // are drawn into this same canvas as the highway — so throttling the
+            // highway throttled the whole room. Pausing the song dropped the
+            // venue, the crowd and the stage to 10 fps.
+            //
+            // Only claim continuous frames while a crowd video is actually
+            // rolling: with no venue pack (the common case) the paused scene IS
+            // static and the throttle should still save the GPU.
+            needsContinuousFrames() {
+                if (!_isReady || _ctxLost) return false;
+                for (const v of _venueCrowdVideos) {
+                    if (v && !v.paused && !v.ended && v.readyState >= 2) return true;
+                }
+                return false;
+            },
+
             draw(bundle) {
                 if (!_isReady) return;
                 if (_ctxLost) return;   // GPU context lost (alt-tab / reset) — skip until restored

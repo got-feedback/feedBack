@@ -77,3 +77,50 @@ test('throttle runs after the ready gate, before bundle/draw', () => {
     assert.ok(readyIdx < throttleIdx, 'throttle must come after the ready gate');
     assert.ok(throttleIdx < drawIdx, 'throttle must come before the renderer draw');
 });
+
+// ── The throttle must not starve a renderer that animates on its own clock ──
+//
+// The throttle assumes a paused chart is a still picture, so re-rendering it is
+// waste. That stopped being true when the venue landed: the 3D highway draws the
+// venue's VIDEO backdrop and its reactive crowd into the same canvas as the
+// notes, so capping paused frames capped the whole room — pausing the song
+// dropped the venue to ~10 fps ("everything around the highway drops fps").
+//
+// Renderers now opt out via an optional needsContinuousFrames(). Absent or
+// throwing must mean false, so every other renderer keeps the throttle.
+
+test('paused throttle defers to a renderer that needs continuous frames', () => {
+    const src = highwaySources();
+    const fn = extractBlock(src, 'function draw()');
+    assert.match(fn, /_rendererNeedsContinuousFrames\s*\(\s*\)/,
+        'the paused throttle must consult the renderer capability');
+    // The capability must GATE the early-return, not merely be called near it:
+    // the throttle only applies when the renderer does NOT need every frame.
+    assert.match(
+        fn,
+        /!\s*_rendererNeedsContinuousFrames\s*\(\s*\)[\s\S]{0,160}_PAUSED_FRAME_INTERVAL_MS[\s\S]{0,40}return;/,
+        'throttle must be skipped when the renderer needs continuous frames',
+    );
+});
+
+test('the capability probe fails closed (absent / non-function / throwing)', () => {
+    const src = highwaySources();
+    const fn = extractBlock(src, 'function _rendererNeedsContinuousFrames()');
+    assert.match(fn, /typeof\s+r\.needsContinuousFrames\s*!==\s*'function'[\s\S]{0,40}return false/,
+        'a renderer without the method must keep the throttle');
+    assert.match(fn, /catch[\s\S]{0,40}return false/,
+        'a throwing renderer must keep the throttle, not crash the draw loop');
+    assert.match(fn, /===\s*true/,
+        'only an explicit true opts out — a truthy accident must not disable the throttle');
+});
+
+test('3D highway claims continuous frames only while a crowd video is rolling', () => {
+    const h3d = fs.readFileSync(
+        path.join(__dirname, '..', '..', 'plugins', 'highway_3d', 'screen.js'), 'utf8');
+    const fn = extractBlock(h3d, 'needsContinuousFrames()');
+    assert.match(fn, /_venueCrowdVideos/, 'must key off the actual crowd video elements');
+    assert.match(fn, /\.paused/, 'a paused video is a still frame — throttle should still apply');
+    // With no venue pack (the common case) the paused scene really is static and
+    // the GPU saving must survive: the method has to be able to return false.
+    assert.match(fn, /return false;/, 'must fall through to false with no live video');
+});

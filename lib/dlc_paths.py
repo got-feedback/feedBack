@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 import appstate
+from safepath import resolved_root
 
 
 def _get_dlc_dir(cfg: dict | None = None) -> Path | None:
@@ -86,7 +87,14 @@ def _resolve_dlc_path(dlc: Path, filename: str) -> Path | None:
             or PureWindowsPath(safe).drive):
         return None
     try:
-        root = dlc.resolve()
+        # The library root is fixed for the life of the process, but this
+        # function runs once per song / art fetch / scanned row — and
+        # `.resolve()` lstats every path component. Re-resolving here was
+        # ~23,500 stat calls/sec on a 50,944-song library, which pins a core
+        # when the library sits on a FUSE mount (NTFS-3G, SMB, sshfs) where each
+        # stat is a userspace round trip. Resolve the root once; see
+        # safepath.resolved_root for the caching contract.
+        root = resolved_root(dlc)
         # normpath collapses `.`/`..`/duplicate separators purely lexically —
         # it never touches the filesystem, so an in-library junction component
         # is preserved (allowed) while `..`/absolute segments still escape and

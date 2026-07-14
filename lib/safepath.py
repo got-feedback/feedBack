@@ -4,7 +4,32 @@ under a server-owned root.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
+
+
+@lru_cache(maxsize=16)
+def resolved_root(root: Path) -> Path:
+    """Canonical (link-resolved) form of a server-owned root directory.
+
+    ``Path.resolve()`` is a filesystem call: it lstats every component of the
+    path. The roots we join against — the DLC library, a plugin's asset dir —
+    are fixed for the life of the process, but the containment helpers below
+    (and ``dlc_paths._resolve_dlc_path``) were re-resolving them on EVERY call,
+    and those are called once per song, per art fetch, per scanned row.
+
+    On a real 50,944-song library that cost ~23,500 stat/lstat calls per second,
+    pinning a core. It is brutal when the library lives on a FUSE mount
+    (NTFS-3G, SMB, sshfs), where every stat is a userspace round trip: the same
+    three parent directories were being walked over and over.
+
+    Cached because a root is a constant here, not because resolution is cheap.
+    Consequence: if a root's symlink/junction is re-pointed at a NEW target
+    while the server is running, the old target stays in effect until restart.
+    That is fine for a library path fixed at startup, and the cache is keyed on
+    the Path, so switching to a different library dir is a different key.
+    """
+    return root.resolve()
 
 
 def safe_join(root: Path, name: str) -> Path | None:
@@ -35,9 +60,12 @@ def safe_join(root: Path, name: str) -> Path | None:
         return None
     safe = name.replace("\\", "/")
     try:
-        root_resolved = root.resolve()
-        candidate = (root_resolved / safe).resolve()
-        if not candidate.is_relative_to(root_resolved):
+        # The ROOT is a constant — resolve it once (see resolved_root). The
+        # CANDIDATE must still be resolved on every call: following its symlinks
+        # is exactly the zip-slip / traversal defence, so it is never cached.
+        root_res = resolved_root(root)
+        candidate = (root_res / safe).resolve()
+        if not candidate.is_relative_to(root_res):
             return None
     except (ValueError, OSError):
         return None

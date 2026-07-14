@@ -1278,15 +1278,7 @@ def extract_meta(path: Path) -> dict:
             isinstance(sid, str) and sid
             and isinstance(sfile, str) and sfile
         ):
-            # `file` and `default` ride along so the REST song-info payload can
-            # publish the same playable-stem list the WS `ready` message does —
-            # the stems plugin needs it BEFORE the highway connects (see
-            # get_song_info). Same helper as load_song, so they cannot disagree.
-            valid_stems.append({
-                "id": sid,
-                "file": sfile,
-                "default": stem_default_on(s.get("default", True)),
-            })
+            valid_stems.append({"id": sid, "file": sfile})
     # Partition exactly as load_song() does, for the same reason the library
     # filter must not lie: `full` is the mixdown, not an instrument (spec §5.3).
     # A separated pack that retains it would otherwise offer the user a "full"
@@ -1313,11 +1305,4 @@ def extract_meta(path: Path) -> dict:
         "stem_count": stem_count,
         # feedBack#129: per-stem filter needs the id list, not just count.
         "stem_ids": stem_ids,
-        # The PLAYABLE stems (id/file/default), partitioned exactly as load_song
-        # does — the mixdown lifted out, never a layer. get_song_info turns these
-        # into URLs so the stems plugin can start fetching and decoding on
-        # `song:loading`, instead of waiting for the highway's WS `ready`.
-        "stems": instrument_stems,
-        # The mixdown, when the pack carries one (spec §5.3). Same reason.
-        "full_mix_file": (_full or {}).get("file") or None,
     }

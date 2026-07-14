@@ -829,45 +829,49 @@ def post_song_gap_fill(filename: str, data: dict):
     return {"ok": True, "written": additions, "skipped": skipped}
 
 
-def _playable_stems_payload(song_path, filename: str) -> dict:
+def _playable_stems_payload(filename: str, dlc) -> dict:
     """The playable stems (id/url/default) + full-mix URL for a sloppak.
 
-    Byte-for-byte the same shape the highway's WS `ready` builds — same
-    partition (the mixdown lifted out), same default resolution, same URL form —
-    because the stems plugin now preloads from THIS and then has to agree with
-    what the WS says a moment later, or it rebuilds the graph for nothing.
+    Why it exists: the stems plugin could only learn its stem list from the
+    highway's WS `ready`, which arrives once the highway is already up. So it
+    decoded, and then copied the whole song's PCM to its worklet, with the player
+    on screen — half a gigabyte of memcpy in one frame, ~700 ms, freezing the
+    venue video. Given the list at `song:loading` it can do all of that BEFORE the
+    highway appears, behind the loading overlay where a stall costs nothing.
 
-    Why it exists: the stems plugin could only learn its stem list from the WS
-    `ready`, which arrives once the highway is up. So it decoded, and then copied
-    the whole song's PCM to its worklet, with the player already on screen — half
-    a gigabyte of memcpy in one frame, ~700 ms, freezing the venue video (#…).
-    Given the list at `song:loading` it can do all of that BEFORE the highway
-    appears, behind the loading overlay where a stall costs nothing.
+    The list MUST be the same one the WS sends a moment later. If it is not, the
+    plugin preloads a graph and then throws it away and rebuilds — strictly worse
+    than not preloading. So this does not reimplement the WS's construction, it
+    calls THE SAME FUNCTION: load_song, whose LoadedSloppak already carries the
+    partitioned stems and the resolved full mix, and then builds the URLs exactly
+    as ws_highway does. Drift is impossible by construction rather than by
+    agreement — which matters, because `full_mix` in particular is not simply the
+    `full` stem: load_song falls back to the deprecated `original_audio:` key for
+    every pack written before feedpak 1.15.0, and reimplementing that (I did, at
+    first) silently dropped the pristine full mix for most real libraries.
 
     Opt-in (`?stems=1`) so the library's own metadata calls — the hot path — pay
-    nothing for it.
+    nothing for it. Non-sloppak sources (archives, loose folders) have no stems
+    to preload: load_song raises and we return the empty list.
     """
     from urllib.parse import quote
 
     try:
-        meta = sloppak_mod.extract_meta(song_path)
+        loaded = sloppak_mod.load_song(filename, dlc, appstate.sloppak_cache_dir)
     except Exception:
         return {"stems": [], "full_mix_url": None}
 
     q_fn = quote(filename, safe="")
-    stems = [
-        {
-            "id": s["id"],
-            "url": f"/api/sloppak/{q_fn}/file/{quote(s['file'])}",
-            "default": bool(s.get("default", True)),
-        }
-        for s in (meta.get("stems") or [])
-        if s.get("id") and s.get("file")
-    ]
-    full_file = meta.get("full_mix_file")
+
+    def _url(rel: str) -> str:
+        return f"/api/sloppak/{q_fn}/file/{quote(rel)}"
+
     return {
-        "stems": stems,
-        "full_mix_url": f"/api/sloppak/{q_fn}/file/{quote(full_file)}" if full_file else None,
+        "stems": [
+            {"id": s["id"], "url": _url(s["file"]), "default": s["default"]}
+            for s in loaded.stems
+        ],
+        "full_mix_url": _url(loaded.full_mix) if loaded.full_mix else None,
     }
 
 
@@ -911,7 +915,7 @@ async def get_song_info(filename: str, stems: int = 0):
         if not stems:
             return meta
         extra = await loop.run_in_executor(
-            None, _playable_stems_payload, song_path, filename)
+            None, _playable_stems_payload, filename, dlc)
         return {**meta, **extra}
 
     if cached:

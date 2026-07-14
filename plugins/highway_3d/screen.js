@@ -882,9 +882,12 @@
     // frets reads as wrapping a cylindrical neck — chart-format depth cue.
     // Negative Z = away from camera (into the highway). All tunable.
     const FRET_BOW_DZ = -1.2 * K;        // middle-of-span Z offset
-    const FRET_TUBE_RADIUS = STR_THICK * 0.55; // ~matches old box thickness
+    const FRET_TUBE_RADIUS = STR_THICK * 0.75; // slightly thicker than a string
     const FRET_TUBE_SEG = 12;            // tubular segments along the curve
-    const FRET_TUBE_RADIAL = 6;          // radial segments (cross-section)
+    // Radial segments (cross-section). 8 rather than 6: at FRET_TUBE_RADIUS the
+    // hexagonal facets of a 6-segment tube are visible along the top highlight.
+    // One shared geometry for all frets, so the extra segments are ~free.
+    const FRET_TUBE_RADIAL = 8;
     // metalness kept moderate, NOT ~1.0: MeshStandardMaterial is PBR and the
     // scene has no envMap, so a full-metal fret would reflect black and render
     // dark (the nut/headstock use metalness 0.02 for the same reason). At ~0.4
@@ -894,6 +897,31 @@
     const FRET_METALNESS = 0.4;          // lit steel / brass when gold
     const FRET_ROUGHNESS = 0.3;
     const FRET_EMISSIVE = 0x12141a;      // cool dim floor, never fully black
+
+    // Fret-wire tiers. Wires inside the active anchor lane (the frets the player
+    // is actually reading) sit bright; everything outside recedes. Kept far
+    // apart on purpose — a narrow gap reads as noise rather than as a focus cue.
+    const FRET_WIRE_ACTIVE_HEX = 0xD8A636; // gold; numeric twin of FRET_LABEL_GOLD_HEX
+    const FRET_WIRE_ACTIVE_OP = 0.9;
+    const FRET_WIRE_IDLE_HEX = 0x4A4A60;
+    const FRET_WIRE_IDLE_OP = 0.28;
+
+    // Hit flash: when a scorer (feedBack#254) confirms a note, the two wires
+    // bracketing its fret (f-1 and f) flash bright. Emissive is boosted as well
+    // as albedo — a MeshStandard fret with no envMap barely brightens from
+    // albedo alone, so without the emissive lift the "flash" reads as a shrug.
+    const FRET_WIRE_HIT_HEX = 0xFFFFFF;      // blown out to white at full flash
+    const FRET_WIRE_HIT_EMISSIVE = 0xFFE9B0; // hot warm-white glow
+    const FRET_WIRE_HIT_OP = 1.0;
+    // Emissive multiplier at full flash (baseline is 1). Pushing emissive past
+    // 1.0 is what actually makes the wire read as a light source rather than a
+    // brightly-lit object — the color alone saturates and stops there.
+    const FRET_WIRE_HIT_INTENSITY = 4.2;
+    // Seconds for a flash to fall to ~1/e once the provider stops reporting.
+    // The provider already fades its own `alpha` on a struck note; this tail
+    // just keeps the hand-off from popping, and smooths the frame-to-frame
+    // jitter of a held sustain (whose alpha tracks live input level).
+    const FRET_WIRE_HIT_DECAY = 0.32;
 
     const S_BASE = 3 * K;
     const S_GAP = 4 * K;
@@ -4030,6 +4058,10 @@
         let _drawRecentByString = null;
         /** Snapshotted in update() — drawNote() is a sibling of update(), not nested in its closure. */
         let _drawChordTemplates = null;
+        /** Ditto — drawNote() needs the anchors to resolve the lane's outer
+         * wires for an open note's hit flash (an open note has no fret of its
+         * own; its slab spans the lane, so the lane edges are what bracket it). */
+        let _drawAnchors = null;
         /** Teaching marks sd/ch overlay pref (§6.2.2), mirrored from the 2D
          * highway's `teachingMarksVisible` bundle flag. */
         let _drawTeachingMarks = false;
@@ -4744,6 +4776,21 @@
         const _scrStringSustain      = new Array(MAX_RENDER_STRINGS).fill(false);
         const _scrStringAnticipation = new Array(MAX_RENDER_STRINGS).fill(0);
         const _scrFretHeat           = new Array(NFRETS + 1).fill(0);
+        // Fret-wire hit flash. _fwHitIn is per-frame (cleared with the rest of
+        // the frame state, written by drawNote when a provider confirms a note);
+        // _fwHitGlow persists across frames so the flash can decay smoothly
+        // rather than snapping off the frame the provider goes quiet.
+        const _fwHitIn               = new Float32Array(NFRETS + 1);
+        const _fwHitGlow             = new Float32Array(NFRETS + 1);
+        // Per-frame chord accumulator. A chord flashes only the OUTERMOST wires
+        // of its shape, but drawNote() sees one chord note at a time and can't
+        // know the span — so hits accumulate here keyed by chord, and the flash
+        // pass (which runs after every draw loop) resolves min/max into wires.
+        // Typically 0-2 entries: only chords with a confirmed hit land here.
+        const _fwChordAcc            = new Map();
+        let _fwHitPrevTime = -Infinity; // chart time of the last decay step
+        let _fwHitColor = null;         // T.Color scratch (built in initScene)
+        let _fwHitEmissive = null;
         const _scrStrGlow            = new Array(MAX_RENDER_STRINGS).fill(0.5);
         const _scrAccentFillBoost    = new Array(MAX_RENDER_STRINGS).fill(0);
         const _scrNextNoteByString   = new Array(MAX_RENDER_STRINGS).fill(null);
@@ -6883,6 +6930,10 @@
                 transparent: true, opacity: 1.0, depthWrite: false,
             }));
             _laneTargetColor = new T.Color(0x4488ff);
+            _fwHitColor = new T.Color(FRET_WIRE_HIT_HEX);
+            _fwHitEmissive = new T.Color(FRET_WIRE_HIT_EMISSIVE);
+            _fwHitGlow.fill(0);
+            _fwHitPrevTime = -Infinity;
             mSus = activePalette.map(c => new T.MeshLambertMaterial({
                 color: c, transparent: true, opacity: 0.35,
             }));
@@ -8971,9 +9022,11 @@
             // reads as brass. depthTest:false: string BoxGeometry (MeshStandard,
             // depthWrite:true) writes depth at Z=+STR_THICK/2; wires near Z=0
             // would fail the depth test at string pixels despite higher layer.
-            // Colors are updated each frame by the fretWireMats loop in update():
-            //   default  → gray  0x666688, opacity 0.4
-            //   in-anchor→ gold  0xD8A636, opacity 0.8  (same as FRET_LABEL_GOLD_HEX)
+            // Colors are updated each frame by the fretWireMats loop in update(),
+            // which drives every wire to one of two tiers: FRET_WIRE_IDLE_* by
+            // default, FRET_WIRE_ACTIVE_* inside the anchor lane. The material is
+            // created at the idle tier so frame 0 (before update() first runs)
+            // already matches.
             const yTop = Math.max(sY(0), sY(nStr - 1));
             const yBottom = Math.min(sY(0), sY(nStr - 1));
             const wireH = (yTop + S_GAP * 0.3) - (yBottom - S_GAP * 0.3);
@@ -8995,12 +9048,12 @@
             for (let f = 0; f <= NFRETS; f++) {
                 const x = xFret(f);
                 const mat = new T.MeshStandardMaterial({
-                    color: 0x666688, metalness: FRET_METALNESS, roughness: FRET_ROUGHNESS,
+                    color: FRET_WIRE_IDLE_HEX, metalness: FRET_METALNESS, roughness: FRET_ROUGHNESS,
                     emissive: FRET_EMISSIVE,
                     // depthWrite:false (matches other transparent overlays here):
                     // a transparent fret must not write depth or it can occlude
                     // later-drawn transparent elements despite depthTest:false.
-                    transparent: true, opacity: 0.4, depthTest: false, depthWrite: false,
+                    transparent: true, opacity: FRET_WIRE_IDLE_OP, depthTest: false, depthWrite: false,
                 });
                 const fw = new T.Mesh(fretTubeGeo, mat);
                 fw.position.set(x, wireMidY, 0);
@@ -10641,12 +10694,17 @@
                     const _m = fretWireMats[_f];
                     if (!_m) continue;
                     if (_fwMin >= 0 && _f >= _fwMin && _f <= _fwMax) {
-                        _m.color.setHex(0xD8A636);
-                        _m.opacity = 0.8;
+                        _m.color.setHex(FRET_WIRE_ACTIVE_HEX);
+                        _m.opacity = FRET_WIRE_ACTIVE_OP;
                     } else {
-                        _m.color.setHex(0x666688);
-                        _m.opacity = 0.4;
+                        _m.color.setHex(FRET_WIRE_IDLE_HEX);
+                        _m.opacity = FRET_WIRE_IDLE_OP;
                     }
+                    // Baseline emissive every frame: the hit-flash pass below
+                    // lerps these toward FRET_WIRE_HIT_* in place, so they must
+                    // be re-seeded or a flash would never fade back out.
+                    _m.emissive.setHex(FRET_EMISSIVE);
+                    _m.emissiveIntensity = 1;
                 }
             }
 
@@ -10679,6 +10737,8 @@
             _scrStringSustain.fill(false, 0, nStr);
             _scrStringAnticipation.fill(0, 0, nStr);
             _scrFretHeat.fill(0);           // always NFRETS+1, cheap flat fill
+            _fwHitIn.fill(0);               // this frame's confirmed-hit frets
+            _fwChordAcc.clear();
             _scrStrGlow.fill(0.5, 0, nStr);
             _scrAccentFillBoost.fill(0, 0, nStr);
             const noteState = {
@@ -10793,6 +10853,7 @@
 
             _drawNextByString = nextNoteByString;
             _drawChordTemplates = bundle.chordTemplates ?? null;
+            _drawAnchors = anchors ?? null;
             _drawTeachingMarks = !!bundle.teachingMarksVisible;
             // Default on: only an explicit false (older bundles omit the flag) hides fg.
             _showFingerHints = bundle.fingerHintsVisible !== false;
@@ -12581,6 +12642,57 @@
                 ? arpeggioLaneDividerXYScaleMatchFrameRim(arpLaneRimAccentMul)
                 : 1;
 
+            // ── Fret-wire hit flash (apply) ───────────────────────────────
+            // Runs here, after the note + chord draw loops, so it sees this
+            // frame's verdicts (_fwHitIn) rather than the previous frame's —
+            // the base tier loop that seeds color/opacity/emissive sits far
+            // above, before any note has been drawn.
+            //
+            // _fwHitGlow decays exponentially in CHART time, so the tail is
+            // frame-rate independent and honours playback speed. Seeking
+            // backward resets it — otherwise a flash from a hit we jumped away
+            // from would linger on the wire.
+            if (fretWireMats.length && _fwHitColor) {
+                // Resolve accumulated chord hits: a chord flashes ONLY the wire
+                // behind its lowest fret and the wire at its highest, so the
+                // shape reads as one bracketed block rather than a picket fence
+                // of every wire in between. Open strings within the chord light
+                // the lane edges (they have no fret to bracket).
+                for (const _fwE of _fwChordAcc.values()) {
+                    if (_fwE.maxF >= _fwE.minF && _fwE.a > 0) {
+                        const _w0 = Math.max(0, _fwE.minF - 1);
+                        const _w1 = Math.min(NFRETS, _fwE.maxF);
+                        if (_fwE.a > _fwHitIn[_w0]) _fwHitIn[_w0] = _fwE.a;
+                        if (_fwE.a > _fwHitIn[_w1]) _fwHitIn[_w1] = _fwE.a;
+                    }
+                    if (_fwE.openA > 0) {
+                        const _fwB = anchorLaneBoundsAt(_drawAnchors, _fwE.t);
+                        if (_fwB) {
+                            if (_fwE.openA > _fwHitIn[_fwB.dMin]) _fwHitIn[_fwB.dMin] = _fwE.openA;
+                            if (_fwE.openA > _fwHitIn[_fwB.dMax]) _fwHitIn[_fwB.dMax] = _fwE.openA;
+                        }
+                    }
+                }
+
+                const _fwDt = now - _fwHitPrevTime;
+                if (!(_fwDt >= 0) || _fwDt > 1) _fwHitGlow.fill(0); // first frame, seek, or long stall
+                const _fwDecay = (_fwDt > 0 && _fwDt <= 1)
+                    ? Math.exp(-_fwDt / FRET_WIRE_HIT_DECAY)
+                    : 0;
+                _fwHitPrevTime = now;
+                for (let _f = 0; _f <= NFRETS; _f++) {
+                    const _g = Math.max(_fwHitIn[_f], _fwHitGlow[_f] * _fwDecay);
+                    _fwHitGlow[_f] = _g;
+                    if (_g < 0.004) continue;   // below perceptible — skip the lerps
+                    const _m = fretWireMats[_f];
+                    if (!_m) continue;
+                    _m.color.lerp(_fwHitColor, _g);
+                    _m.emissive.lerp(_fwHitEmissive, _g);
+                    _m.emissiveIntensity = 1 + (FRET_WIRE_HIT_INTENSITY - 1) * _g;
+                    _m.opacity += (FRET_WIRE_HIT_OP - _m.opacity) * _g;
+                }
+            }
+
             // ── Dynamic highway lane ──────────────────────────────────────
             // Chart <anchor> tags drive the lane whenever they exist — do not
             // require nearby notes (activeFrets) or camera-driven activity.
@@ -13762,6 +13874,59 @@
             const _showHit = (_ndState === 'miss') ? false
                 : (_ndState ? _ndGood
                 : (hit || (n.f > 0 && inGhostWin)));
+
+            // ── Fret-wire hit flash ───────────────────────────────────────
+            // A confirmed note lights the wires that bracket it:
+            //   single, fretted (f > 0) → the wire behind it (f-1) and the wire
+            //           it's pressed against (f).
+            //   open (f = 0)  → the OUTER wires of the anchor lane. An open
+            //           string has no fret of its own, and its gem is drawn as a
+            //           wide slab spanning the lane (see xBase /
+            //           openNoteLaneBoxW), so the lane's edge wires are exactly
+            //           what the slab sits between — the same relationship a
+            //           fretted note has to its own two wires.
+            //   chord   → only the OUTERMOST wires of the whole shape, not every
+            //           wire it spans. drawNote() is the chord loop's per-note
+            //           call, so it can't see the span from here: chord hits
+            //           accumulate into _fwChordAcc and the flash pass resolves
+            //           min/max fret → outer wires once the loop has finished.
+            // Gated on _ndGood, not _showHit: only a scorer's verdict counts,
+            // never the proximity heuristic that merely means "near the line".
+            if (_ndGood) {
+                const _fwA = (_ndCsIsObj && _ndCs && typeof _ndCs.alpha === 'number')
+                    ? Math.max(0, Math.min(1, _ndCs.alpha))
+                    : 1;
+                if (fromChord) {
+                    // ch.id can be absent (pitfall #8) — fall back to the chord's
+                    // time, which is what n.t already carries for a chord note.
+                    const _fwK = (chordId !== undefined && chordId !== null) ? chordId : `t${n.t}`;
+                    let _fwE = _fwChordAcc.get(_fwK);
+                    if (!_fwE) {
+                        _fwE = { minF: Infinity, maxF: -Infinity, a: 0, openA: 0, t: n.t };
+                        _fwChordAcc.set(_fwK, _fwE);
+                    }
+                    if (n.f > 0 && n.f <= NFRETS) {
+                        if (_fwA > _fwE.a) _fwE.a = _fwA;
+                        if (n.f < _fwE.minF) _fwE.minF = n.f;
+                        if (n.f > _fwE.maxF) _fwE.maxF = n.f;
+                    } else if (n.f === 0 && _fwA > _fwE.openA) {
+                        _fwE.openA = _fwA;   // open strings in the chord → lane edges
+                    }
+                } else if (n.f > 0 && n.f <= NFRETS) {
+                    if (_fwA > _fwHitIn[n.f - 1]) _fwHitIn[n.f - 1] = _fwA;
+                    if (_fwA > _fwHitIn[n.f]) _fwHitIn[n.f] = _fwA;
+                } else if (n.f === 0) {
+                    // Sampled at the note's own time, matching how the open
+                    // slab's width is derived (openNoteLaneBoxW(n.t)) — so the
+                    // flashed wires are the ones the slab is actually drawn
+                    // between, even if the lane has since moved.
+                    const _fwB = anchorLaneBoundsAt(_drawAnchors, n.t);
+                    if (_fwB) {
+                        if (_fwA > _fwHitIn[_fwB.dMin]) _fwHitIn[_fwB.dMin] = _fwA;
+                        if (_fwA > _fwHitIn[_fwB.dMax]) _fwHitIn[_fwB.dMax] = _fwA;
+                    }
+                }
+            }
 
             if (!effSkipBody && !arpGhostOnlyMode && !_overLinger) {
 
@@ -15235,7 +15400,12 @@
             _drawNextByString = null; _drawRecentByString = null;
             _susVerdictLatch.clear();
             _drawChordTemplates = null;
+            _drawAnchors = null;
             _laneTargetColor = null;
+            _fwHitColor = _fwHitEmissive = null;
+            _fwHitGlow.fill(0);
+            _fwChordAcc.clear();
+            _fwHitPrevTime = -Infinity;
             _renderScale = 1;
             mBeatM = mBeatQ = null;
             pNote = pNoteEdge = pSus = pSusOutline = pSusRibbon = pSusRibbonOl = pLbl = pBeat = pSec = null;

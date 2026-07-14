@@ -122,3 +122,44 @@ test('degenerate inputs fall back to rendering everything, never to a broken win
 test('small lists are below the virtualization threshold', () => {
     assert.ok(VIRTUAL_MIN >= 100, 'threshold must be high enough that normal folders are untouched');
 });
+
+// ── the grid must be re-measured when the window resizes (CodeRabbit, #967) ──
+// perRow and rows were originally captured once at fill time. paint() also runs
+// on resize, so a narrower/wider window changed the column count while the
+// window maths still used the OLD one — slicing the wrong songs and mis-sizing
+// the padding. These pin that the geometry is a function of perRow, so a stale
+// perRow cannot silently survive.
+
+test('resizing the grid to fewer columns re-windows against the new row count', () => {
+    const total = 10000;
+    const wide = visibleWindow(0, VH, 190, 6, Math.ceil(total / 6), total);
+    const narrow = visibleWindow(0, VH, 190, 3, Math.ceil(total / 3), total);
+
+    // Same viewport, half the columns -> about half as many songs on screen.
+    assert.ok(narrow.end < wide.end, 'fewer columns must render fewer songs per screen');
+    // ...and the total must still add up, or the scrollbar lies after a resize.
+    for (const [w, perRow] of [[wide, 6], [narrow, 3]]) {
+        const rows = Math.ceil(total / perRow);
+        assert.equal(w.padRowsTop + Math.ceil((w.end - w.start) / perRow) + w.padRowsBottom, rows,
+            `rows must account for every song at perRow=${perRow}`);
+    }
+});
+
+test('a stale perRow would break the total-height invariant (the bug)', () => {
+    const total = 10000;
+    // Grid re-laid out to 3 columns, but windowed with the OLD perRow of 6:
+    // the row count no longer matches the geometry, and the padding is wrong.
+    const stalePerRow = 6, actualRows = Math.ceil(total / 3);
+    const bad = visibleWindow(0, VH, 190, stalePerRow, actualRows, total);
+    const accounted = bad.padRowsTop + Math.ceil((bad.end - bad.start) / 3) + bad.padRowsBottom;
+    assert.notEqual(accounted, actualRows,
+        'this asserts the FAILURE mode: mismatched perRow/rows must not silently look correct — ' +
+        'metrics() recomputes both together on every paint so this cannot happen in practice');
+});
+
+test('scrolled grid window always starts on a row boundary', () => {
+    const total = 10000, perRow = 4;
+    const rows = Math.ceil(total / perRow);
+    const w = visibleWindow(-5000, VH, 190, perRow, rows, total);
+    assert.equal(w.start % perRow, 0, 'a partial row would shift every card in the grid');
+});

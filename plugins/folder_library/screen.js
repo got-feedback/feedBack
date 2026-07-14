@@ -895,6 +895,7 @@ function createFolderSurface(cfg) {
     var VIRTUAL_MIN = 200;   // below this, render everything — no behaviour change
     var VIRTUAL_BUFFER = 6;  // rows kept rendered above/below the viewport
     var _virtualCleanups = [];
+    var _virtualLists = [];   // repaint fns, one per live windowed list
 
     // Which slice of the list is on screen. Pure arithmetic — kept separate from
     // the DOM so it can be tested directly (see tests/virtual_list.test.js).
@@ -926,6 +927,7 @@ function createFolderSurface(cfg) {
     function _clearVirtualLists() {
         _virtualCleanups.forEach(function (fn) { try { fn(); } catch (_) {} });
         _virtualCleanups = [];
+        _virtualLists = [];
     }
 
     // Fill `list` with `songs`, windowed when the list is big enough to matter.
@@ -942,49 +944,78 @@ function createFolderSurface(cfg) {
         var basePadBot = parseFloat(window.getComputedStyle(list).paddingBottom) || 0;
 
         // Measure one real row once — no hardcoded row height to drift out of
-        // sync with the CSS.
+        // sync with the CSS. (The list is shown before it is populated, so this
+        // measures a laid-out row, not a zero-height one.)
         var probe = make(sorted[0]);
         probe.style.visibility = 'hidden';
         list.appendChild(probe);
-        var itemH = probe.getBoundingClientRect().height || 44;
-        var perRow = 1;
-        if (_view === 'grid') {
-            var cw = probe.getBoundingClientRect().width || 150;
-            var gap = 12;
-            perRow = Math.max(1, Math.floor((list.clientWidth + gap) / (cw + gap)));
-            itemH += gap;
-        }
+        var probeRect = probe.getBoundingClientRect();
+        var rowH = probeRect.height || 44;
+        var cardW = probeRect.width || 150;
         list.removeChild(probe);
 
-        var rows = Math.ceil(sorted.length / perRow);
+        var GRID_GAP = 12;   // matches the grid's `gap:12px`
         var raf = 0, lastStart = -1, lastEnd = -1;
+
+        // Recomputed on EVERY paint, not captured once: a window resize changes
+        // the grid's column count, and therefore the row count and the height of
+        // the padding standing in for off-window rows. paint() runs on resize, so
+        // stale metrics would slice the wrong songs and mis-size the list.
+        function metrics() {
+            var perRow = 1, itemH = rowH;
+            if (_view === 'grid') {
+                perRow = Math.max(1, Math.floor((list.clientWidth + GRID_GAP) / (cardW + GRID_GAP)));
+                itemH = rowH + GRID_GAP;
+            }
+            return { perRow: perRow, itemH: itemH, rows: Math.ceil(sorted.length / perRow) };
+        }
 
         function paint() {
             raf = 0;
+            // Collapsed (display:none) or detached: nothing to paint, and don't
+            // pay for layout on every scroll tick of a section nobody can see.
+            // Forget the last window so re-showing repaints from scratch against
+            // the new position rather than short-circuiting on a stale memo.
+            if (!list.isConnected || list.offsetParent === null) {
+                lastStart = -1; lastEnd = -1;
+                return;
+            }
+            var m = metrics();
             // Where the list sits relative to the scroller's viewport.
             var top = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
             var vh = scroller.clientHeight || window.innerHeight;
-            var w = _visibleWindow(top, vh, itemH, perRow, rows, sorted.length);
+            var w = _visibleWindow(top, vh, m.itemH, m.perRow, m.rows, sorted.length);
             if (w.start === lastStart && w.end === lastEnd) return;   // nothing moved
             lastStart = w.start; lastEnd = w.end;
 
             var frag = document.createDocumentFragment();
             for (var i = w.start; i < w.end; i++) frag.appendChild(make(sorted[i]));
             list.textContent = '';
-            list.style.paddingTop = (basePadTop + w.padRowsTop * itemH) + 'px';
-            list.style.paddingBottom = (basePadBot + w.padRowsBottom * itemH) + 'px';
+            list.style.paddingTop = (basePadTop + w.padRowsTop * m.itemH) + 'px';
+            list.style.paddingBottom = (basePadBot + w.padRowsBottom * m.itemH) + 'px';
             list.appendChild(frag);
         }
-        function onScroll() { if (!raf) raf = window.requestAnimationFrame(paint); }
+        function schedule() { if (!raf) raf = window.requestAnimationFrame(paint); }
 
-        scroller.addEventListener('scroll', onScroll, { passive: true });
-        window.addEventListener('resize', onScroll);
+        scroller.addEventListener('scroll', schedule, { passive: true });
+        window.addEventListener('resize', schedule);
+        // Expanding or collapsing ANY section moves every list below it. Those
+        // lists' windows are computed from their position, so they must repaint
+        // too — otherwise they keep the window from their old position and show
+        // blank padding where songs should be until the user happens to scroll.
+        _virtualLists.push(schedule);
         _virtualCleanups.push(function () {
-            scroller.removeEventListener('scroll', onScroll);
-            window.removeEventListener('resize', onScroll);
+            scroller.removeEventListener('scroll', schedule);
+            window.removeEventListener('resize', schedule);
             if (raf) window.cancelAnimationFrame(raf);
         });
         paint();
+    }
+
+    // Re-window every live list — call after anything that can move them
+    // vertically (a folder expanding/collapsing, a section being shown).
+    function _repaintVirtualLists() {
+        _virtualLists.forEach(function (fn) { try { fn(); } catch (_) {} });
     }
 
     function _getScrollEl() {
@@ -1312,6 +1343,10 @@ function createFolderSurface(cfg) {
             if (nowOpen) _openFolders.add(folder.path);
             else         _openFolders.delete(folder.path);
             _storeJSON('open', [..._openFolders]);
+            // This toggle moved everything below it — re-window the other lists,
+            // and re-window THIS one if it was already populated (its saved
+            // window was computed at its old position).
+            _repaintVirtualLists();
         });
 
         wrap.appendChild(hdr); wrap.appendChild(content);
@@ -1371,6 +1406,7 @@ function createFolderSurface(cfg) {
             if (_unsortedOpen && !_populated) { _populate(); _populated = true; }
             chev.style.transform = _unsortedOpen ? 'rotate(90deg)' : '';
             _store(cfg.unsortedKey, String(_unsortedOpen));
+            _repaintVirtualLists();   // this toggle moved every list below it
         });
 
         wrap.appendChild(hdr); wrap.appendChild(list);

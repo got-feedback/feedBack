@@ -46,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry their gig log; instruments their gig count.
 
 ### Changed
+- **Folder library renders only the songs on screen** (#965) — a song list used to
+  render *every* song it held. On a flat 50,944-song library that was one `<div>`
+  with 50,938 children and ~1.3 **million** DOM nodes (~4.2 GB of renderer memory),
+  built even while another screen was showing. A document that size also punishes
+  unrelated code: any `document.querySelector` that misses has to walk the whole
+  tree — which is how the song-preview menu check ended up eating ~50% of the
+  renderer and dropping the app to 2.7 fps. Lists longer than 200 songs are now
+  windowed (25–31 rows in the DOM instead of 50,000); shorter lists are unchanged.
 - **The full mix is a stem** (#933) — core no longer depends on `original_audio:`, a
   top-level manifest key this repo invented (#583) that the feedpak spec never had.
   The format already carried the pre-separation mixdown as a stem; feedpak 1.15.0

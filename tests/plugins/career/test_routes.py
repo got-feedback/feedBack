@@ -121,12 +121,17 @@ def test_pack_file_serving_and_traversal_guard(client):
 
 
 def test_state_reports_installed_and_delete_removes(client):
+    # All three venues now ship bundled, so deleting the downloaded copy
+    # falls back to the bundled pack: installed stays True by design
+    # (downloaded packs override bundled ones, never replace them).
     _install_fake_pack("club")
     state = client.get("/api/plugins/career/state").json()
     assert {v["id"]: v["installed"] for v in state["venues"]}["club"] is True
     assert client.delete("/api/plugins/career/packs/club").status_code == 200
     state = client.get("/api/plugins/career/state").json()
-    assert {v["id"]: v["installed"] for v in state["venues"]}["club"] is False
+    assert {v["id"]: v["installed"] for v in state["venues"]}["club"] is True
+    # the downloaded override itself is gone
+    assert not (career_routes._venue_dir("club") / "manifest.json").exists()
 
 
 def test_download_worker_end_to_end(client, tmp_path):

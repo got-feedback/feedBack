@@ -76,6 +76,31 @@ test('arena venue pack ships with full media in the plugin checkout', () => {
     }
 });
 
+test('club venue pack ships with full media in the plugin checkout', () => {
+    const packDir = path.join(PLUGIN_DIR, 'venue-packs', 'club');
+    const manifest = JSON.parse(fs.readFileSync(path.join(packDir, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.venue, 'club');
+    assert.deepEqual(manifest.loops, {
+        bored: 'bored.mp4', neutral: 'neutral.mp4',
+        engaged: 'engaged.mp4', ecstatic: 'ecstatic.mp4',
+    });
+    assert.deepEqual(manifest.stingers, { clap: 'clap.mp4', cheer: 'cheer.mp4' });
+    assert.deepEqual(manifest.sfx, { up: 'sfx-up.mp3', down: 'sfx-down.mp3' });
+    assert.equal(manifest.intro.video, 'intro.mp4');
+    assert.equal(manifest.intro.audio, 'club-ambience.mp3');
+    for (const f of [
+        ...Object.values(manifest.loops),
+        ...Object.values(manifest.stingers),
+        manifest.intro.video,
+        manifest.intro.audio,
+        manifest.sfx.up,
+        manifest.sfx.down,
+    ]) {
+        const stat = fs.statSync(path.join(packDir, f));
+        assert.ok(stat.size > 0, `${f} must be present`);
+    }
+});
+
 test('shell promotes the career plugin into the sidebar', () => {
     const src = fs.readFileSync(SHELL_JS, 'utf8');
     assert.match(src, /key: 'career',\s*screen: 'plugin-career'/);

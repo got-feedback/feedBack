@@ -1,0 +1,8 @@
+{
+    "venue": "arena",
+    "version": 1,
+    "loops": {"bored": "bored.mp4", "neutral": "neutral.mp4", "engaged": "engaged.mp4", "ecstatic": "ecstatic.mp4"},
+    "stingers": {"clap": "clap.mp4", "cheer": "cheer.mp4"},
+    "intro": {"video": "intro.mp4", "audio": "arena-ambience.mp3"},
+    "sfx": {"up": "sfx-up.mp3", "down": "sfx-down.mp3"}
+}

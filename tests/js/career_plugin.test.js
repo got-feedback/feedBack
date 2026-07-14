@@ -51,6 +51,27 @@ test('bar venue pack ships with intro media in the plugin checkout', () => {
     }
 });
 
+test('arena venue pack ships with full media in the plugin checkout', () => {
+    const packDir = path.join(PLUGIN_DIR, 'venue-packs', 'arena');
+    const manifest = JSON.parse(fs.readFileSync(path.join(packDir, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.venue, 'arena');
+    assert.deepEqual(Object.keys(manifest.loops).sort(),
+        ['bored', 'ecstatic', 'engaged', 'neutral']);
+    assert.equal(manifest.intro.video, 'intro.mp4');
+    assert.equal(manifest.intro.audio, 'arena-ambience.mp3');
+    for (const f of [
+        ...Object.values(manifest.loops),
+        ...Object.values(manifest.stingers),
+        manifest.intro.video,
+        manifest.intro.audio,
+        manifest.sfx.up,
+        manifest.sfx.down,
+    ]) {
+        const stat = fs.statSync(path.join(packDir, f));
+        assert.ok(stat.size > 0, `${f} must be present`);
+    }
+});
+
 test('shell promotes the career plugin into the sidebar', () => {
     const src = fs.readFileSync(SHELL_JS, 'utf8');
     assert.match(src, /key: 'career',\s*screen: 'plugin-career'/);

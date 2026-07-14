@@ -55,8 +55,12 @@ test('arena venue pack ships with full media in the plugin checkout', () => {
     const packDir = path.join(PLUGIN_DIR, 'venue-packs', 'arena');
     const manifest = JSON.parse(fs.readFileSync(path.join(packDir, 'manifest.json'), 'utf8'));
     assert.equal(manifest.venue, 'arena');
-    assert.deepEqual(Object.keys(manifest.loops).sort(),
-        ['bored', 'ecstatic', 'engaged', 'neutral']);
+    assert.deepEqual(manifest.loops, {
+        bored: 'bored.mp4', neutral: 'neutral.mp4',
+        engaged: 'engaged.mp4', ecstatic: 'ecstatic.mp4',
+    });
+    assert.deepEqual(manifest.stingers, { clap: 'clap.mp4', cheer: 'cheer.mp4' });
+    assert.deepEqual(manifest.sfx, { up: 'sfx-up.mp3', down: 'sfx-down.mp3' });
     assert.equal(manifest.intro.video, 'intro.mp4');
     assert.equal(manifest.intro.audio, 'arena-ambience.mp3');
     for (const f of [

@@ -522,15 +522,34 @@ def transcribe_vocals_remote(
     if language:
         form["language"] = language
 
-    with open(vocals_path, "rb") as f:
-        resp = requests.post(
-            f"{server_url}/transcribe",
-            files={"file": (vocals_path.name, f, "audio/ogg")},
-            data=form or None,
-            headers=headers or None,
-            timeout=timeout,
-        )
+    # Everything that can go wrong out here comes back as RuntimeError, which is what the
+    # docstring promises and what the caller catches. A DNS failure, a timeout, a reset
+    # connection or an unreadable stem file would otherwise surface as requests.RequestException
+    # or OSError and escape the one handler written to log-and-continue — turning "this song's
+    # lyrics failed" into "the whole batch died".
+    try:
+        with open(vocals_path, "rb") as f:
+            resp = requests.post(
+                f"{server_url}/transcribe",
+                files={"file": (vocals_path.name, f, "audio/ogg")},
+                data=form or None,
+                headers=headers or None,
+                timeout=timeout,
+            )
+    except requests.RequestException as e:
+        raise RuntimeError(f"could not reach the WhisperX server at {server_url}: {e}") from e
+    except OSError as e:
+        raise RuntimeError(f"could not read the vocal stem {vocals_path.name}: {e}") from e
 
+    if resp.status_code == 404:
+        # The endpoint isn't there. Say what that means, because "404" on its own sends someone
+        # hunting for a typo in their URL when the real answer is that their server predates the
+        # feature. (feedBack-demucs-server#14 added /transcribe.)
+        raise RuntimeError(
+            f"the WhisperX server at {server_url} has no /transcribe endpoint (404) — it "
+            f"predates remote transcription support. Update the server, or use 'Check for "
+            f"update' if it is the plugin-managed one."
+        )
     if resp.status_code != 200:
         raise RuntimeError(f"WhisperX server error ({resp.status_code}): {_err_body(resp)}")
 

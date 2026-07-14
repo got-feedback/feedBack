@@ -165,10 +165,37 @@ def test_trailing_whitespace_is_not_content():
     assert _err_body(_Resp(text=payload + " " * 8000)) == payload
 
 
-def test_a_404_says_the_server_is_too_old(vocals):
-    # A server predating the /transcribe endpoint answers 404. The message must carry that
-    # through rather than swallowing it, or "transcription does nothing" is all anyone sees.
+def test_a_404_explains_that_the_server_is_too_old(vocals):
+    """A bare "404" sends someone hunting for a typo in their URL. The real answer is that their
+    server predates the endpoint, and only we can know that."""
     with pytest.raises(RuntimeError) as exc:
         _post_call(vocals, _Resp(status=404, text='{"detail":"Not Found"}'))
-    assert "404" in str(exc.value)
-    assert "Not Found" in str(exc.value)
+    msg = str(exc.value)
+    assert "404" in msg
+    assert "/transcribe" in msg
+    assert "predates" in msg or "Update the server" in msg
+
+
+class TestEverythingFailsAsRuntimeError:
+    """The docstring promises one failure mode: RuntimeError. The caller
+    (`_maybe_transcribe_lyrics`) catches exactly that so one song's failed lyrics don't take down
+    the batch around it. A transport error escaping as requests.RequestException walks straight
+    past that handler — turning "this song's lyrics failed" into "the whole batch died"."""
+
+    def test_a_connection_failure(self, vocals):
+        import requests
+        with mock.patch("requests.post",
+                        side_effect=requests.ConnectionError("name resolution failed")):
+            with pytest.raises(RuntimeError, match="could not reach"):
+                transcribe_vocals_remote(vocals, "http://nope:7865")
+
+    def test_a_timeout(self, vocals):
+        import requests
+        with mock.patch("requests.post", side_effect=requests.Timeout("timed out")):
+            with pytest.raises(RuntimeError, match="could not reach"):
+                transcribe_vocals_remote(vocals, "http://server:7865")
+
+    def test_an_unreadable_stem(self, tmp_path):
+        missing = tmp_path / "gone.ogg"      # never created
+        with pytest.raises(RuntimeError, match="could not read"):
+            transcribe_vocals_remote(missing, "http://server:7865")

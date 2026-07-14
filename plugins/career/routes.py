@@ -46,6 +46,7 @@ from pathlib import Path
 from fastapi import Body, HTTPException
 from fastapi.responses import FileResponse
 
+import sloppak
 from progression import instrument_for_arrangement
 
 PLUGIN_ID = "career"
@@ -733,6 +734,46 @@ def setup(app, context):
             _save_json(_drill_file(), {"received_at": _now_iso(),
                                        "snapshot": snapshot})
         return {"ok": True}
+
+    @app.post(f"/api/plugins/{PLUGIN_ID}/gigs/prepare")
+    def prepare_gig(body: dict = Body(...)):
+        """Unpack every song of the set BEFORE the gig starts.
+
+        A feedpak is a zip: the first play of one pays for its extraction into
+        sloppak_cache. Inside a set that cost landed BETWEEN songs — the player
+        finished a number and then sat waiting for the next one to unpack, mid-
+        gig. A set is a known list up front, so extract it all while the player
+        is still looking at the poster.
+
+        Idempotent and cheap on a warm cache: resolve_source_dir() returns the
+        already-unpacked dir without rewriting it. Best-effort per song — one
+        bad feedpak must not block the set from starting (the play itself will
+        surface the error, exactly as it does outside a gig).
+        """
+        files = [str(f) for f in ((body or {}).get("songs") or []) if f]
+        if not files:
+            return {"ok": True, "prepared": 0, "failed": []}
+
+        # .get, not []: a host that doesn't hand us the resolvers (or has no
+        # library configured) must degrade to "extract lazily, as before" — this
+        # is an optimisation, and it is never allowed to be the thing that stops
+        # a gig from starting.
+        get_dlc = context.get("get_dlc_dir")
+        get_cache = context.get("get_sloppak_cache_dir")
+        dlc_root = get_dlc() if callable(get_dlc) else None
+        cache_root = get_cache() if callable(get_cache) else None
+        if dlc_root is None or cache_root is None:
+            return {"ok": False, "prepared": 0, "failed": files, "error": "no library"}
+
+        prepared, failed = 0, []
+        for fn in files:
+            try:
+                sloppak.resolve_source_dir(fn, Path(dlc_root), Path(cache_root))
+                prepared += 1
+            except Exception as exc:   # noqa: BLE001 — one bad pak can't sink the set
+                _state["log"].warning("career: gig pre-extract failed for %s: %s", fn, exc)
+                failed.append(fn)
+        return {"ok": True, "prepared": prepared, "failed": failed}
 
     @app.post(f"/api/plugins/{PLUGIN_ID}/gigs/propose")
     def propose_gig(body: dict = Body(...)):

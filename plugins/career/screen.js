@@ -1123,10 +1123,40 @@
         sfx('page');
     }
 
-    function startGig() {
+    // Unpack the whole set before the first note.
+    //
+    // A feedpak is a zip, and the first play of one pays for its extraction. In
+    // a set that cost landed BETWEEN songs: the player finished a number and
+    // then sat there waiting for the next one to unpack, mid-gig. The setlist is
+    // known up front, so warm it all while the poster is still on screen.
+    //
+    // Best-effort by design: a library that won't pre-extract must not stop the
+    // gig from starting — the play itself surfaces the error the same way it
+    // does outside a gig. Slow is better than blocked.
+    async function prepareGigSongs(prop, btn) {
+        const label = btn && btn.textContent;
+        if (btn) { btn.disabled = true; btn.textContent = 'Preparing set…'; }
+        try {
+            await fetch(`${API}/gigs/prepare`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ songs: prop.songs.map((s) => s.filename) }),
+            });
+        } catch (_) { /* start anyway — first play will extract as it always did */ }
+        if (btn) { btn.disabled = false; if (label) btn.textContent = label; }
+    }
+
+    async function startGig(btn) {
         const prop = _ppGigProposal;
         const q = window.feedBack && window.feedBack.playQueue;
         if (!prop || !q || typeof q.start !== 'function' || typeof window.playSong !== 'function') return;
+
+        // Extract the setlist BEFORE the stage is borrowed and the queue starts,
+        // so a failure here leaves nothing half-applied to unwind.
+        await prepareGigSongs(prop, btn);
+        // The poster's Play could have been cancelled while we were unpacking.
+        if (_ppGigProposal !== prop) return;
+
         // The gig BORROWS the stage: stash whatever venue/viz the user had so
         // the set ending gives it back (unlike "Play here", which is an
         // explicit persistent choice on the venue card).
@@ -1424,7 +1454,7 @@
         }
         const gigBtn = e.target.closest('[data-pp-gig]');
         if (gigBtn) { bookGig(gigBtn.dataset.ppGig); return; }
-        if (e.target.closest('[data-pp-gig-play]')) { startGig(); return; }
+        if (e.target.closest('[data-pp-gig-play]')) { startGig(e.target.closest('[data-pp-gig-play]')); return; }
         if (e.target.closest('[data-pp-gig-reroll]')) {
             if (_ppGigProposal) bookGig(_ppGigProposal.genre_key);
             return;

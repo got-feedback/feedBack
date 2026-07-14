@@ -80,6 +80,20 @@ def find_full_mix(stems: list[dict]) -> dict | None:
     )
 
 
+def stem_default_on(raw) -> bool:
+    """Whether a manifest stem entry plays by default.
+
+    Absent means on. A string is honoured so a hand-written manifest can say
+    `default: off`. Extracted so the WS `ready` payload and the REST song-info
+    payload cannot drift: the stems plugin now preloads from REST and then has
+    to agree with what the WS says a moment later, or it would rebuild the whole
+    graph for nothing.
+    """
+    if isinstance(raw, str):
+        return raw.lower() not in ("off", "false", "0", "no")
+    return bool(raw)
+
+
 def partition_stems(stems: list[dict]) -> tuple[dict | None, list[dict]]:
     """Split stem descriptors into (mixdown, instrument_stems) for PLAYBACK.
 
@@ -1100,12 +1114,11 @@ def load_song(
         sfile = str(s.get("file", ""))
         if not sid or not sfile:
             continue
-        default_val = s.get("default", True)
-        if isinstance(default_val, str):
-            default_on = default_val.lower() not in ("off", "false", "0", "no")
-        else:
-            default_on = bool(default_val)
-        stems.append({"id": sid, "file": sfile, "default": default_on})
+        stems.append({
+            "id": sid,
+            "file": sfile,
+            "default": stem_default_on(s.get("default", True)),
+        })
 
     # The complete mixdown is a stem (spec §5.3), but it is not a *layer*: lift
     # it out so that no consumer of `stems` — the mixer, the library's stem

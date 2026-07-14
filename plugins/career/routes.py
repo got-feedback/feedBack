@@ -330,10 +330,11 @@ def _badge_requirement(gkey, instrument="guitar"):
 def _drill_by_node():
     doc = _load_json(_drill_file(), {})
     if not isinstance(doc, dict):
-        return None, {}
+        return None, {}, {}
     snapshot = doc.get("snapshot") if isinstance(doc.get("snapshot"), dict) else {}
     by_node = snapshot.get("byNode") if isinstance(snapshot.get("byNode"), dict) else {}
-    return doc.get("received_at"), by_node
+    gold = snapshot.get("goldImprov") if isinstance(snapshot.get("goldImprov"), dict) else {}
+    return doc.get("received_at"), by_node, gold
 
 
 def _merge_drill_nodes(old, new):
@@ -367,6 +368,16 @@ def _merge_drill_nodes(old, new):
     return out
 
 
+def _merge_gold(old, new):
+    """Gained-only merge of goldImprov artifacts: a minted style never
+    un-mints via a stale relay; the FIRST artifact per style is kept."""
+    out = dict(old)
+    for style_id, art in (new or {}).items():
+        if isinstance(art, dict) and style_id not in out:
+            out[style_id] = art
+    return out
+
+
 def _node_cleared(by_node, node_id):
     """A drill counts as cleared on real completion evidence: mastered, any
     depth rung flipped true, or a key cleared (a top-tier clean pass in one
@@ -388,7 +399,7 @@ def _passports_view():
     st = _career_state()
     all_gigs = st.get("gigs") if isinstance(st.get("gigs"), list) else []
     played, played_seconds = _played_by_instrument_genre()
-    received_at, by_node = _drill_by_node()
+    received_at, by_node, gold_improv = _drill_by_node()
     instruments = {}
     for inst in cfg.get("instruments") or []:
         committed_at = (st["instruments"].get(inst) or {}).get("committed_at")
@@ -414,7 +425,12 @@ def _passports_view():
                 # false badge denial — the doc's shown-not-judged rule.
                 badge = "shown_not_judged"
             elif qualifying >= req["songs"] and len(cleared) == len(required):
-                badge = "earned"
+                # Bronze is earned; GOLD upgrades it when a verified improv
+                # artifact exists for this genre's jam style (exact genre key
+                # or its family — jam styleIds are the family keys). Bronze
+                # remains a standalone win; gold never becomes an obligation.
+                style = gkey if gkey in gold_improv else _genre_family(gkey)
+                badge = "gold" if style and style in gold_improv else "earned"
             else:
                 badge = "in_progress"
             # Practice invitation: the non-qualifying songs closest to the
@@ -687,10 +703,13 @@ def setup(app, context):
         # drops junk entries, which must not become a size-guard bypass.
         if len(json.dumps(body["byNode"])) > DRILL_SNAPSHOT_MAX_BYTES:
             raise HTTPException(413, "Snapshot too large.")
+        gold_in = body.get("goldImprov")
+        gold_in = gold_in if isinstance(gold_in, dict) else {}
         with _lock:
-            _, existing = _drill_by_node()
+            _, existing, existing_gold = _drill_by_node()
             snapshot = {"mode": body.get("mode"), "xp": body.get("xp"),
-                        "byNode": _merge_drill_nodes(existing, body["byNode"])}
+                        "byNode": _merge_drill_nodes(existing, body["byNode"]),
+                        "goldImprov": _merge_gold(existing_gold, gold_in)}
             if len(json.dumps(snapshot)) > DRILL_SNAPSHOT_MAX_BYTES:
                 raise HTTPException(413, "Snapshot too large.")
             _save_json(_drill_file(), {"received_at": _now_iso(),

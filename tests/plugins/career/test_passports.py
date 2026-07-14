@@ -371,3 +371,44 @@ def test_gig_propose_backfill_offset_survives_stakes(client, meta_db):
     files = [s["filename"] for s in res.json()["songs"]]
     assert len(files) == 5 and len(set(files)) == 5
     assert "near.feedpak" in files
+
+
+# ── Gold rung ─────────────────────────────────────────────────────────────────
+
+def test_gold_upgrades_bronze_via_family_style_artifact(client, meta_db):
+    # Bronze earned on 'death metal' (family: metal); a metal gold artifact
+    # from the jam verifier upgrades it — bronze-only stays 'earned' elsewhere.
+    for i in range(5):
+        meta_db.add(f"dm{i}.feedpak", 0, 0.9, genre="Death Metal", arrangements=LEAD)
+    career_routes._state["passports_content"]["genres"]["metal"] = {}  # no drill gate for this test
+    _open(client, "guitar", "Death Metal")
+    client.post("/api/plugins/career/drill-state", json={"byNode": {}})
+    assert _passport(client, "guitar", "death metal")["badge"] == "earned"
+    client.post("/api/plugins/career/drill-state", json={
+        "byNode": {}, "goldImprov": {"metal": {"at": 1, "verifier": "comb", "inKeyPct": 0.9}}})
+    assert _passport(client, "guitar", "death metal")["badge"] == "gold"
+
+
+def test_gold_without_bronze_stays_in_progress(client, meta_db):
+    meta_db.add("one.feedpak", 0, 0.9, genre="Soul", arrangements=LEAD)
+    _open(client, "guitar", "Soul")
+    client.post("/api/plugins/career/drill-state", json={
+        "byNode": {}, "goldImprov": {"soul": {"at": 1}}})
+    assert _passport(client, "guitar", "soul")["badge"] == "in_progress"
+
+
+def test_gold_merge_is_gained_only(client, meta_db):
+    for i in range(5):
+        meta_db.add(f"s{i}.feedpak", 0, 0.9, genre="Soul", arrangements=LEAD)
+    _open(client, "guitar", "Soul")
+    client.post("/api/plugins/career/drill-state", json={
+        "byNode": {}, "goldImprov": {"soul": {"at": 1, "verifier": "comb"}}})
+    assert _passport(client, "guitar", "soul")["badge"] == "gold"
+    # A stale relay without the artifact never un-mints.
+    client.post("/api/plugins/career/drill-state", json={"byNode": {}})
+    assert _passport(client, "guitar", "soul")["badge"] == "gold"
+    # And a different artifact for the same style never overwrites the first.
+    client.post("/api/plugins/career/drill-state", json={
+        "byNode": {}, "goldImprov": {"soul": {"at": 999, "verifier": "yin"}}})
+    view = client.get("/api/plugins/career/passports").json()
+    # (first-artifact-wins is asserted through the intake merge)

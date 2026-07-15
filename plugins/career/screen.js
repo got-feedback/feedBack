@@ -1192,7 +1192,21 @@
                 if (typeof window.setViz === 'function') window.setViz('venue');
             } catch (_) { /* viz optional — restore stays intact */ }
         }
+        // Push the gig's venue pack to the crowd layer NOW.
+        //
+        // crowd.setManifest(venue) is reached only through pushCrowdManifest,
+        // and pushCrowdManifest is called only from refresh() — the career
+        // tab's own reload. A gig navigates AWAY from the career tab to the
+        // player, so refresh() never runs during it, and setting the override
+        // above does nothing on its own. The result the testers saw: the venue
+        // visualization turns on (3D highway) but its crowd/stage pack never
+        // loads, so the song plays over the bare highway backdrop ("standard
+        // particles"), or over whatever venue a previous refresh() happened to
+        // leave applied. We just changed the override to this gig's venue, so
+        // re-push for it. _state is the career state the booking screen already
+        // fetched; guard for the rare null.
         _appliedManifestVenue = null;
+        if (_state) pushCrowdManifest(_state);
         _ppGigRun = {
             songs: prop.songs,
             venue_id: prop.venue_id,

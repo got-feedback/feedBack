@@ -116,3 +116,30 @@ test('career screen pushes the crowd manifest with a base URL', () => {
     // Degrades without the crowd layer (PR1 not merged / older desktop).
     assert.match(src, /typeof crowd\.setManifest !== 'function'\) return/);
 });
+
+// feedBack#… (tester): "Venue doesn't load when starting song from passport.
+// Loads standard particles." crowd.setManifest(venue) is reached ONLY through
+// pushCrowdManifest, and pushCrowdManifest is called ONLY from refresh() (the
+// career tab's own reload). A gig navigates away from that tab, so refresh()
+// never runs during it — the venue viz turns on but its crowd/stage pack never
+// loads. startGig must push the manifest itself after setting the override.
+test('startGig pushes the crowd manifest for the gig venue', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const src = fs.readFileSync(
+        path.join(__dirname, '..', '..', 'plugins', 'career', 'screen.js'), 'utf8');
+    const start = src.indexOf('async function startGig(');
+    assert.ok(start !== -1, 'startGig not found');
+    const open = src.indexOf('{', src.indexOf(')', start));
+    let depth = 1, i = open + 1;
+    while (i < src.length && depth > 0) { const ch = src[i]; if (ch === '{') depth++; else if (ch === '}') depth--; i++; }
+    const fn = src.slice(start, i);
+    // The override is set, then the manifest must be (re)pushed for it.
+    const overrideIdx = fn.search(/VENUE_OVERRIDE_KEY,\s*prop\.venue_id/);
+    const pushIdx = fn.search(/pushCrowdManifest\s*\(/);
+    assert.ok(overrideIdx !== -1, 'startGig must set the venue override');
+    assert.ok(pushIdx !== -1,
+        'startGig must push the crowd manifest — refresh() (its only other caller) ' +
+        'never runs during a gig, so the venue pack would never load');
+    assert.ok(overrideIdx < pushIdx, 'the manifest must be pushed AFTER the override is set to the gig venue');
+});

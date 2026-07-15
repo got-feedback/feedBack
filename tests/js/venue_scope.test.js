@@ -117,3 +117,22 @@ test('a throwing document does not take the venue down with it', () => {
         global.document = prev;
     }
 });
+
+// The arrival flyover must NOT replay for songs 2..N of a set. onSongLoaded
+// consults the play queue: a continuation (gig/album/playlist song 2+) carries
+// the room over with a loop crossfade, only an arrival plays the intro.
+test('a set continuation carries the room over instead of re-flying-in', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'static', 'v3', 'venue-crowd.js'), 'utf8');
+    const start = src.indexOf('function onSongLoaded(');
+    const open = src.indexOf('{', src.indexOf(')', start));
+    let depth = 1, i = open + 1;
+    while (i < src.length && depth > 0) { const ch = src[i]; if (ch === '{') depth++; else if (ch === '}') depth--; i++; }
+    const fn = src.slice(start, i);
+    const contIdx = fn.search(/_isSetContinuation\s*\(\s*\)/);
+    const introIdx = fn.search(/playIntro\s*\(/);
+    assert.ok(contIdx !== -1, 'onSongLoaded must consult the set-continuation signal');
+    assert.ok(introIdx !== -1, 'the intro must still exist for a real arrival');
+    assert.ok(contIdx < introIdx, 'the continuation check must gate the flyover — a set song 2+ must not fly in');
+});

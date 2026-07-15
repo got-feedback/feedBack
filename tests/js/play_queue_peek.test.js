@@ -109,3 +109,20 @@ test('fromQueue in options still works on its own (in-band path)', () => {
     clearGuard(win, { fromQueue: true });
     assert.strictEqual(q.active(), true, 'options.fromQueue alone must still keep the queue');
 });
+
+// isContinuation(): true for song 2..N of a set, false for the first song / a
+// standalone play. The venue uses it to fly in once on arrival, then carry the
+// room between songs instead of replaying the arrival flyover every track
+// (tester: "it showed the flyover intro again" on a gig's second song).
+test('isContinuation is false on the first song, true after advancing', () => {
+    const { q } = makeQueue();
+    assert.strictEqual(q.isContinuation(), false, 'idle queue is not a continuation');
+    q.start(['a.sloppak', 'b.sloppak', 'c.sloppak'], { source: 'gig' });
+    assert.strictEqual(q.isContinuation(), false, 'the FIRST song of a set is an arrival, not a continuation');
+    q.advance();
+    assert.strictEqual(q.isContinuation(), true, 'song 2 is a continuation — no re-flyover');
+    q.advance();
+    assert.strictEqual(q.isContinuation(), true, 'song 3 too');
+    q.clear();
+    assert.strictEqual(q.isContinuation(), false, 'a cleared queue is not a continuation');
+});

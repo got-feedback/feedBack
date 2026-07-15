@@ -1384,6 +1384,11 @@ window.feedBack.playQueue = (function () {
     }
     return {
         start: start, advance: advance, hasNext: hasNext, active: active, clear: clear,
+        // True when the current song is a queue ADVANCE (song 2..N of a set),
+        // false for its first song or a standalone play. The venue uses this to
+        // fly in once on arrival at the set, then continue the room between
+        // songs instead of replaying the arrival flyover every track.
+        isContinuation: function () { return active() && idx > 0; },
         // One-shot: true iff _play just kicked off this playSong. Consumed on
         // read so a later MANUAL play still clears the queue. playSong calls this
         // instead of trusting options.fromQueue to survive the wrapper chain.

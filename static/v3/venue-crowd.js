@@ -529,7 +529,27 @@
         _loadingLoop = null;
         _fadingLoop = null;
         if (_venueActive && _manifest) {
-            if (!playIntro()) showLoop(machine.current, FADE_MS);
+            // The flyover is ARRIVING at the venue, and you arrive once. Songs
+            // 2..N of a set (a gig / album / playlist) are a NEW song but the
+            // SAME arrival — the camera should not fly in from the back of the
+            // room before every track (tester: "it showed the flyover intro
+            // again" on a gig's second song). Continue the room to the new song's
+            // loop; only a first-song / standalone arrival flies in.
+            if (_isSetContinuation()) showLoop(machine.current, FADE_MS);
+            else if (!playIntro()) showLoop(machine.current, FADE_MS);
+        }
+    }
+
+    // Is this song load a continuation of a play queue (a set already in
+    // progress), rather than an arrival? True for song 2..N of a gig/album/
+    // playlist. The queue owns the answer; treat any error / absent queue as
+    // "not a continuation" so a standalone play still flies in.
+    function _isSetContinuation() {
+        try {
+            const q = window.feedBack && window.feedBack.playQueue;
+            return !!(q && typeof q.isContinuation === 'function' && q.isContinuation());
+        } catch (_) {
+            return false;
         }
     }
 

@@ -151,20 +151,23 @@ def api_record_stats(data: dict):
         progression_summary = None
         try:
             import progression as progression_mod
+            reg = getattr(appstate, "instrument_registry", None)
             instrument = progression_mod.instrument_for_arrangement(
-                appstate.meta_db.arrangement_entry(filename, arrangement)
+                appstate.meta_db.arrangement_entry(filename, arrangement),
+                registry=reg,
             )
-            progression_summary = appstate.meta_db.record_progression_event(
-                "song_completed",
-                {
-                    "filename": filename,
-                    "instrument": instrument,
-                    "accuracy": accuracy,
-                    "score": score,
-                    "is_diagnostic": filename == appstate.builtin_diagnostic_filename(),
-                },
-                appstate.get_progression_content(),
-            )
+            if instrument is not None:
+                progression_summary = appstate.meta_db.record_progression_event(
+                    "song_completed",
+                    {
+                        "filename": filename,
+                        "instrument": instrument,
+                        "accuracy": accuracy,
+                        "score": score,
+                        "is_diagnostic": filename == appstate.builtin_diagnostic_filename(),
+                    },
+                    appstate.get_progression_content(),
+                )
         except Exception:
             log.warning("stats side-effects (progression) failed", exc_info=True)
         return {"stats": row, "progress": progress, "progression": progression_summary}

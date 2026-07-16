@@ -28,6 +28,50 @@
         { id: 'learn', label: 'Learn' },
         { id: 'studio', label: 'Studio' },
     ];
+    let _instruments = [];
+    let _instrumentsById = {};
+
+    async function loadInstruments() {
+        try {
+            const r = await fetch('/api/instruments');
+            if (r.ok) _instruments = await r.json();
+        } catch (_) {
+            _instruments = [];
+        }
+        _instrumentsById = {};
+        _instruments.forEach(function (inst) { _instrumentsById[inst.id] = inst; });
+        // Expose to other capabilities (working-tuning) that read from registry
+        if (window.feedBack) window.feedBack._instruments = _instruments;
+    }
+
+    function getInstruments() {
+        if (_instruments.length) return _instruments;
+        return [
+            { id: 'guitar', label: 'Guitar', kind: 'stringed', string_counts: [6, 7, 8], default_string_count: 6, roles: [{ id: 'lead', label: 'Lead', default: true }, { id: 'rhythm', label: 'Rhythm' }] },
+            { id: 'bass', label: 'Bass', kind: 'stringed', string_counts: [4, 5, 6], default_string_count: 4, roles: [{ id: 'bass', label: 'Bass', default: true }] },
+        ];
+    }
+
+    function getInstrument(id) {
+        if (_instrumentsById[id]) return _instrumentsById[id];
+        var insts = getInstruments();
+        for (var i = 0; i < insts.length; i++) {
+            if (insts[i].id === id) return insts[i];
+        }
+        return null;
+    }
+
+    function isStringedInstrument(instId) {
+        var inst = getInstrument(instId);
+        return inst ? inst.kind === 'stringed' : (instId === 'guitar' || instId === 'bass');
+    }
+
+    function stringCountsFor(instId) {
+        var inst = getInstrument(instId);
+        if (inst && inst.kind === 'stringed' && Array.isArray(inst.string_counts)) return inst.string_counts;
+        if (instId === 'bass') return STRING_COUNTS.bass;
+        return STRING_COUNTS.guitar;
+    }
     // Tuning names per instrument key (e.g. 'guitar-6', 'bass-4'), loaded from
     // GET /api/tunings. Falls back to empty arrays until the fetch resolves.
     let _tuningsByKey = {};
@@ -112,7 +156,7 @@
         }
     }
 
-    let settings = { instrument: 'guitar', string_count: 6, tuning: 'Standard', reference_pitch: 440, pathway: 'songs', instrument_profiles: {}, active_instrument_profile: 'guitar-lead' };
+    let settings = { instrument: 'guitar', string_count: 6, key_count: 88, tuning: 'Standard', reference_pitch: 440, pathway: 'songs', instrument_profiles: {}, active_instrument_profile: 'guitar-lead' };
 
     async function loadTunings() {
         try {
@@ -147,6 +191,15 @@
     }
 
     function profileIdForInstrument(inst) {
+        var instDef = getInstrument(inst);
+        if (instDef && instDef.roles && instDef.roles.length) {
+            var defaultRole = null;
+            for (var i = 0; i < instDef.roles.length; i++) {
+                if (instDef.roles[i].default) { defaultRole = instDef.roles[i]; break; }
+            }
+            if (!defaultRole) defaultRole = instDef.roles[0];
+            return inst + '-' + defaultRole.id;
+        }
         return inst === 'bass' ? 'bass' : 'guitar-lead';
     }
 
@@ -158,10 +211,10 @@
                 // Clamp persisted values to valid ranges — config.json could
                 // hold out-of-range data (hand-edited or from an import), and the
                 // badge/tuner must render consistent state, not a bad number.
-                const instrument = s.instrument === 'bass' ? 'bass' : 'guitar';
-                const counts = STRING_COUNTS[instrument];
+                const instrument = getInstrument(s.instrument) ? s.instrument : 'guitar';
+                const counts = stringCountsFor(instrument);
                 const sc = Number(s.string_count);
-                const scValid = counts.includes(sc) ? sc : counts[0];
+                const scValid = counts.length && counts.includes(sc) ? sc : (counts[0] || (instrument === 'bass' ? 4 : 6));
                 const tunings = _tuningsForInstrument(instrument, scValid);
                 let ref = Number(s.reference_pitch);
                 if (!Number.isFinite(ref)) ref = 440;
@@ -175,13 +228,14 @@
                 else if (Array.isArray(s.tuning)) tuning = s.tuning;
                 else tuning = tunings[0] || 'Standard';
                 const profiles = s.instrument_profiles && typeof s.instrument_profiles === 'object' ? s.instrument_profiles : {};
-                const pathway = PATHWAY_OPTIONS.some((o) => o.id === s.pathway) ? s.pathway : 'songs';
+                const keyCount = Number.isFinite(Number(s.key_count)) ? Number(s.key_count) : 88;
                 settings = {
                     instrument: instrument,
                     string_count: scValid,
+                    key_count: keyCount,
                     tuning: tuning,
                     reference_pitch: Math.min(450, Math.max(430, ref)),
-                    pathway: pathway,
+                    pathway: 'songs',
                     instrument_profiles: profiles,
                     active_instrument_profile: typeof s.active_instrument_profile === 'string' ? s.active_instrument_profile : profileIdForInstrument(instrument),
                 };
@@ -327,6 +381,16 @@
     function renderTuner() {
         const host = document.getElementById('v3-badge-tuner');
         if (!host) return;
+        const currentInst = getInstrument(settings.instrument);
+        const isPitched = currentInst && currentInst.detect_strategy === 'pitch';
+        if (!isPitched) {
+            host.innerHTML =
+                '<div id="v3-tuner-wrap" class="relative">' +
+                '<div class="bg-fb-card border border-fb-border/50 rounded-2xl h-[92px] w-[96px] shrink-0 px-3 flex items-center justify-center opacity-30">' +
+                '<span class="text-[0.5625rem] text-fb-textDim">No tuner</span>' +
+                '</div></div>';
+            return;
+        }
         const hz = Math.round(settings.reference_pitch || 440);
         const initNote = typeof settings.tuning === 'string'
             ? (TUNING_NOTE[settings.tuning] || 'E') : lowStringNote(settings.tuning);
@@ -403,9 +467,19 @@
     }
 
     // ── Instrument selector card (Stitch RightInstrumentSelector) ──────────--
-    const guitarIcon =
-        '<svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">' +
-        '<path d="M21.66 3.34a1.2 1.2 0 0 0-1.7 0l-2.1 2.1-.7-.7a1 1 0 0 0-1.42 1.42l.3.3-6.06 6.05a4.5 4.5 0 1 0 1.42 1.42l6.05-6.06.3.3a1 1 0 0 0 1.42-1.42l-.7-.7 2.1-2.1a1.2 1.2 0 0 0 0-1.7zM7 19a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>';
+    function iconUrl(instDef) {
+        if (!instDef) return '';
+        var pluginId = instDef._plugin_id;
+        var iconPath = instDef.icon || 'assets/icon.svg';
+        if (pluginId && iconPath) return '/api/plugins/' + pluginId + '/' + iconPath;
+        return '';
+    }
+    function iconForInstrument(instDef) {
+        var url = iconUrl(instDef);
+        if (url) return '<img src="' + esc(url) + '" class="w-6 h-6" style="filter:brightness(0) invert(1)" alt="" onerror="this.style.display=\'none\'">';
+        // Fallback inline guitar SVG
+        return '<svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M21.66 3.34a1.2 1.2 0 0 0-1.7 0l-2.1 2.1-.7-.7a1 1 0 0 0-1.42 1.42l.3.3-6.06 6.05a4.5 4.5 0 1 0 1.42 1.42l6.05-6.06.3.3a1 1 0 0 0 1.42-1.42l-.7-.7 2.1-2.1a1.2 1.2 0 0 0 0-1.7zM7 19a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>';
+    }
 
     // Instrument-menu open/close helpers keyed by id (NOT a captured element),
     // so they survive renderInstrument() replacing the menu node. closeInstMenu
@@ -434,21 +508,38 @@
         const host = document.getElementById('v3-badge-instrument');
         if (!host) return;
         const wt = workingTuningInfo();
+        const instrumentList = getInstruments();
+        const currentInst = getInstrument(settings.instrument);
+        const isStringed = currentInst && currentInst.kind === 'stringed';
+
+        const isKeyboard = currentInst && currentInst.kind === 'keyboard';
+
+        var instPills = '';
+        if (instrumentList.length) {
+            instPills = instrumentList.map(function (inst) {
+                return pill('inst', inst.id, inst.label, settings.instrument === inst.id);
+            }).join('');
+        } else {
+            instPills = '<span class="text-fb-textDim text-xs">No instruments installed. <a href="/plugins" class="text-fb-primary underline">Install one</a>.</span>';
+        }
+        var toggleTitle;
+        if (isStringed) {
+            toggleTitle = 'Instrument: ' + settings.string_count + '-str ' + (wt ? wt.label : tuningLabel());
+        } else if (isKeyboard) {
+            toggleTitle = 'Instrument: ' + (settings.key_count || 88) + '-key ' + currentInst.label;
+        } else {
+            toggleTitle = 'Instrument: ' + currentInst.label;
+        }
         host.innerHTML =
             '<div id="v3-instrument-wrap" class="relative">' +
-            '<button type="button" data-inst-toggle title="Instrument: ' + esc(settings.string_count + '-str ' + (wt ? wt.label : tuningLabel())) + '" ' +
+            '<button type="button" data-inst-toggle title="' + esc(toggleTitle) + '" ' +
             'class="bg-fb-card border border-fb-border/50 rounded-2xl h-[92px] w-16 flex flex-col items-center justify-center gap-1.5 hover:ring-1 hover:ring-fb-primary/40 transition">' +
-            guitarIcon +
-            // Live working-tuning label: dim while you're still in your home tuning,
-            // amber once you've retuned. Omitted if the host doesn't expose
-            // workingTuning (feature-detect → the card looks exactly as before).
+            iconForInstrument(currentInst) +
             (wt ? '<span class="text-[0.5625rem] leading-none font-semibold max-w-full truncate px-0.5 ' +
                 (wt.isHome ? 'text-fb-textDim' : 'text-amber-400') + '">' + esc(wt.short) + '</span>' : '') +
             '<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>' +
             '</button>' +
             '<div data-inst-menu class="hidden absolute right-0 mt-2 w-60 bg-fb-card border border-fb-border/50 rounded-xl shadow-xl p-3 z-50 space-y-3">' +
-            // "Now in" banner + one-tap back-to-default — shown only once you've
-            // retuned off your home tuning (workingTuning present and not home).
             ((wt && !wt.isHome)
                 ? '<div class="flex items-center justify-between gap-2 pb-1 border-b border-fb-border/40">' +
                   '<div class="min-w-0"><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim">Now in</div>' +
@@ -456,28 +547,20 @@
                   '<button type="button" data-inst-reset title="Reset this instrument to its home tuning" class="shrink-0 text-[0.6875rem] text-fb-textDim hover:text-fb-text border border-fb-border/40 hover:border-fb-border/70 rounded-md px-2 py-1 transition-colors">Back to default</button>' +
                   '</div>'
                 : '') +
-            instRow('Instrument', ['guitar', 'bass'].map((v) =>
-                pill('inst', v, v[0].toUpperCase() + v.slice(1), settings.instrument === v)).join('')) +
-            instRow('Strings', STRING_COUNTS[settings.instrument].map((v) =>
-                pill('strings', v, v + '', settings.string_count === v)).join('')) +
-            // Handedness — a left-hander flips the whole highway (frets mirror).
-            // Lives with the other player-orientation choices so it's part of the
-            // same "Choose your instrument" step the onboarding tour spotlights —
-            // i.e. set before you ever tune up or calibrate.
-            instRow('Handedness', pill('hand', 'right', 'Right', !_leftyPref()) +
-                pill('hand', 'left', 'Left', _leftyPref())) +
-            '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">Tuning</div>' +
+            instRow('Instrument', instPills) +
+            (isStringed ? instRow('Strings', stringCountsFor(settings.instrument).map((v) =>
+                pill('strings', v, v + '', settings.string_count === v)).join('')) : '') +
+            (isKeyboard ? instRow('Keys', (currentInst.key_counts || [25, 49, 61, 88]).map((v) =>
+                pill('key_count', v, v + '', (settings.key_count || currentInst.default_key_count || 88) === v)).join('')) : '') +
+            // Handedness only for stringed instruments where frets get mirrored.
+            (isStringed ? instRow('Handedness', pill('hand', 'right', 'Right', !_leftyPref()) +
+                pill('hand', 'left', 'Left', _leftyPref())) : '') +
+            (isStringed ? '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">Tuning</div>' +
             '<select data-inst-tuning class="w-full bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1.5 text-xs text-fb-text outline-none focus:border-fb-primary">' +
-            // An offset-array tuning has no named option — surface it as a
-            // disabled, selected 'Custom' entry so the dropdown reflects reality
-            // (picking a named tuning still works and replaces the custom one).
             (typeof settings.tuning === 'string' ? '' : '<option selected disabled>Custom</option>') +
-            _tuningsForInstrument(settings.instrument, settings.string_count).map((t) => '<option' + (t === settings.tuning ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select></div>' +
-            '<div><div class="text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1">Pathway</div>' +
-            '<select data-inst-pathway class="w-full bg-gray-800/50 border border-gray-700 rounded-md px-2 py-1.5 text-xs text-fb-text outline-none focus:border-fb-primary">' +
-            PATHWAY_OPTIONS.map((p) => '<option value="' + esc(p.id) + '"' + (p.id === settings.pathway ? ' selected' : '') + '>' + esc(p.label) + '</option>').join('') + '</select></div>' +
-            '<div><div class="flex justify-between text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1"><span>Reference pitch</span><span data-ref-val>' + settings.reference_pitch + ' Hz</span></div>' +
-            '<input data-inst-ref type="range" min="430" max="450" step="1" value="' + settings.reference_pitch + '" class="w-full slider-input"></div>' +
+            _tuningsForInstrument(settings.instrument, settings.string_count).map((t) => '<option' + (t === settings.tuning ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select></div>' : '') +
+            (isStringed ? '<div><div class="flex justify-between text-[0.625rem] uppercase tracking-wider text-fb-textDim mb-1"><span>Reference pitch</span><span data-ref-val>' + settings.reference_pitch + ' Hz</span></div>' +
+            '<input data-inst-ref type="range" min="430" max="450" step="1" value="' + settings.reference_pitch + '" class="w-full slider-input"></div>' : '') +
             '</div></div>';
 
         const toggle = host.querySelector('[data-inst-toggle]');
@@ -496,22 +579,25 @@
         const keepOpen = openInstMenu;
         menu.querySelectorAll('[data-pill="inst"]').forEach((b) => b.addEventListener('click', async () => {
             const v = b.getAttribute('data-val');
-            const counts = STRING_COUNTS[v];
-            // Clamp string_count AND tuning to ones valid for the new
-            // instrument, so switching can't persist (and push to the tuner) an
-            // unsupported instrument+tuning combo.
-            const newSc = counts.includes(settings.string_count) ? settings.string_count : counts[0];
-            const tunings = _tuningsForInstrument(v, newSc);
-            const ok = await saveSettings({
-                instrument: v,
-                string_count: newSc,
-                tuning: tunings.includes(settings.tuning) ? settings.tuning : (tunings[0] || settings.tuning),
-                pathway: pathwayForProfile(settings.instrument_profiles, profileIdForInstrument(v), settings.pathway),
-            });
-            // Only move the working-tuning context once the switch was actually persisted —
-            // otherwise the selector stays on the old instrument while the card shows the
-            // new one's tuning (settings and workingTuning desync on a rejected save).
-            if (ok) setWorkingInstrument(v, newSc);   // surface THIS instrument's own working tuning
+            const instDef = getInstrument(v);
+            const isStr = instDef && instDef.kind === 'stringed';
+            const isKeys = instDef && instDef.kind === 'keyboard';
+            const counts = stringCountsFor(v);
+            // Use the instrument's DEFAULT count on switch — always.
+            const newSc = isStr ? (instDef && instDef.default_string_count ? instDef.default_string_count : (counts[0] || 0)) : 0;
+            const newKc = isKeys ? (instDef && instDef.default_key_count ? instDef.default_key_count : 88) : 0;
+            const tunings = isStr ? _tuningsForInstrument(v, newSc) : [];
+            var patch = { instrument: v };
+            if (isStr) {
+                patch.string_count = newSc;
+                patch.tuning = tunings.includes(settings.tuning) ? settings.tuning : (tunings[0] || settings.tuning);
+            }
+            if (isKeys) {
+                patch.key_count = newKc;
+            }
+            const ok = await saveSettings(patch);
+            // Only move the working-tuning context once the switch was actually persisted.
+            if (ok && isStr) setWorkingInstrument(v, newSc);
             renderInstrument(); keepOpen();
         }));
         menu.querySelectorAll('[data-pill="strings"]').forEach((b) => b.addEventListener('click', async () => {
@@ -528,15 +614,22 @@
             setWorkingInstrument(settings.instrument, newSc);
             renderInstrument(); keepOpen();
         }));
+        menu.querySelectorAll('[data-pill="key_count"]').forEach((b) => b.addEventListener('click', async () => {
+            const newKc = Number(b.getAttribute('data-val'));
+            await saveSettings({ key_count: newKc });
+            renderInstrument(); keepOpen();
+        }));
         menu.querySelectorAll('[data-pill="hand"]').forEach((b) => b.addEventListener('click', () => {
             _setLeftyPref(b.getAttribute('data-val') === 'left');
             renderInstrument(); keepOpen();   // reflect the active pill; keep the menu open
         }));
-        menu.querySelector('[data-inst-tuning]').addEventListener('change', (e) => saveSettings({ tuning: e.target.value }));
-        menu.querySelector('[data-inst-pathway]').addEventListener('change', (e) => saveSettings({ pathway: e.target.value }));
-        const ref = menu.querySelector('[data-inst-ref]');
-        ref.addEventListener('input', (e) => { menu.querySelector('[data-ref-val]').textContent = e.target.value + ' Hz'; });
-        ref.addEventListener('change', (e) => saveSettings({ reference_pitch: Number(e.target.value) }));
+        var tuningSelect = menu.querySelector('[data-inst-tuning]');
+        if (tuningSelect) tuningSelect.addEventListener('change', (e) => saveSettings({ tuning: e.target.value }));
+        var refSlider = menu.querySelector('[data-inst-ref]');
+        if (refSlider) {
+            refSlider.addEventListener('input', (e) => { var label = menu.querySelector('[data-ref-val]'); if (label) label.textContent = e.target.value + ' Hz'; });
+            refSlider.addEventListener('change', (e) => saveSettings({ reference_pitch: Number(e.target.value) }));
+        }
         const resetBtn = menu.querySelector('[data-inst-reset]');
         if (resetBtn) resetBtn.addEventListener('click', () => {
             const wtCap = window.feedBack && window.feedBack.workingTuning;
@@ -568,9 +661,10 @@
             (active ? 'bg-fb-primary text-white' : 'bg-gray-800/50 text-fb-textDim hover:text-fb-text') + '">' + esc(label) + '</button>';
     }
 
-    window.v3Badges = { reload: async () => { await Promise.all([loadTunings(), loadSettings()]); renderInstrument(); renderTuner(); } };
+    window.v3Badges = { reload: async () => { await loadInstruments(); await Promise.all([loadTunings(), loadSettings()]); renderInstrument(); renderTuner(); } };
 
     async function boot() {
+        await loadInstruments();
         await Promise.all([loadTunings(), loadSettings()]);
         // NB: we deliberately do NOT call setWorkingInstrument() here. The host seeds its
         // current instrument from the same /api/settings on boot and emits

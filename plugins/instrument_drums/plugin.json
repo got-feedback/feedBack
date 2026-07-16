@@ -1,0 +1,25 @@
+{
+  "id": "instrument_drums",
+  "name": "Drums",
+  "version": "1.0.0",
+  "type": "instrument",
+  "bundled": true,
+  "icon": "assets/icon.svg",
+  "instrument": {
+    "id": "drums",
+    "label": "Drums",
+    "kind": "percussion",
+    "string_counts": [],
+    "default_string_count": 0,
+    "reference_pitch": 440.0,
+    "detect_strategy": "onset",
+    "roles": [
+      {
+        "id": "drums",
+        "label": "Drums",
+        "arrangement_names": ["Drums", "Drum Kit", "Percussion"],
+        "default": true
+      }
+    ]
+  }
+}

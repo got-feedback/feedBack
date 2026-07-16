@@ -16,6 +16,12 @@ Usage::
 """
 
 import os
+import sys
+
+# Ensure lib/ is on the path for local development (Docker sets PYTHONPATH).
+_lib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+if _lib not in sys.path:
+    sys.path.insert(0, _lib)
 
 
 def run() -> None:

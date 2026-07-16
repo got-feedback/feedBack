@@ -43,7 +43,21 @@
         ['difficulty', 'Difficulty (easiest first)'], ['difficulty-desc', 'Difficulty (hardest first)'],
     ];
     const FORMATS = [['', 'All formats'], ['sloppak', 'Feedpak'], ['loose', 'Folder']];
-    const ARRANGEMENTS = ['Lead', 'Rhythm', 'Bass', 'Combo', 'Vocals'];
+    function _arrangementOptions() {
+        var insts = sm && sm._instruments;
+        if (Array.isArray(insts) && insts.length) {
+            var names = [];
+            for (var i = 0; i < insts.length; i++) {
+                var roles = insts[i].roles || [];
+                for (var j = 0; j < roles.length; j++) {
+                    var label = roles[j].label;
+                    if (label && names.indexOf(label) < 0) names.push(label);
+                }
+            }
+            if (names.length) return names;
+        }
+        return ['Lead', 'Rhythm', 'Bass', 'Combo', 'Vocals'];
+    }
     const STEMS = ['guitar', 'bass', 'drums', 'vocals', 'other'];
     const PAGE_SIZE = 24;
     // Extra rows rendered above/below the viewport so a fast scroll doesn't flash
@@ -2816,6 +2830,10 @@
         const mark = st === 'has' ? '✓ ' : st === 'lacks' ? '✕ ' : '';
         return '<button data-tri="' + group + '" data-val="' + esc(value) + '" class="px-2 py-1 rounded-md text-xs border ' + cls + '">' + mark + esc(label) + '</button>';
     }
+    function renderDrawerIfOpen() {
+        const d = document.getElementById('v3-songs-drawer');
+        if (d && !d.classList.contains('hidden') && d.innerHTML.trim()) renderDrawer();
+    }
     function renderDrawer() {
         const d = document.getElementById('v3-songs-drawer');
         if (!d) return;
@@ -2824,7 +2842,7 @@
             '<div class="p-5 space-y-5">' +
             '<div class="flex items-center justify-between"><h3 class="text-lg font-semibold text-fb-text">Filters</h3>' +
             '<button data-drawer-close class="text-fb-textDim hover:text-fb-text">✕</button></div>' +
-            section('Arrangements', ARRANGEMENTS.map((a) => triPill('arr', a, a, triState(f.arr_has, f.arr_lacks, a))).join('')) +
+            section('Arrangements', _arrangementOptions().map((a) => triPill('arr', a, a, triState(f.arr_has, f.arr_lacks, a))).join('')) +
             section('Stems (feedpak)', STEMS.map((s) => triPill('stem', s, s, triState(f.stem_has, f.stem_lacks, s))).join('')) +
             section('Lyrics', ['', '1', '0'].map((v) => '<button data-lyrics="' + v + '" class="px-2 py-1 rounded-md text-xs border ' + (f.lyrics === v ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + (v === '' ? 'Any' : v === '1' ? 'Has lyrics' : 'No lyrics') + '</button>').join('')) +
             // Progress (mastery bands) — multi-select; server filters via song_stats.
@@ -2873,7 +2891,7 @@
 
         d.querySelectorAll('[data-tri]').forEach((b) => b.addEventListener('click', () => {
             const g = b.getAttribute('data-tri'), v = b.getAttribute('data-val');
-            if (g === 'arr') cycleTri(f.arr_has, f.arr_lacks, v);
+            if (g === 'arr') { cycleTri(f.arr_has, f.arr_lacks, v); _arrAutoInstrument = null; }
             else if (g === 'stem') cycleTri(f.stem_has, f.stem_lacks, v);
             else if (g === 'tuning') { const i = f.tunings.indexOf(v); if (i >= 0) f.tunings.splice(i, 1); else f.tunings.push(v); }
             renderDrawer();
@@ -2894,6 +2912,7 @@
             state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [] };
             state.artist = '';
             state.album = '';
+            _arrAutoInstrument = null;
             renderDrawer();
             await loadArtistCatalog();
             refreshArtistAlbumSelects();
@@ -3475,6 +3494,17 @@
         // Restore last-used sort/format/view/filters once, before building the
         // toolbar so its selects reflect the saved choice (default: Artist A–Z).
         if (!_prefsRestored) { applySavedPrefs(); _prefsRestored = true; }
+        // ── Auto-apply instrument arrangement filter on first render ─────
+        if (_arrAutoInstrument === null && !state.filters.arr_has.length && !state.filters.arr_lacks.length) {
+            try {
+                var sr = await fetch('/api/settings');
+                if (sr.ok) {
+                    var sd = await sr.json();
+                    var instId = sd && sd.instrument;
+                    if (instId) _applyArrangementAutoFilter(instId);
+                }
+            } catch (_) {}
+        }
         const providers = await loadProviders();
         const [, tn] = await Promise.all([
             (async () => { state.accuracy = (await jget('/api/stats/best')) || {}; })(),
@@ -4081,6 +4111,47 @@
     };
 
     if (sm && typeof sm.on === 'function') {
+        // ── Instrument auto-filter ────────────────────────────────────────
+        // When a different instrument is selected in the topbar, filter the
+        // library to show only songs that have arrangements for that instrument.
+        // Clears on manual arrangement filter change; re-applies on next
+        // instrument switch.
+        var _arrAutoInstrument = null;
+
+        function _instrumentArrangementNames(instrumentId) {
+            var insts = sm && sm._instruments;
+            if (!Array.isArray(insts)) return null;
+            for (var i = 0; i < insts.length; i++) {
+                if (insts[i].id === instrumentId && insts[i].roles) {
+                    var names = [];
+                    for (var j = 0; j < insts[i].roles.length; j++) {
+                        var label = insts[i].roles[j].label;
+                        if (label && names.indexOf(label) < 0) names.push(label);
+                    }
+                    return names.length ? names : null;
+                }
+            }
+            return null;
+        }
+
+        function _applyArrangementAutoFilter(instrumentId) {
+            var names = _instrumentArrangementNames(instrumentId);
+            if (!names) return false;
+            _arrAutoInstrument = instrumentId;
+            state.filters.arr_has = names.slice();
+            state.filters.arr_lacks = [];
+            return true;
+        }
+
+        sm.on('instrument:changed', function (e) {
+            var instId = e && e.detail && e.detail.instrument;
+            if (!instId) return;
+            if (_applyArrangementAutoFilter(instId)) {
+                reload();
+                renderDrawerIfOpen();
+            }
+        });
+
         sm.on('screen:changed', (e) => {
             const id = e && e.detail && e.detail.id;
             if (id === 'v3-songs') { onV3SongsScreenEnter(); return; }

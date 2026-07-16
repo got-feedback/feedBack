@@ -1038,7 +1038,8 @@ def _install_requirements(plugin_dir: Path, plugin_id: str):
         return False
 
 
-def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=None):
+def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=None,
+                 instrument_registry=None):
     """Discover and load all plugins from built-in and user directories.
 
     progress_cb, when provided, receives structured progress events:
@@ -1346,6 +1347,27 @@ def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=N
     _warn_on_module_collisions(
         [(plugin_id, plugin_dir) for plugin_id, plugin_dir, _ in plugin_load_specs]
     )
+
+    # ── Instrument plugin registration ────────────────────────────────────
+    if instrument_registry is not None:
+        for plugin_id, plugin_dir, manifest in plugin_load_specs:
+            if manifest.get("type") == "instrument":
+                inst_def = manifest.get("instrument")
+                if isinstance(inst_def, dict):
+                    # Stamp the plugin_id so consumers can build asset URLs
+                    # like /api/plugins/<plugin_id>/assets/icon.svg
+                    inst_def = dict(inst_def)
+                    inst_def["_plugin_id"] = plugin_id
+                    # The icon lives at the manifest root, not inside "instrument"
+                    if manifest.get("icon") and not inst_def.get("icon"):
+                        inst_def["icon"] = manifest["icon"]
+                    try:
+                        instrument_registry.register(inst_def)
+                    except ValueError as e:
+                        log.warning(
+                            "Invalid instrument definition in plugin %s: %s",
+                            plugin_id, e,
+                        )
 
     _emit_progress(
         "plugins-discovered",

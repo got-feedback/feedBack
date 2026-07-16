@@ -25,7 +25,7 @@ from metadata_db import _as_int, _sqlite_file_integrity_ok
 from tunings import (
     PROFILE_IDS, PROFILE_PATHWAYS, apply_flat_instrument_patch_to_profiles,
     normalize_instrument_profile, normalize_instrument_profiles,
-    settings_with_instrument_profiles,
+    settings_with_instrument_profiles, _valid_instrument_ids,
 )
 
 import logging
@@ -244,8 +244,9 @@ def save_settings(data: dict):
     if "instrument" in data:
         raw = data["instrument"]
         if raw is not None:
-            if not isinstance(raw, str) or raw not in ("guitar", "bass"):
-                return {"error": "instrument must be 'guitar' or 'bass'"}
+            valid_ids = _valid_instrument_ids()
+            if not isinstance(raw, str) or raw not in valid_ids:
+                return {"error": "instrument must be one of " + str(sorted(valid_ids))}
             updates["instrument"] = raw
     if "string_count" in data:
         raw = data["string_count"]
@@ -257,6 +258,16 @@ def save_settings(data: dict):
             if sc < 4 or sc > 8:
                 return {"error": "string_count must be an integer 4–8"}
             updates["string_count"] = sc
+    if "key_count" in data:
+        raw = data["key_count"]
+        if raw is not None:
+            try:
+                kc = _as_int(raw)
+            except (TypeError, ValueError, OverflowError):
+                return {"error": "key_count must be an integer"}
+            if kc < 1 or kc > 127:
+                return {"error": "key_count must be an integer 1–127"}
+            updates["key_count"] = kc
     if "tuning" in data:
         raw = data["tuning"]
         # Accept a tuning NAME (string ≤64) or a list of up to 8 semitone
@@ -303,8 +314,14 @@ def save_settings(data: dict):
         raw = data["active_instrument_profile"]
         if raw is not None:
             if not isinstance(raw, str) or raw not in PROFILE_IDS:
-                return {"error": "active_instrument_profile must be one of guitar-lead, guitar-rhythm, bass"}
+                return {"error": "active_instrument_profile must be one of " + ", ".join(PROFILE_IDS)}
             updates["active_instrument_profile"] = raw
+    if "instrument_overrides" in data:
+        raw = data["instrument_overrides"]
+        if raw is not None:
+            if not isinstance(raw, dict):
+                return {"error": "instrument_overrides must be an object"}
+            updates["instrument_overrides"] = raw
     appstate.config_dir.mkdir(parents=True, exist_ok=True)
     # Critical section — the read-merge-write must be atomic. FastAPI runs
     # sync handlers in a threadpool, so two concurrent partial POSTs (e.g.
@@ -455,8 +472,8 @@ def _validate_server_config_types(cfg: dict) -> str | None:
             return "server_config.reference_pitch must be a number between 430 and 450"
     if "instrument" in cfg:
         v = cfg["instrument"]
-        if v is not None and v not in ("guitar", "bass"):
-            return "server_config.instrument must be 'guitar' or 'bass'"
+        if v is not None and v not in _valid_instrument_ids():
+            return "server_config.instrument must be one of " + str(sorted(_valid_instrument_ids()))
     if "string_count" in cfg:
         v = cfg["string_count"]
         if v is not None and (isinstance(v, bool) or not isinstance(v, int) or not (4 <= v <= 8)):
@@ -483,7 +500,7 @@ def _validate_server_config_types(cfg: dict) -> str | None:
     if "active_instrument_profile" in cfg:
         v = cfg["active_instrument_profile"]
         if v is not None and (not isinstance(v, str) or v not in PROFILE_IDS):
-            return "server_config.active_instrument_profile must be one of guitar-lead, guitar-rhythm, bass"
+            return "server_config.active_instrument_profile must be one of " + ", ".join(PROFILE_IDS)
     return None
 
 

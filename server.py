@@ -26,8 +26,9 @@ from safepath import safe_join
 from appconfig import _load_config
 from tunings import (
     DEFAULT_REFERENCE_PITCH, DEFAULT_TUNINGS,
-    apply_reference_pitch, tuning_name,
+    apply_reference_pitch, tuning_name, set_instrument_registry,
 )
+from instruments import InstrumentRegistry
 # The library metadata cache. `MetadataDB` and the query helpers it owns live in
 # their own module; the `meta_db` singleton below stays here. The private names
 # are re-imported because callers outside the DB layer still use them.
@@ -55,6 +56,7 @@ import enrichment
 from routers import art as art_router
 from routers import settings as settings_router
 from routers import song as song_router
+from routers import instruments as instruments_router
 from routers import library as library_router
 from routers import enrichment as enrichment_routes
 from routers import media as media_router
@@ -163,6 +165,9 @@ appstate.configure(
     library_providers=library_providers,
     local_library_provider=_local_library_provider,
 )
+
+instrument_registry = InstrumentRegistry()
+appstate.configure(instrument_registry=instrument_registry)
 
 
 
@@ -923,7 +928,9 @@ async def startup_events():
                 error=None,
             )
             load_plugins(app, plugin_context, progress_cb=_on_progress,
-                         route_setup_fn=_route_setup_on_main)
+                         route_setup_fn=_route_setup_on_main,
+                         instrument_registry=instrument_registry)
+            set_instrument_registry(instrument_registry)
             # Self-heal a freshly recreated container: its filesystem reset to
             # the image-baked sheet (in-tree plugins only), but a mounted
             # FEEDBACK_PLUGINS_DIR may carry user-installed plugins whose
@@ -1371,6 +1378,9 @@ app.include_router(audio_effects.router)
 
 # ── Settings routes → routers/settings.py (R3) ──────────────────────────────
 app.include_router(settings_router.router)
+
+# ── Instruments routes → routers/instruments.py ───────────────────────────
+app.include_router(instruments_router.router)
 
 
 def _default_settings():

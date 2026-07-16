@@ -1,0 +1,27 @@
+{
+  "id": "instrument_piano",
+  "name": "Piano/Keys",
+  "version": "1.0.0",
+  "type": "instrument",
+  "bundled": true,
+  "icon": "assets/icon.svg",
+  "instrument": {
+    "id": "keys",
+    "label": "Keys",
+    "kind": "keyboard",
+    "string_counts": [],
+    "default_string_count": 0,
+    "key_counts": [25, 49, 61, 88],
+    "default_key_count": 88,
+    "reference_pitch": 440.0,
+    "detect_strategy": "midi",
+    "roles": [
+      {
+        "id": "keys",
+        "label": "Keys",
+        "arrangement_names": ["Keys", "Piano", "Keyboard", "Synth", "Synth Lead"],
+        "default": true
+      }
+    ]
+  }
+}

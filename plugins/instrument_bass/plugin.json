@@ -1,0 +1,60 @@
+{
+  "id": "instrument_bass",
+  "name": "Bass",
+  "version": "1.0.0",
+  "type": "instrument",
+  "bundled": true,
+  "icon": "assets/icon.svg",
+  "icon": "assets/icon.svg",
+  "instrument": {
+    "id": "bass",
+    "label": "Bass",
+    "kind": "stringed",
+    "string_counts": [4, 5, 6],
+    "default_string_count": 4,
+    "reference_pitch": 440.0,
+    "detect_strategy": "pitch",
+    "standard_tunings": {
+      "4": [28, 33, 38, 43],
+      "5": [23, 28, 33, 38, 43],
+      "6": [23, 28, 33, 38, 43, 48]
+    },
+    "tunings": {
+      "4": {
+        "Standard":    [ 0,  0,  0,  0],
+        "Eb Standard": [-1, -1, -1, -1],
+        "D Standard":  [-2, -2, -2, -2],
+        "C# Standard": [-3, -3, -3, -3],
+        "C Standard":  [-4, -4, -4, -4],
+        "Drop D":      [-2,  0,  0,  0],
+        "Drop C":      [-4, -2, -2, -2],
+        "BEAD":        [-5, -5, -5, -5]
+      },
+      "5": {
+        "Standard":    [ 0,  0,  0,  0,  0],
+        "High C":      [ 5,  5,  5,  5,  5],
+        "Eb Standard": [-1, -1, -1, -1, -1],
+        "D Standard":  [-2, -2, -2, -2, -2],
+        "C# Standard": [-3, -3, -3, -3, -3],
+        "C Standard":  [-4, -4, -4, -4, -4],
+        "Drop A":      [-2,  0,  0,  0,  0]
+      },
+      "6": {
+        "Standard":    [ 0,  0,  0,  0,  0,  0],
+        "Eb Standard": [-1, -1, -1, -1, -1, -1],
+        "D Standard":  [-2, -2, -2, -2, -2, -2],
+        "C# Standard": [-3, -3, -3, -3, -3, -3],
+        "C Standard":  [-4, -4, -4, -4, -4, -4]
+      }
+    },
+    "roles": [
+      {
+        "id": "bass",
+        "label": "Bass",
+        "arrangement_flags": ["path_bass"],
+        "arrangement_names": ["Bass"],
+        "default": true
+      }
+    ]
+  }
+}

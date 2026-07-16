@@ -328,17 +328,39 @@ def load_content(root) -> tuple[dict, list]:
 # ---------------------------------------------------------------------------
 
 
-def instrument_for_arrangement(arr_entry) -> str:
+def instrument_for_arrangement(arr_entry, *, registry=None):
     """Map a library arrangement entry to a progression instrument.
 
     archive/loose entries carry ``type`` (lead/rhythm/bass/combo); sloppaks may
-    only carry ``name``. Vocals are recognised so they never count toward
-    guitar challenges; everything else defaults to guitar.
+    only carry ``name``. Checks registered instruments first via the registry;
+    falls back to hardcoded logic for backward compat. Returns None when the
+    arrangement doesn't match any known instrument — callers must gate
+    progression events on a non-None instrument so unknown arrangements
+    never accrue to the wrong path.
     """
     if not isinstance(arr_entry, dict):
+        if registry:
+            return None
         return "guitar"
     arr_type = str(arr_entry.get("type") or "").strip().lower()
     name = str(arr_entry.get("name") or "").strip().lower()
+
+    # Registry check — any registered instrument's roles match?
+    if registry:
+        for inst in registry.get_all():
+            for role in inst.get("roles", []):
+                if name in role.get("arrangement_names", []):
+                    return inst["id"]
+                if arr_type in role.get("arrangement_names", []):
+                    return inst["id"]
+        # Also check flags: build a virtual arr_entry for path flag matching
+        for inst in registry.get_all():
+            for role in inst.get("roles", []):
+                for flag in role.get("arrangement_flags", []):
+                    if arr_entry.get(flag):
+                        return inst["id"]
+
+    # Hardcoded fallback for known instruments
     if arr_type == "bass":
         return "bass"
     if arr_type == "drums":
@@ -361,6 +383,8 @@ def instrument_for_arrangement(arr_entry) -> str:
         return "keys"
     if arr_type in ("lead", "rhythm", "combo"):
         return "guitar"
+    if registry:
+        return None
     return "guitar"
 
 

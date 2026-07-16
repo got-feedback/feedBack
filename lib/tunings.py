@@ -10,6 +10,107 @@ import math
 
 DEFAULT_REFERENCE_PITCH = 440.0
 
+_instrument_registry = None
+
+
+def set_instrument_registry(reg):
+    global _instrument_registry
+    _instrument_registry = reg
+
+
+def _build_standard_midis(registry=None):
+    reg = registry or _instrument_registry
+    result = {}
+    if reg:
+        for inst in reg.get_all():
+            if inst["kind"] == "stringed":
+                for sc_key, midis in inst.get("standard_tunings", {}).items():
+                    key = f"{inst['id']}-{sc_key}"
+                    if key not in result:
+                        result[key] = midis
+    if not result:
+        return dict(STANDARD_OPEN_MIDIS)
+    return result
+
+
+def _build_preset_midis(registry=None):
+    reg = registry or _instrument_registry
+    result = {}
+    if reg:
+        for inst in reg.get_all():
+            if inst["kind"] == "stringed":
+                std = inst.get("standard_tunings", {})
+                for sc_key, named_offsets in inst.get("tunings", {}).items():
+                    key = f"{inst['id']}-{sc_key}"
+                    std_midis = std.get(sc_key)
+                    if not std_midis:
+                        continue
+                    presets = {}
+                    for t_name, offsets in named_offsets.items():
+                        if len(std_midis) == len(offsets):
+                            presets[t_name] = [s + o for s, o in zip(std_midis, offsets)]
+                    if presets:
+                        result[key] = presets
+    if not result:
+        return {k: dict(v) for k, v in TUNING_PRESET_MIDIS.items()}
+    return result
+
+
+def _build_profile_defaults(registry=None):
+    reg = registry or _instrument_registry
+    result = {}
+    if reg:
+        for inst in reg.get_all():
+            default_role = inst["roles"][0]["id"] if inst["roles"] else inst["id"]
+            for role in inst["roles"]:
+                r_default = role.get("default", False)
+                if r_default:
+                    default_role = role["id"]
+                profile_id = f"{inst['id']}-{role['id']}"
+                result[profile_id] = {
+                    "id": profile_id,
+                    "label": f"{role['label']} {inst['label']}",
+                    "instrument": inst["id"],
+                    "role": role["id"],
+                    "string_count": inst.get("default_string_count", 0),
+                    "tuning": "Standard",
+                    "reference_pitch": inst.get("reference_pitch", DEFAULT_REFERENCE_PITCH),
+                    "pathway": "songs",
+                    "default_role": r_default,
+                }
+            if default_role and f"{inst['id']}-{default_role}" in result:
+                for pid, profile in result.items():
+                    if pid == f"{inst['id']}-{default_role}":
+                        profile["default_role"] = True
+    if not result:
+        return {pid: dict(p) for pid, p in PROFILE_DEFAULTS.items()}
+    return result
+
+
+def _build_profile_ids(registry=None):
+    profiles = _build_profile_defaults(registry)
+    return tuple(profiles.keys())
+
+
+def _valid_instrument_ids(registry=None):
+    reg = registry or _instrument_registry
+    if reg:
+        ids = {inst["id"] for inst in reg.get_all()}
+        if ids:
+            return ids
+    return {"guitar", "bass"}
+
+
+def _default_profile_id_for_instrument(instrument_id, registry=None):
+    profiles = _build_profile_defaults(registry)
+    for pid, profile in profiles.items():
+        if profile["instrument"] == instrument_id and profile.get("default_role"):
+            return pid
+    for pid, profile in profiles.items():
+        if profile["instrument"] == instrument_id:
+            return pid
+    return "guitar-lead"
+
 # Canonical open strings, low to high, as MIDI notes. This is the host-level
 # source of truth for guitar/bass tuning profiles; UI surfaces derive names,
 # frequencies, and semitone offsets from these absolute pitches.
@@ -207,8 +308,8 @@ def instrument_key(instrument: str, string_count: int) -> str:
     return f"{instrument}-{string_count}"
 
 
-def default_instrument_profiles() -> dict[str, dict]:
-    return {profile_id: dict(profile) for profile_id, profile in PROFILE_DEFAULTS.items()}
+def default_instrument_profiles(registry=None) -> dict[str, dict]:
+    return _build_profile_defaults(registry)
 
 
 def _valid_reference_pitch(value) -> float | None:
@@ -223,11 +324,13 @@ def _valid_reference_pitch(value) -> float | None:
     return ref
 
 
-def _valid_tuning_for_key(key: str, tuning):
+def _valid_tuning_for_key(key: str, tuning, *, registry=None):
+    preset_midis = _build_preset_midis(registry)
+    standard_midis = _build_standard_midis(registry)
     if isinstance(tuning, str):
         if len(tuning) > 64:
             return None
-        if tuning in TUNING_PRESET_MIDIS.get(key, {}):
+        if tuning in preset_midis.get(key, {}):
             return tuning
         # A name that IS a built-in preset for a different key is a misapplied
         # built-in (e.g. "Drop D" on a 5-string bass, whose low string is B) —
@@ -235,11 +338,11 @@ def _valid_tuning_for_key(key: str, tuning):
         # tuning (the tuner plugin's, exposed via /api/tunings) that this pure
         # layer can't resolve — accept it so settings round-trip; the provider
         # owns its validity.
-        if any(tuning in names for names in TUNING_PRESET_MIDIS.values()):
+        if any(tuning in names for names in preset_midis.values()):
             return None
         return tuning
     if isinstance(tuning, list):
-        expected = len(STANDARD_OPEN_MIDIS.get(key, []))
+        expected = len(standard_midis.get(key, []))
         if len(tuning) != expected:
             return None
         if any(isinstance(o, bool) or not isinstance(o, int) or o < -12 or o > 12 for o in tuning):
@@ -248,9 +351,10 @@ def _valid_tuning_for_key(key: str, tuning):
     return None
 
 
-def normalize_instrument_profile(profile_id: str, raw) -> tuple[dict | None, str | None]:
+def normalize_instrument_profile(profile_id: str, raw, *, registry=None) -> tuple[dict | None, str | None]:
     """Validate one persisted host instrument profile."""
-    base = dict(PROFILE_DEFAULTS.get(profile_id, {}))
+    profile_defaults = _build_profile_defaults(registry)
+    base = dict(profile_defaults.get(profile_id, {}))
     if not base:
         return None, f"unknown instrument profile: {profile_id}"
     if raw is None:
@@ -259,20 +363,31 @@ def normalize_instrument_profile(profile_id: str, raw) -> tuple[dict | None, str
         return None, f"instrument_profiles.{profile_id} must be an object"
 
     instrument = raw.get("instrument", base["instrument"])
-    if instrument not in ("guitar", "bass"):
-        return None, f"instrument_profiles.{profile_id}.instrument must be 'guitar' or 'bass'"
+    valid_ids = _valid_instrument_ids(registry)
+    if instrument not in valid_ids:
+        return None, f"instrument_profiles.{profile_id}.instrument must be one of {sorted(valid_ids)}"
 
-    try:
-        string_count = int(raw.get("string_count", base["string_count"]))
-    except (TypeError, ValueError, OverflowError):
-        return None, f"instrument_profiles.{profile_id}.string_count must be valid for the instrument"
-    key = instrument_key(instrument, string_count)
-    if key not in STANDARD_OPEN_MIDIS:
-        return None, f"instrument_profiles.{profile_id}.string_count must be valid for the instrument"
+    inst_def = None
+    reg = registry or _instrument_registry
+    if reg:
+        inst_def = reg.get(instrument)
+    is_stringed = (inst_def is not None and inst_def.get("kind") == "stringed") or instrument in ("guitar", "bass")
 
-    tuning = _valid_tuning_for_key(key, raw.get("tuning", base["tuning"]))
-    if tuning is None:
-        return None, f"instrument_profiles.{profile_id}.tuning must match {key}"
+    if is_stringed:
+        try:
+            string_count = int(raw.get("string_count", base["string_count"]))
+        except (TypeError, ValueError, OverflowError):
+            return None, f"instrument_profiles.{profile_id}.string_count must be valid for the instrument"
+        key = instrument_key(instrument, string_count)
+        standard_midis = _build_standard_midis(registry)
+        if key not in standard_midis:
+            return None, f"instrument_profiles.{profile_id}.string_count must be valid for the instrument"
+        tuning = _valid_tuning_for_key(key, raw.get("tuning", base["tuning"]), registry=registry)
+        if tuning is None:
+            return None, f"instrument_profiles.{profile_id}.tuning must match {key}"
+    else:
+        string_count = 0
+        tuning = ""
 
     ref = _valid_reference_pitch(raw.get("reference_pitch", base["reference_pitch"]))
     if ref is None:
@@ -302,42 +417,58 @@ def normalize_instrument_profile(profile_id: str, raw) -> tuple[dict | None, str
     return out, None
 
 
-def normalize_instrument_profiles(raw_profiles=None) -> tuple[dict[str, dict] | None, str | None]:
+def normalize_instrument_profiles(raw_profiles=None, *, registry=None) -> tuple[dict[str, dict] | None, str | None]:
     """Validate persisted host profiles, filling omitted built-ins with defaults."""
     if raw_profiles is None:
-        return default_instrument_profiles(), None
+        return _build_profile_defaults(registry), None
     if not isinstance(raw_profiles, dict):
         return None, "instrument_profiles must be an object"
+    profile_ids = _build_profile_ids(registry)
     profiles = {}
-    for profile_id in PROFILE_IDS:
-        profile, error = normalize_instrument_profile(profile_id, raw_profiles.get(profile_id))
+    for profile_id in profile_ids:
+        profile, error = normalize_instrument_profile(profile_id, raw_profiles.get(profile_id), registry=registry)
         if error:
             return None, error
         profiles[profile_id] = profile
     return profiles, None
 
 
-def active_profile_id(raw) -> str:
-    return raw if raw in PROFILE_DEFAULTS else DEFAULT_ACTIVE_INSTRUMENT_PROFILE
+def active_profile_id(raw, *, registry=None) -> str:
+    defaults = _build_profile_defaults(registry)
+    return raw if raw in defaults else "guitar-lead"
 
 
-def profile_from_legacy_settings(cfg: dict) -> dict:
+def profile_from_legacy_settings(cfg: dict, *, registry=None) -> dict:
     """Build an active profile from the old flat settings keys."""
-    instrument = cfg.get("instrument") if cfg.get("instrument") in ("guitar", "bass") else "guitar"
-    fallback_sc = 4 if instrument == "bass" else 6
-    try:
-        sc = int(cfg.get("string_count", fallback_sc))
-    except (TypeError, ValueError, OverflowError):
-        sc = fallback_sc
-    key = instrument_key(instrument, sc)
-    if key not in STANDARD_OPEN_MIDIS:
-        sc = fallback_sc
+    valid_ids = _valid_instrument_ids(registry)
+    instrument = cfg.get("instrument") if cfg.get("instrument") in valid_ids else "guitar"
+    inst_def = None
+    if registry:
+        inst_def = registry.get(instrument)
+    is_stringed = (inst_def is not None and inst_def.get("kind") == "stringed") or instrument in ("guitar", "bass")
+
+    if is_stringed:
+        if inst_def:
+            fallback_sc = inst_def.get("default_string_count", 6)
+        else:
+            fallback_sc = 4 if instrument == "bass" else 6
+        try:
+            sc = int(cfg.get("string_count", fallback_sc))
+        except (TypeError, ValueError, OverflowError):
+            sc = fallback_sc
         key = instrument_key(instrument, sc)
-    tuning = _valid_tuning_for_key(key, cfg.get("tuning", "Standard")) or "Standard"
+        standard_midis = _build_standard_midis(registry)
+        if key not in standard_midis:
+            sc = fallback_sc
+            key = instrument_key(instrument, sc)
+        tuning = _valid_tuning_for_key(key, cfg.get("tuning", "Standard"), registry=registry) or "Standard"
+    else:
+        sc = 0
+        tuning = ""
     ref = _valid_reference_pitch(cfg.get("reference_pitch", DEFAULT_REFERENCE_PITCH)) or DEFAULT_REFERENCE_PITCH
     pathway = cfg.get("pathway") if cfg.get("pathway") in PROFILE_PATHWAYS else "songs"
-    profile_id = "bass" if instrument == "bass" else DEFAULT_ACTIVE_INSTRUMENT_PROFILE
-    profile = dict(PROFILE_DEFAULTS[profile_id])
+    profile_id = _default_profile_id_for_instrument(instrument, registry)
+    profile = dict(_build_profile_defaults(registry)[profile_id])
     profile.update({
         "instrument": instrument,
         "string_count": sc,
@@ -348,14 +479,15 @@ def profile_from_legacy_settings(cfg: dict) -> dict:
     return profile
 
 
-def settings_with_instrument_profiles(cfg: dict) -> dict:
+def settings_with_instrument_profiles(cfg: dict, *, registry=None) -> dict:
     """Return settings with canonical host profiles and mirrored flat keys."""
+    reg = registry or _instrument_registry
     out = dict(cfg)
-    profiles, _error = normalize_instrument_profiles(out.get("instrument_profiles"))
+    profiles, _error = normalize_instrument_profiles(out.get("instrument_profiles"), registry=reg)
     if profiles is None:
-        profiles = default_instrument_profiles()
+        profiles = _build_profile_defaults(reg)
     if "instrument_profiles" not in out:
-        legacy = profile_from_legacy_settings(out)
+        legacy = profile_from_legacy_settings(out, registry=reg)
         profiles[legacy["id"]] = legacy
         # Default the active profile to the one migrated from the legacy flat
         # fields, but DON'T clobber an explicit request — a fresh-config
@@ -363,7 +495,7 @@ def settings_with_instrument_profiles(cfg: dict) -> dict:
         # overwritten by the guitar-lead inferred from defaults. active_profile_id
         # below normalizes an invalid value.
         out.setdefault("active_instrument_profile", legacy["id"])
-    active = active_profile_id(out.get("active_instrument_profile"))
+    active = active_profile_id(out.get("active_instrument_profile"), registry=reg)
     selected = profiles[active]
     out["instrument_profiles"] = profiles
     out["active_instrument_profile"] = active
@@ -375,21 +507,26 @@ def settings_with_instrument_profiles(cfg: dict) -> dict:
     return out
 
 
-def apply_flat_instrument_patch_to_profiles(cfg: dict, updates: dict) -> dict:
+def apply_flat_instrument_patch_to_profiles(cfg: dict, updates: dict, *, registry=None) -> dict:
     """Mirror legacy flat instrument updates into the active host profile."""
-    out = settings_with_instrument_profiles(cfg)
+    reg = registry or _instrument_registry
+    out = settings_with_instrument_profiles(cfg, registry=reg)
     if not any(k in updates for k in ("instrument", "string_count", "tuning", "reference_pitch", "pathway")):
         return out
-    active = active_profile_id(out.get("active_instrument_profile"))
+    active = active_profile_id(out.get("active_instrument_profile"), registry=reg)
     if "instrument" in updates:
-        active = "bass" if updates["instrument"] == "bass" else "guitar-lead"
+        active = _default_profile_id_for_instrument(updates["instrument"], reg)
         out["active_instrument_profile"] = active
     current = dict(out["instrument_profiles"][active])
 
     if "instrument" in updates:
         current["instrument"] = updates["instrument"]
         if "string_count" not in updates:
-            current["string_count"] = 4 if updates["instrument"] == "bass" else 6
+            inst_def = reg.get(updates["instrument"]) if reg else None
+            if inst_def:
+                current["string_count"] = inst_def.get("default_string_count", 0)
+            else:
+                current["string_count"] = 4 if updates["instrument"] == "bass" else 6
     if "string_count" in updates:
         current["string_count"] = updates["string_count"]
     if "reference_pitch" in updates:
@@ -399,11 +536,14 @@ def apply_flat_instrument_patch_to_profiles(cfg: dict, updates: dict) -> dict:
     if "tuning" in updates:
         current["tuning"] = updates["tuning"]
     else:
-        key = instrument_key(current["instrument"], current["string_count"])
-        if _valid_tuning_for_key(key, current.get("tuning")) is None:
-            current["tuning"] = "Standard"
+        inst_def = reg.get(current["instrument"]) if reg else None
+        is_str = (inst_def is not None and inst_def.get("kind") == "stringed") or current["instrument"] in ("guitar", "bass")
+        if is_str:
+            key = instrument_key(current["instrument"], current["string_count"])
+            if _valid_tuning_for_key(key, current.get("tuning"), registry=reg) is None:
+                current["tuning"] = "Standard"
 
-    profile, error = normalize_instrument_profile(active, current)
+    profile, error = normalize_instrument_profile(active, current, registry=reg)
     if error:
         raise ValueError(error)
     out["instrument_profiles"][active] = profile

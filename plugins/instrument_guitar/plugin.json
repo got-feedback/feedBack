@@ -1,0 +1,72 @@
+{
+  "id": "instrument_guitar",
+  "name": "Guitar",
+  "version": "1.0.0",
+  "type": "instrument",
+  "bundled": true,
+  "icon": "assets/icon.svg",
+  "instrument": {
+    "id": "guitar",
+    "label": "Guitar",
+    "kind": "stringed",
+    "string_counts": [6, 7, 8],
+    "default_string_count": 6,
+    "reference_pitch": 440.0,
+    "detect_strategy": "pitch",
+    "standard_tunings": {
+      "6": [40, 45, 50, 55, 59, 64],
+      "7": [35, 40, 45, 50, 55, 59, 64],
+      "8": [30, 35, 40, 45, 50, 55, 59, 64]
+    },
+    "tunings": {
+      "6": {
+        "Standard":    [ 0,  0,  0,  0,  0,  0],
+        "Eb Standard": [-1, -1, -1, -1, -1, -1],
+        "D Standard":  [-2, -2, -2, -2, -2, -2],
+        "C# Standard": [-3, -3, -3, -3, -3, -3],
+        "C Standard":  [-4, -4, -4, -4, -4, -4],
+        "Drop D":      [-2,  0,  0,  0,  0,  0],
+        "Drop C":      [-4, -2, -2, -2, -2, -2],
+        "Drop B":      [-5, -3, -3, -3, -3, -3],
+        "Drop A":      [-7, -5, -5, -5, -5, -5],
+        "Drop Ab":     [-8, -6, -6, -6, -6, -6],
+        "Open G":      [-2,  0,  0,  0,  0, -2],
+        "Open D":      [-2,  0,  0, -1, -2, -2],
+        "DADGAD":      [-2,  0,  0,  0, -2, -2],
+        "Open E":      [ 0,  2,  2,  1,  0,  0]
+      },
+      "7": {
+        "Standard":    [ 0,  0,  0,  0,  0,  0,  0],
+        "Bb Standard": [-1, -1, -1, -1, -1, -1, -1],
+        "A Standard":  [-2, -2, -2, -2, -2, -2, -2],
+        "G Standard":  [-4, -4, -4, -4, -4, -4, -4],
+        "Drop A":      [-2,  0,  0,  0,  0,  0,  0],
+        "Drop G":      [-4, -2, -2, -2, -2, -2, -2],
+        "Drop F#":     [-5, -3, -3, -3, -3, -3, -3]
+      },
+      "8": {
+        "Standard":       [ 0,  0,  0,  0,  0,  0,  0,  0],
+        "Drop E":         [-2,  0,  0,  0,  0,  0,  0,  0],
+        "Drop A + Drop E":[-2, -2,  0,  0,  0,  0,  0,  0],
+        "E Standard":     [-2, -2, -2, -2, -2, -2, -2, -2],
+        "Eb Standard":    [-3, -3, -3, -3, -3, -3, -3, -3],
+        "Drop D":         [-4, -2, -2, -2, -2, -2, -2, -2]
+      }
+    },
+    "roles": [
+      {
+        "id": "lead",
+        "label": "Lead",
+        "arrangement_flags": ["path_lead"],
+        "arrangement_names": ["Lead", "Lead Guitar"],
+        "default": true
+      },
+      {
+        "id": "rhythm",
+        "label": "Rhythm",
+        "arrangement_flags": ["path_rhythm"],
+        "arrangement_names": ["Rhythm", "Rhythm Guitar"]
+      }
+    ]
+  }
+}

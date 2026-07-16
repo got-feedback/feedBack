@@ -138,6 +138,7 @@ _SLOTS = frozenset({
     "default_settings",
     "kick_scan", "invalidate_song_caches", "stat_for_cache", "scan_status",
     "server_root",
+    "instrument_registry",
 })
 
 

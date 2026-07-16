@@ -212,6 +212,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine (`app.js`, `highway.js`, `playSong`, `showScreen`, the capability registry).
 
 ### Fixed
+- **3D Highway: the lane stops at the hit line** (#991) — the highway lane, its
+  dividers, and the fret boundary extension lines ran `BEHIND` seconds *past* the
+  hit line toward the player. Nothing is ever drawn in that strip (notes and chord
+  frames clamp to `Math.min(0, dZ(dt))`), so it read as lane with no notes on it.
+  The floor geometry now ends at the hit line; its far edge is unchanged, still
+  `-AHEAD*TS` at the note horizon.
 - **Career passports review polish** — the passport tabs and book overlay carry
   proper ARIA semantics (`aria-selected`/`aria-controls`/`tabpanel`;
   `role="dialog"` + `aria-modal` with focus moved to the close button on open

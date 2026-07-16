@@ -553,7 +553,10 @@
                 var aColor = aAcc != null
                     ? (aAcc >= MASTERY_ACCURACY ? 'text-fb-good' : aAcc >= 0.5 ? 'text-fb-mid' : 'text-fb-low')
                     : 'text-gray-600';
-                items += '<div class="flex items-center gap-1 px-2 py-0.5"><span class="text-xs text-fb-textDim flex-1">' + esc(aName) + ' &middot; ' + esc(songTuning) + '</span><span class="text-xs font-bold ' + aColor + '">' + aLabel + '</span></div>';
+                // Only show tuning for pitched instruments (not drums/keys)
+                var isPitched = _isPitchedArrangement(aName);
+                var tuningPart = isPitched && songTuning ? ' &middot; ' + esc(songTuning) : '';
+                items += '<div class="flex items-center gap-1 px-2 py-0.5"><span class="text-xs text-fb-textDim flex-1">' + esc(aName) + tuningPart + '</span><span class="text-xs font-bold ' + aColor + '">' + aLabel + '</span></div>';
             }
             hoverOverlay = '<div class="opacity-0 group-hover:opacity-100 transition" style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.8);border-radius:0 0 0.5rem 0.5rem;z-index:20;pointer-events:none">' + items + '</div>';
         }
@@ -595,6 +598,25 @@
             }
         }
         return '●';
+    }
+
+    function _isPitchedArrangement(arrName) {
+        var insts = window.feedBack && window.feedBack._instruments;
+        if (!Array.isArray(insts)) return true;  // unknown → assume pitched
+        var name = (arrName || '').toLowerCase();
+        for (var i = 0; i < insts.length; i++) {
+            var inst = insts[i];
+            var roles = inst.roles || [];
+            for (var j = 0; j < roles.length; j++) {
+                var r = roles[j];
+                if (name === r.label.toLowerCase()) return inst.detect_strategy === 'pitch';
+                var names = r.arrangement_names || [];
+                for (var k = 0; k < names.length; k++) {
+                    if (name === names[k]) return inst.detect_strategy === 'pitch';
+                }
+            }
+        }
+        return true;  // unknown → assume pitched
     }
 
     // ── Metadata-refresh per-tile state (the "Refresh Metadata" batch) ─────────

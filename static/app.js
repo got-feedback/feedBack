@@ -2319,11 +2319,14 @@ configureHost({
     currentFilename: () => currentFilename,
 });
 
+// `esc` is here for out-of-tree plugins only: their screen.js loads as a classic
+// script and called esc() back when app.js was one too and it was an implicit
+// global. Nothing in core reads window.esc — import it from ./js/dom.js instead.
 Object.assign(window, {
     _confirmDialog, _getArrangementNamingMode, _libraryLocalFilename, _librarySongArtUrl,
     _librarySongId, _onHeaderClick, _onNamingModeChange, _trapFocusInModal,
     changeArrangement, checkPluginUpdates, clearLibFilters, clearLoop,
-    deleteSelectedLoop, exportDiagnostics, exportSettings, filterFavorites,
+    deleteSelectedLoop, esc, exportDiagnostics, exportSettings, filterFavorites,
     filterLibrary, fullRescanLibrary, goFavPage, handleSliderInput,
     hideScanBanner, importSettings, loadPlugins, loadSavedLoop,
     loadSettings, onSectionPracticeModeChange, openEditModal, persistSetting,

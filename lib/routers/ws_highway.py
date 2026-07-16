@@ -242,6 +242,23 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
                     _cfg = json.loads(config_file.read_text(encoding="utf-8"))
                     pref = _cfg.get("default_arrangement", "")
                     sel_instrument = (_cfg.get("instrument", "") or "")
+                    # Also read the active profile's role as the preferred arrangement
+                    # label (e.g. "Lead", "Rhythm"). Takes precedence over legacy
+                    # default_arrangement when both are present.
+                    profiles = _cfg.get("instrument_profiles") or {}
+                    active_pid = _cfg.get("active_instrument_profile", "")
+                    active_profile = profiles.get(active_pid) if active_pid else None
+                    if active_profile and active_profile.get("instrument") == sel_instrument:
+                        role_label = active_profile.get("role")
+                        if role_label:
+                            # Map profile role id to arrangement label via registry
+                            reg = getattr(appstate, "instrument_registry", None)
+                            inst_def = reg.get(sel_instrument) if reg else None
+                            if inst_def:
+                                for role in inst_def.get("roles", []):
+                                    if role.get("id") == role_label:
+                                        pref = role.get("label", pref)
+                                        break
                 except Exception:
                     pass
             # Instrument routing: load the part that matches the selected instrument so

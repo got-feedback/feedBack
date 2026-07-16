@@ -552,6 +552,16 @@
                 pill('strings', v, v + '', settings.string_count === v)).join('')) : '') +
             (isKeyboard ? instRow('Keys', (currentInst.key_counts || [25, 49, 61, 88]).map((v) =>
                 pill('key_count', v, v + '', (settings.key_count || currentInst.default_key_count || 88) === v)).join('')) : '') +
+            // Role selector — shown when the instrument has 2+ roles.
+            // Clicking a role switches the active profile so arrangement routing
+            // and mastery tracking know which part to target.
+            ((currentInst && currentInst.roles && currentInst.roles.length > 1)
+                ? instRow('Role', currentInst.roles.map((r) => {
+                    var profileId = settings.instrument + '-' + r.id;
+                    var isActive = settings.active_instrument_profile === profileId;
+                    return pill('role', profileId, r.label, isActive);
+                }).join(''))
+                : '') +
             // Handedness only for stringed instruments where frets get mirrored.
             (isStringed ? instRow('Handedness', pill('hand', 'right', 'Right', !_leftyPref()) +
                 pill('hand', 'left', 'Left', _leftyPref())) : '') +
@@ -627,6 +637,11 @@
         menu.querySelectorAll('[data-pill="key_count"]').forEach((b) => b.addEventListener('click', async () => {
             const newKc = Number(b.getAttribute('data-val'));
             await saveSettings({ key_count: newKc });
+            renderInstrument(); keepOpen();
+        }));
+        menu.querySelectorAll('[data-pill="role"]').forEach((b) => b.addEventListener('click', async () => {
+            const profileId = b.getAttribute('data-val');
+            await saveSettings({ active_instrument_profile: profileId });
             renderInstrument(); keepOpen();
         }));
         menu.querySelectorAll('[data-pill="hand"]').forEach((b) => b.addEventListener('click', () => {

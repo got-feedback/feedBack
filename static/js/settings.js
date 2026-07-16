@@ -283,6 +283,23 @@ export function setupAppUpdates() {
                     statusEl.textContent = extra ? `${extra} · ${errMsg}` : errMsg;
                     return;
                 }
+                // Surface the live activity states explicitly so the panel says
+                // what it's doing — including when it (re)loads mid-download,
+                // where only getStatus (not the one-shot event listeners) can
+                // tell us we're downloading.
+                if (s.status === 'checking') {
+                    statusEl.textContent = 'Checking for updates…';
+                    return;
+                }
+                if (s.status === 'downloading') {
+                    const pct = typeof s.percent === 'number' ? s.percent : null;
+                    statusEl.textContent = pct === null ? 'Update available — downloading…' : `Downloading update… ${pct}%`;
+                    return;
+                }
+                if (s.status === 'downloaded') {
+                    statusEl.textContent = 'Update ready — restart to apply.';
+                    return;
+                }
                 const parts = [
                     `Version ${s.currentVersion || '?'}`,
                     `channel ${s.channel || channelSelect.value}`,
@@ -382,6 +399,9 @@ export function setupAppUpdates() {
                 const pct = typeof p?.percent === 'number' ? p.percent : null;
                 statusEl.textContent = pct === null ? 'Downloading update…' : `Downloading update… ${pct}%`;
             });
+        }
+        if (typeof updateApi.onDownloaded === 'function') {
+            updateApi.onDownloaded(() => { statusEl.textContent = 'Update ready — restart to apply.'; });
         }
 
         _appUpdatesWired = true;

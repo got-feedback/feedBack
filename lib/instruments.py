@@ -148,8 +148,8 @@ class InstrumentRegistry:
             for sc in string_counts:
                 key = str(sc)
                 sc_tunings = raw_tunes.get(key) or {}
-                if "Standard" not in sc_tunings:
-                    raise ValueError(f"instrument.tunings[{key}] must include 'Standard'")
+                if "E Standard" not in sc_tunings:
+                    raise ValueError(f"instrument.tunings[{key}] must include 'E Standard'")
                 resolved = {}
                 for t_name, t_offsets in sc_tunings.items():
                     resolved[_validate_str(t_name, f"tunings[{key}].name")] = _validate_offset_list(

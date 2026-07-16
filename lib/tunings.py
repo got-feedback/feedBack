@@ -73,7 +73,7 @@ def _build_profile_defaults(registry=None):
                     "instrument": inst["id"],
                     "role": role["id"],
                     "string_count": inst.get("default_string_count", 0),
-                    "tuning": "Standard",
+                    "tuning": "E Standard",
                     "reference_pitch": inst.get("reference_pitch", DEFAULT_REFERENCE_PITCH),
                     "pathway": "songs",
                     "default_role": r_default,
@@ -277,7 +277,7 @@ PROFILE_DEFAULTS: dict[str, dict] = {
         "instrument": "guitar",
         "role": "lead",
         "string_count": 6,
-        "tuning": "Standard",
+        "tuning": "E Standard",
         "reference_pitch": DEFAULT_REFERENCE_PITCH,
         "pathway": "songs",
     },
@@ -287,7 +287,7 @@ PROFILE_DEFAULTS: dict[str, dict] = {
         "instrument": "guitar",
         "role": "rhythm",
         "string_count": 6,
-        "tuning": "Standard",
+        "tuning": "E Standard",
         "reference_pitch": DEFAULT_REFERENCE_PITCH,
         "pathway": "songs",
     },
@@ -297,7 +297,7 @@ PROFILE_DEFAULTS: dict[str, dict] = {
         "instrument": "bass",
         "role": "bass",
         "string_count": 4,
-        "tuning": "Standard",
+        "tuning": "E Standard",
         "reference_pitch": DEFAULT_REFERENCE_PITCH,
         "pathway": "songs",
     },
@@ -332,14 +332,12 @@ def _valid_tuning_for_key(key: str, tuning, *, registry=None):
             return None
         if tuning in preset_midis.get(key, {}):
             return tuning
-        # A name that IS a built-in preset for a different key is a misapplied
-        # built-in (e.g. "Drop D" on a 5-string bass, whose low string is B) —
-        # reject it. A name unknown to every built-in table is a provider/custom
-        # tuning (the tuner plugin's, exposed via /api/tunings) that this pure
-        # layer can't resolve — accept it so settings round-trip; the provider
-        # owns its validity.
-        if any(tuning in names for names in preset_midis.values()):
-            return None
+        # Accept any named tuning not in our presets as a provider/custom
+        # tuning — the registry (and tuning providers) own validity now.
+        # Previously we rejected names that existed in a different key as
+        # misapplied built-ins, but with instruments-as-plugins the same
+        # name (e.g. "E Standard") can legitimately exist for different
+        # instrument keys (guitar-6 vs guitar-8).
         return tuning
     if isinstance(tuning, list):
         expected = len(standard_midis.get(key, []))
@@ -461,7 +459,7 @@ def profile_from_legacy_settings(cfg: dict, *, registry=None) -> dict:
         if key not in standard_midis:
             sc = fallback_sc
             key = instrument_key(instrument, sc)
-        tuning = _valid_tuning_for_key(key, cfg.get("tuning", "Standard"), registry=registry) or "Standard"
+        tuning = _valid_tuning_for_key(key, cfg.get("tuning", "E Standard"), registry=registry) or "E Standard"
     else:
         sc = 0
         tuning = ""
@@ -541,7 +539,7 @@ def apply_flat_instrument_patch_to_profiles(cfg: dict, updates: dict, *, registr
         if is_str:
             key = instrument_key(current["instrument"], current["string_count"])
             if _valid_tuning_for_key(key, current.get("tuning"), registry=reg) is None:
-                current["tuning"] = "Standard"
+                current["tuning"] = "E Standard"
 
     profile, error = normalize_instrument_profile(active, current, registry=reg)
     if error:

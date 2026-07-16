@@ -209,7 +209,7 @@ export function setupWindowOptions() {
     }
 }
 
-export const APP_UPDATE_CHANNELS = ['stable', 'rc', 'beta', 'alpha'];
+export const APP_UPDATE_CHANNELS = ['stable', 'rc', 'beta', 'alpha', 'nightly'];
 
 export let _appUpdatesWired = false;
 
@@ -245,11 +245,13 @@ export function setupAppUpdates() {
     const stored = APP_UPDATE_CHANNELS.includes(storedRaw) ? storedRaw : 'stable';
     channelSelect.value = stored;
 
-    const isLinux = window.feedBackDesktop?.platform === 'linux';
-
     function showLinuxFallback(message) {
+        // Deliberately leaves channelSelect ENABLED: on Linux "unsupported"
+        // usually just means "the channel isn't Nightly yet", and the dropdown
+        // is the only way to switch to Nightly. Disabling it would trap the
+        // user on whatever channel they booted with. Only the check button and
+        // the note reflect the unsupported state.
         if (linuxNote) linuxNote.classList.remove('hidden');
-        channelSelect.disabled = true;
         checkBtn.disabled = true;
         statusEl.textContent = message || 'Auto-update is not available on this platform.';
     }
@@ -269,9 +271,13 @@ export function setupAppUpdates() {
             void Promise.resolve(updateApi.getStatus()).then((s) => {
                 if (!s) { statusEl.textContent = extra || 'Updater status unavailable.'; return; }
                 if (s.status === 'unsupported' || s.platform === 'linux') {
-                    showLinuxFallback('Auto-update is not available on Linux.');
+                    showLinuxFallback('Auto-update requires the AppImage build on the Nightly channel.');
                     return;
                 }
+                // Status is healthy for the current channel — clear any
+                // "unsupported" UI left over from a prior channel selection.
+                if (linuxNote) linuxNote.classList.add('hidden');
+                checkBtn.disabled = false;
                 if (s.status === 'error') {
                     const errMsg = s.message ? `Update error: ${s.message}` : 'Update check failed.';
                     statusEl.textContent = extra ? `${extra} · ${errMsg}` : errMsg;
@@ -293,24 +299,10 @@ export function setupAppUpdates() {
         }
     }
 
-    if (isLinux) {
-        showLinuxFallback('Auto-update is not available on Linux.');
-        // Keep main informed of the persisted channel even on Linux so
-        // cross-platform reasoning about the channel stays consistent.
-        // setChannel() may return a Promise — chain .catch() so a rejected
-        // promise doesn't surface as an unhandled rejection.
-        try {
-            void Promise.resolve(updateApi.setChannel(stored)).catch((e) => {
-                console.warn('[updater] setChannel(linux) failed:', e);
-            });
-        } catch (e) {
-            console.warn('[updater] setChannel(linux) threw:', e);
-        }
-        return;
-    }
-
     // Inform main of the persisted channel on each load. setChannel() on
-    // main is idempotent when the channel already matches.
+    // main is idempotent when the channel already matches. On Linux this is
+    // how the panel reaches a supported state: booting on 'stable' reports
+    // unsupported, and switching the dropdown to Nightly re-checks below.
     try {
         void Promise.resolve(updateApi.setChannel(stored)).catch((e) => {
             console.warn('[updater] setChannel(initial) failed:', e);
@@ -359,7 +351,7 @@ export function setupAppUpdates() {
                         break;
                     case 'unsupported':
                         reEnableBtn = false;
-                        showLinuxFallback('Auto-update is not available on Linux.');
+                        showLinuxFallback('Auto-update requires the AppImage build on the Nightly channel.');
                         return;
                     case 'error':
                         msg = `Update check failed${result?.message ? `: ${result.message}` : '.'}`;

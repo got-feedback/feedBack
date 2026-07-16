@@ -368,6 +368,22 @@ export function setupAppUpdates() {
             }
         });
 
+        // Download feedback. The Linux AppImage self-update pulls a full
+        // ~1.5GB image in the main process, so without these the status would
+        // sit at "Checking for updates…" for minutes with no sign of life.
+        // onAvailable fires when the download starts; onProgress ticks the
+        // percentage. Guarded individually — an older desktop bridge may not
+        // expose them.
+        if (typeof updateApi.onAvailable === 'function') {
+            updateApi.onAvailable(() => { statusEl.textContent = 'Downloading update…'; });
+        }
+        if (typeof updateApi.onProgress === 'function') {
+            updateApi.onProgress((p) => {
+                const pct = typeof p?.percent === 'number' ? p.percent : null;
+                statusEl.textContent = pct === null ? 'Downloading update…' : `Downloading update… ${pct}%`;
+            });
+        }
+
         _appUpdatesWired = true;
     }
 

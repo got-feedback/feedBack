@@ -561,8 +561,8 @@
         if (hasMatchingArrangement) {
             acc = _perArrangementAccuracy(filename, arrIdx);
         }
-        // Fall back to song-wide max only when no auto-filter is active.
-        if (acc == null && !state.filters.arr_has.length) acc = state.accuracy[filename];
+        // Never fall back to song-wide max — that would attribute a
+        // different role's score to the currently selected role.
         var hasArr = song && song.arrangements && song.arrangements.length > 0;
         if (acc == null && !hasArr) return '';
 

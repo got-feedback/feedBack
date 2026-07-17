@@ -260,7 +260,6 @@
                 '<input type="text" data-add-tuning-offsets="' + esc(inst.id) + '" data-sc="' + esc(scKey) + '" placeholder="Offsets e.g. 0,0,0,0,0,0" class="bg-gray-800/50 border border-gray-700 rounded-md px-1.5 py-0.5 text-[0.625rem] text-fb-text outline-none w-44 focus:border-fb-primary font-mono">' +
                 '<button type="button" data-add-tuning-btn="' + esc(inst.id) + '" data-sc="' + esc(scKey) + '" class="bg-fb-primary/20 hover:bg-fb-primary/30 text-fb-primary text-[0.625rem] px-1.5 py-0.5 rounded-md transition">Add</button>' +
                 '</div></div>';
-        }
 
         html += '</div>';
         return html;

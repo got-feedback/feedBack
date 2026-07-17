@@ -8,6 +8,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Instruments as plugins** — Guitar, Bass, Drums, and Keys are now defined by
+  bundled instrument plugins (`plugins/instrument_<name>/plugin.json`) instead
+  of hardcoded checks across ~15 files. Each plugin declares its own tunings
+  (as semitone offsets from standard), string/key counts, arrangement role
+  mappings, detection strategy, and icon. Community instruments drop in as
+  new `type: "instrument"` plugins with zero code changes.
+- **Per-role mastery** — the library grid now shows mastery % for the currently
+  selected instrument *role* (Lead, Rhythm, Bass, etc.) instead of the song-wide
+  maximum. Selecting Guitar → Rhythm shows your Rhythm scores, not Lead.
+- **Hover overlay on library cards** — hovering album art reveals all
+  arrangements with their individual accuracy percentages (or "—" for
+  unplayed, "n/a" when the selected role has no matching arrangement).
+- **Instrument selector in topbar** now dynamically lists all registered
+  instruments. Non-stringed instruments (Drums, Keys) hide string-count,
+  tuning, handedness, and reference-pitch controls. Keyboard instruments show
+  a key count selector (25/49/61/88).
+- **Per-instrument role selection** — multi-role instruments (Guitar) show
+  Lead/Rhythm pills in the selector. Switching roles changes which arrangement
+  the highway opens and which mastery % the library displays.
+- **Per-instrument preferred highway** — Settings → Instruments lets you assign
+  a preferred note highway per instrument. Changing instruments auto-selects it.
+- **Instrument settings tab** (Settings → Instruments) with collapsible cards
+  showing roles, editable arrangement name patterns, string counts, custom
+  tuning presets, and per-instrument preferred highway.
+- **Auto-filter by instrument** — the Song Library auto-filters to arrangements
+  matching the current instrument. Clearing the filter disables it; switching
+  instruments re-enables it.
+- **GET /api/instruments** endpoint and `lib/instruments.py` registry.
+- **Per-instrument icons** — each instrument shows its own SVG icon in the
+  topbar selector (loaded from the plugin's `assets/icon.svg`).
+- **Tuner shows tuning name** — the tuner badge now displays the current tuning
+  name (e.g. "E Std") in addition to the note letter and Hz.
+- **Score attribution fix** — scores now record the server-resolved arrangement
+  index (from `song:ready`) instead of defaulting to 0 when clicking the main
+  card (not an arrangement chip).
+
+### Changed
+- **Standard tuning renamed** — the all-zero-offset tuning is now named
+  "E Standard" (guitar-6, bass-4), "B Standard" (guitar-7, bass-5/6), or
+  "F# Standard" (guitar-8) instead of the ambiguous "Standard".
+- **Tuning chip** moved to the top-left card corner (flush, no padding offset).
+- **Mastery badge** now has a colored left/top border matching its level
+  (green/amber/red) with a translucent fill.
+- **Arrangement filter pills** in the library drawer are now derived from the
+  instrument registry's role labels instead of a hardcoded list.
+- **Settings validation** accepts any registered instrument ID, not just
+  "guitar" or "bass". Non-stringed instruments skip string-count/tuning checks.
+- **Working-tuning capability** now reads instrument definitions from the
+  registry for normalization.
+- **Arrangement routing** (`ws_highway.py`) uses role flags and arrangement
+  names from the instrument registry instead of hardcoded bass detection.
+- **Progression** `instrument_for_arrangement` accepts a `registry` parameter
+  and returns `None` for unrecognized arrangements instead of defaulting to
+  "guitar".
+- **Icons** — instrument selector card shows per-instrument icons instead of
+  a single hardcoded guitar SVG.
+- **Pathway removed** from the instrument selector (unused feature).
+
+### Fixed
+- **Tuner sync** — switching instruments in the selector now correctly pushes
+  the new instrument key to the tuner plugin.
+- **SQL error** in `arrangement_accuracy_map` when `_existing_song_filter` is
+  empty (double-AND).
+- **Default arrangement dropdown** removed from Settings → Gameplay (moved to
+  the instrument selector role pills).
+
+### Added
 - **Gold tier (career passports)** — an earned badge turns **gold** when
   Virtuoso verifies an improvised jam in the passport's style (the
   `gold_improv` artifact relays with the drill snapshot; a genre inherits its

@@ -238,22 +238,8 @@
                     if (std && entry.offsets && std.length === entry.offsets.length) {
                         for (var oi = 0; oi < entry.offsets.length; oi++) {
                             midis.push(std[oi] + entry.offsets[oi]);
-        // Preferred highway
-        panel.querySelectorAll('[data-highway]').forEach(function (sel) {
-            sel.addEventListener('change', function () {
-                var instId = sel.getAttribute('data-highway');
-                var over = getOverrides(instId);
-                var val = sel.value;
-                if (val) {
-                    over.preferred_highway = val;
-                } else {
-                    delete over.preferred_highway;
-                }
-                saveOverridesDebounced();
-                renderInstruments();
-            });
-        });
-    }
+                            }
+                        }
                     }
                     var noteLabel = midis.length ? midis.map(function (m) { return midiToNote(m); }).join(' ') : '';
                     var offStr = entry.offsets ? entry.offsets.map(function (o) { return (o >= 0 ? '+' : '') + o; }).join(',') : '';
@@ -400,6 +386,21 @@
                     delete over.custom_tunings[scKey][name];
                     saveOverridesDebounced();
                 }
+                renderInstruments();
+            });
+        });
+        // Preferred highway
+        panel.querySelectorAll('[data-highway]').forEach(function (sel) {
+            sel.addEventListener('change', function () {
+                var instId = sel.getAttribute('data-highway');
+                var over = getOverrides(instId);
+                var val = sel.value;
+                if (val) {
+                    over.preferred_highway = val;
+                } else {
+                    delete over.preferred_highway;
+                }
+                saveOverridesDebounced();
                 renderInstruments();
             });
         });

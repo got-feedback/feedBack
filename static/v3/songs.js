@@ -500,11 +500,39 @@
         // This is the arrangement the card would open for the current instrument.
         var want = state.filters.arr_has;
         if (!want.length) return null;
+        // Resolve the active role from the current instrument profile
+        // so we show mastery for the user's selected role (Lead/Rhythm).
+        var activeProfileId = (sm && sm._activeInstrumentProfile) || '';
+        var activeRoleLabel = null;
+        if (activeProfileId) {
+            var insts = window.feedBack && window.feedBack._instruments;
+            if (Array.isArray(insts)) {
+                for (var ii = 0; ii < insts.length; ii++) {
+                    var ir = insts[ii].roles || [];
+                    for (var ij = 0; ij < ir.length; ij++) {
+                        if (activeProfileId === insts[ii].id + '-' + ir[ij].id) {
+                            activeRoleLabel = ir[ij].label;
+                            break;
+                        }
+                    }
+                    if (activeRoleLabel) break;
+                }
+            }
+        }
+        // First pass: prefer arrangement matching the active role exactly.
+        if (activeRoleLabel) {
+            for (var i = 0; i < song.arrangements.length; i++) {
+                var a = song.arrangements[i];
+                var sn = a.smart_name || a.name || '';
+                if (sn === activeRoleLabel) return a.index != null ? a.index : i;
+            }
+        }
+        // Fallback: first arrangement matching any auto-filter value.
         for (var i = 0; i < song.arrangements.length; i++) {
-            var a = song.arrangements[i];
-            var sn = a.smart_name || a.name || '';
+            var a2 = song.arrangements[i];
+            var sn2 = a2.smart_name || a2.name || '';
             for (var j = 0; j < want.length; j++) {
-                if (sn === want[j]) return a.index != null ? a.index : i;
+                if (sn2 === want[j]) return a2.index != null ? a2.index : i;
             }
         }
         return null;

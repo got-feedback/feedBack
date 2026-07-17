@@ -274,6 +274,8 @@
         if (!accepted) return false;
         Object.assign(settings, patch);
         syncLocalProfilePatch(patch);
+        // Expose active profile so the library can resolve per-role accuracy.
+        if (sm) sm._activeInstrumentProfile = settings.active_instrument_profile;
         if (sm && sm.emit) sm.emit('instrument:changed', {
             instrument: settings.instrument, stringCount: settings.string_count, tuning: settings.tuning, pathway: settings.pathway,
         });

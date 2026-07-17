@@ -188,6 +188,19 @@
         // Arrangement switch restarts scoring — treat as a fresh session.
         reset(d.filename || (cur && cur.filename), d.arrangement == null ? 0 : Number(d.arrangement));
     });
+    // When the server auto-resolves the arrangement (e.g. instrument routing),
+    // the song:loading event fires with arrangement=null before the WebSocket
+    // connects. Once the song is ready, read the resolved arrangement from the
+    // highway's songInfo and update cur so scores are attributed correctly.
+    sm.on('song:ready', () => {
+        if (!cur) return;
+        var hw = window.highway;
+        if (!hw || typeof hw.getSongInfo !== 'function') return;
+        var info = hw.getSongInfo();
+        if (info && Number.isFinite(info.arrangement_index)) {
+            cur.arrangement = info.arrangement_index;
+        }
+    });
 
     // ── Per-note tally (from the note_detect plugin) ──────────────────────--
     sm.on('note:hit', () => {

@@ -248,6 +248,15 @@ export function setupAppUpdates() {
     const stored = APP_UPDATE_CHANNELS.includes(storedRaw) ? storedRaw : 'stable';
     channelSelect.value = stored;
 
+    // Diagnostic: every entry into this function, with whether the one-time
+    // sync gate has already fired. _appUpdatesWired is a MODULE-level `let`,
+    // so it only resets to false on a genuine fresh evaluation of this
+    // script (a real page reload/navigation) — not on loadSettings() simply
+    // being called again within the same page. A second "wired=false" in one
+    // exported log is direct proof of a reload; a series of "wired=true"
+    // entries proves it's just repeated Settings-panel visits (harmless).
+    console.log('[update-diag] setupAppUpdates() entered', JSON.stringify({ wired: _appUpdatesWired, stored }));
+
     function showLinuxFallback(message) {
         // Deliberately leaves channelSelect ENABLED: on Linux "unsupported"
         // usually just means "the channel isn't Nightly yet", and the dropdown

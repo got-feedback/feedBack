@@ -3309,6 +3309,21 @@ class MetadataDB:
     # parameters are bound, but capping the input space is still cheap
     # defense-in-depth (see feedBack#129).
     _ALLOWED_ARRANGEMENT_NAMES = {"Lead", "Rhythm", "Bass", "Combo"}
+
+    def _registry_arrangement_names(self) -> set:
+        """Arrangement names from registered instruments (Drums, Keys, etc.),
+        to supplement the hardcoded _ALLOWED_ARRANGEMENT_NAMES set."""
+        import appstate
+        reg = getattr(appstate, "instrument_registry", None)
+        if not reg:
+            return set()
+        names = set()
+        for inst in reg.get_all():
+            for role in inst.get("roles", []):
+                label = role.get("label")
+                if label:
+                    names.add(label)
+        return names
     # Per-smart-type list of (sql_op, sql_param) pairs appended to the SQL
     # name-fallback branch (key-absent smart_name). Covers legacy raw names
     # and load_song()'s synthesised display names that map to each smart type.
@@ -3490,7 +3505,9 @@ class MetadataDB:
         # ('Lead', 'Alt. Lead', 'Alt. Lead N', 'Bonus Lead', 'Bonus Lead N').
         # Falls back to matching `name` for older rows without smart_name.
         # Legacy mode: matches `name` directly (original behaviour).
-        arr_has = [a for a in (arrangements_has or []) if a in self._ALLOWED_ARRANGEMENT_NAMES]
+        arr_has = [a for a in (arrangements_has or [])
+                     if a in self._ALLOWED_ARRANGEMENT_NAMES
+                     or a in self._registry_arrangement_names()]
         if arr_has and naming_mode == "smart":
             # Smart mode subsumes "Combo" into "Lead" — normalize here so a
             # hand-rolled API client matches the client-side behaviour and
@@ -3541,7 +3558,9 @@ class MetadataDB:
                 where += (f" AND EXISTS (SELECT 1 FROM json_each({alias}.arrangements) "
                           f"WHERE json_extract(value, '$.name') IN ({placeholders}))")
                 params += arr_has
-        arr_lacks = [a for a in (arrangements_lacks or []) if a in self._ALLOWED_ARRANGEMENT_NAMES]
+        arr_lacks = [a for a in (arrangements_lacks or [])
+                      if a in self._ALLOWED_ARRANGEMENT_NAMES
+                      or a in self._registry_arrangement_names()]
         if arr_lacks and naming_mode == "smart":
             arr_lacks = list(dict.fromkeys("Lead" if a == "Combo" else a for a in arr_lacks))
         if arr_lacks:

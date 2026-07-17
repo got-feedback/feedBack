@@ -1569,6 +1569,7 @@ if (window.feedBack) {
         } else if (sel) {
             _maybeShowNotationViewHint(sel.value);
         }
+    });
 }
 
 

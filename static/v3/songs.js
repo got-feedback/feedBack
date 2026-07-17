@@ -3660,6 +3660,7 @@
                     // Respect the auto-filter toggle in Gameplay settings.
                     var autoFilter = sd.auto_filter_instrument !== false;
                     _autoFilterEnabled = autoFilter;
+                    console.log('auto-filter: initial render instrument=' + instId + ' enabled=' + autoFilter + ' raw=' + sd.auto_filter_instrument);
                     if (instId && autoFilter) _applyArrangementAutoFilter(instId);
                 }
             } catch (_) {}

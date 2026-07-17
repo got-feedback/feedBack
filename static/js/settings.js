@@ -396,16 +396,23 @@ export function setupAppUpdates() {
         }, 1500);
     }
 
-    // Inform main of the persisted channel on each load. setChannel() on
-    // main is idempotent when the channel already matches. On Linux this is
-    // how the panel reaches a supported state: booting on 'stable' reports
-    // unsupported, and switching the dropdown to Nightly re-checks below.
-    try {
-        void Promise.resolve(updateApi.setChannel(stored)).catch((e) => {
-            console.warn('[updater] setChannel(initial) failed:', e);
-        });
-    } catch (e) {
-        console.warn('[updater] setChannel(initial) threw:', e);
+    // Inform main of the persisted channel — but ONLY the first time this page
+    // wires up, not on every loadSettings() re-render. This used to run
+    // unconditionally on every call and was caught (via Export Diagnostics)
+    // stomping an in-flight check/download: a redundant setChannel() call
+    // mid-download bumps main's checkGeneration and resets progress state,
+    // so the download silently loses its ability to report completion even
+    // though the file swap itself still happens in the background. Once
+    // wired, the channel select's own 'change' handler is the only thing
+    // that needs to tell main about a channel switch.
+    if (!_appUpdatesWired) {
+        try {
+            void Promise.resolve(updateApi.setChannel(stored)).catch((e) => {
+                console.warn('[updater] setChannel(initial) failed:', e);
+            });
+        } catch (e) {
+            console.warn('[updater] setChannel(initial) threw:', e);
+        }
     }
 
     if (!_appUpdatesWired) {

@@ -123,6 +123,8 @@ export async function loadSettings() {
     if (showUpNextEl) showUpNextEl.checked = _showUpNextEnabled();
     const confirmExitEl = document.getElementById('setting-confirm-exit');
     if (confirmExitEl) confirmExitEl.checked = _exitConfirmEnabled();
+    const autoFilterEl = document.getElementById('setting-auto-filter-instrument');
+    if (autoFilterEl) autoFilterEl.checked = data.auto_filter_instrument !== false;
     // Restore master-difficulty slider from persisted value (defaults
     // to 100 when the key is absent — no behaviour change for users
     // who've never touched the slider).

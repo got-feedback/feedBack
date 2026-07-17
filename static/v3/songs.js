@@ -3657,7 +3657,10 @@
                 if (sr.ok) {
                     var sd = await sr.json();
                     var instId = sd && sd.instrument;
-                    if (instId) _applyArrangementAutoFilter(instId);
+                    // Respect the auto-filter toggle in Gameplay settings.
+                    var autoFilter = sd.auto_filter_instrument !== false;
+                    _autoFilterEnabled = autoFilter;
+                    if (instId && autoFilter) _applyArrangementAutoFilter(instId);
                 }
             } catch (_) {}
         }
@@ -4274,6 +4277,7 @@
         // Clears on manual arrangement filter change; re-applies on next
         // instrument switch.
         var _arrAutoInstrument = null;
+        var _autoFilterEnabled = true;     // mirror of auto_filter_instrument setting
 
         function _instrumentArrangementNames(instrumentId) {
             var insts = sm && sm._instruments;
@@ -4307,7 +4311,7 @@
         // on the next instrument switch.
         sm.on('instrument:changed', function (e) {
             var instId = e && e.detail && e.detail.instrument;
-            if (!instId) return;
+            if (!instId || !_autoFilterEnabled) return;
             if (_applyArrangementAutoFilter(instId)) {
                 reload();
                 renderDrawerIfOpen();

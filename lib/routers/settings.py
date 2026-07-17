@@ -161,6 +161,12 @@ def save_settings(data: dict):
             if not isinstance(raw, bool):
                 return {"error": "use_amp_sims must be a boolean"}
             updates["use_amp_sims"] = raw
+    if "auto_filter_instrument" in data:
+        raw = data["auto_filter_instrument"]
+        if raw is not None:
+            if not isinstance(raw, bool):
+                return {"error": "auto_filter_instrument must be a boolean"}
+            updates["auto_filter_instrument"] = raw
     if "enrich_enabled" in data:
         raw = data["enrich_enabled"]
         if raw is not None:

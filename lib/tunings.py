@@ -69,21 +69,49 @@ TUNING_PRESET_MIDIS: dict[str, dict[str, list[int]]] = {
         "Drop C": [24, 31, 36, 41],
         "BEAD": [23, 28, 33, 38],
     },
+    # 5- and 6-string basses are named off their ACTUAL lowest string (the low
+    # B), exactly like the 7-string guitar table above — not off the 4-string
+    # core. The old names (Eb/D/C#/C Standard) came from the band-level habit
+    # of saying "we're in D standard" (which describes the guitars); the
+    # bassist in that band is in A standard. They survive as aliases below so
+    # saved profiles migrate instead of being rejected.
     "bass-5": {
         "Standard": [23, 28, 33, 38, 43],
         "High C": [28, 33, 38, 43, 48],
-        "Eb Standard": [22, 27, 32, 37, 42],
-        "D Standard": [21, 26, 31, 36, 41],
-        "C# Standard": [20, 25, 30, 35, 40],
-        "C Standard": [19, 24, 29, 34, 39],
+        "Bb Standard": [22, 27, 32, 37, 42],
+        "A Standard": [21, 26, 31, 36, 41],
+        "G# Standard": [20, 25, 30, 35, 40],
+        "G Standard": [19, 24, 29, 34, 39],
         "Drop A": [21, 28, 33, 38, 43],
     },
     "bass-6": {
         "Standard": [23, 28, 33, 38, 43, 48],
-        "Eb Standard": [22, 27, 32, 37, 42, 47],
-        "D Standard": [21, 26, 31, 36, 41, 46],
-        "C# Standard": [20, 25, 30, 35, 40, 45],
-        "C Standard": [19, 24, 29, 34, 39, 44],
+        "Bb Standard": [22, 27, 32, 37, 42, 47],
+        "A Standard": [21, 26, 31, 36, 41, 46],
+        "G# Standard": [20, 25, 30, 35, 40, 45],
+        "G Standard": [19, 24, 29, 34, 39, 44],
+    },
+}
+
+# Superseded preset names, per key → current name. The 5/6-string bass rows
+# were originally named off the 4-string core (so a whole-step-down 6-string,
+# whose lowest string is A, read "D Standard"). Renaming alone would make
+# `_valid_tuning_for_key` REJECT a saved profile carrying the old name — it
+# refuses names that belong to a different key's built-ins, and "D Standard"
+# still exists for guitar-6/bass-4. These aliases keep those profiles valid
+# and migrate them to the corrected name.
+TUNING_PRESET_ALIASES: dict[str, dict[str, str]] = {
+    "bass-5": {
+        "Eb Standard": "Bb Standard",
+        "D Standard": "A Standard",
+        "C# Standard": "G# Standard",
+        "C Standard": "G Standard",
+    },
+    "bass-6": {
+        "Eb Standard": "Bb Standard",
+        "D Standard": "A Standard",
+        "C# Standard": "G# Standard",
+        "C Standard": "G Standard",
     },
 }
 
@@ -229,6 +257,12 @@ def _valid_tuning_for_key(key: str, tuning):
             return None
         if tuning in TUNING_PRESET_MIDIS.get(key, {}):
             return tuning
+        # A superseded name for THIS key migrates to its current spelling
+        # (the 5/6-string bass rename). Checked before the cross-key
+        # rejection below, which would otherwise refuse it.
+        renamed = TUNING_PRESET_ALIASES.get(key, {}).get(tuning)
+        if renamed:
+            return renamed
         # A name that IS a built-in preset for a different key is a misapplied
         # built-in (e.g. "Drop D" on a 5-string bass, whose low string is B) —
         # reject it. A name unknown to every built-in table is a provider/custom
@@ -429,11 +463,12 @@ def apply_flat_instrument_patch_to_profiles(cfg: dict, updates: dict) -> dict:
 # manifest-only fast scan path — unacceptable for scan time. So we DEFAULT BASS
 # TO 4 STRINGS and truncate.
 #
-# KNOWN GAP (deliberate, documented): a genuine 5- or 6-string bass is
-# truncated to its low four. That is harmless for the overwhelmingly common
-# case — a 5-string in standard truncates to [0,0,0,0] and still names
-# "Standard" — and only misreads a tuning that DIFFERS at string 4 or above.
-# Revisit if the spec ever gains a string count.
+# Five-element arrays are unambiguously extended-range. Six elements remain
+# ambiguous because legacy four-string charts are padded to six; preserve that
+# legacy interpretation except for a uniform non-zero down-tuning, which cannot
+# be padding (the padded tail would be zero) and is the common extended-range
+# case that motivated the fix. Ambiguous all-zero and drop-shaped six-element
+# arrays stay conservative until the manifest carries an explicit string count.
 BASS_DEFAULT_STRING_COUNT = 4
 
 # Bassists tune DOWN, essentially never up: a whole-instrument up-tune fights
@@ -531,10 +566,15 @@ def normalize_offsets(offsets, persp: TuningPerspective) -> list[int] | None:
         return None
     if len(vals) < persp.string_count:
         return None
-    # Only bass truncates: its arrays are padded (see above). A guitar array
-    # longer than 6 is a genuine 7/8-string chart, and cutting it to 6 would
-    # invent a tuning the chart does not have.
+    # Only bass can be padded. Five entries are unambiguously extended-range.
+    # Six are ambiguous: legacy four-string data pads with zeroes, while a
+    # uniform non-zero down-tuning across all six strings proves the tail is
+    # authored. Keep every other six-element shape conservative at four.
     if persp.truncate:
+        if len(vals) == 5:
+            return vals
+        if len(vals) == 6 and vals[0] != 0 and len(set(vals)) == 1:
+            return vals
         return vals[:persp.string_count]
     return vals
 
@@ -553,7 +593,16 @@ def perspective_tuning_name(offsets: list[int], persp: TuningPerspective) -> str
     by its canonical pitches without asserting a tuning anyone plays."""
     if not offsets_are_plausible(offsets, persp):
         return "Custom Tuning"
-    return tuning_name(offsets)
+    return tuning_name(offsets, is_bass=persp.instrument == "bass")
+
+
+def _perspective_instrument_key(
+    offsets: list[int], persp: TuningPerspective,
+) -> str:
+    """Instrument key matching the normalized tuning's proven string count."""
+    if persp.instrument == "bass" and f"bass-{len(offsets)}" in STANDARD_OPEN_MIDIS:
+        return f"bass-{len(offsets)}"
+    return persp.instrument_key
 
 
 def perspective_tuning_key(offsets: list[int], persp: TuningPerspective) -> str:
@@ -566,7 +615,7 @@ def perspective_tuning_key(offsets: list[int], persp: TuningPerspective) -> str:
     selector, and that query param is a COMMA-separated list, so a comma here
     would be split into meaningless fragments and match nothing.
     """
-    midis = tuning_midis_from_offsets(persp.instrument_key, offsets)
+    midis = tuning_midis_from_offsets(_perspective_instrument_key(offsets, persp), offsets)
     if not midis:
         return ""
     return persp.id + ":" + ":".join(str(m) for m in midis)
@@ -576,7 +625,7 @@ def perspective_low_pitch(offsets: list[int], persp: TuningPerspective) -> int |
     """Absolute MIDI pitch of the tuning's LOWEST open string — the value the
     "playable without retuning" comparison is built on (see
     `chart_is_playable_in`)."""
-    midis = tuning_midis_from_offsets(persp.instrument_key, offsets)
+    midis = tuning_midis_from_offsets(_perspective_instrument_key(offsets, persp), offsets)
     if not midis:
         return None
     return min(midis)
@@ -641,33 +690,74 @@ def bass_tuning_key(offsets: list[int]) -> str:
     return perspective_tuning_key(offsets, PERSPECTIVES["bass"])
 
 
-def tuning_name(offsets: list[int]) -> str:
-    # The pattern checks below are gated on `len(offsets)` being 6 or 4. The
-    # naming conventions are E-standard-rooted — e.g. a 7-string all-zeros
-    # tuning has a low B, not an E, so labeling it "E Standard" would be wrong.
-    # 7+-string community content falls through to the numeric fallback (#43).
-    #
-    # Length 4 is accepted because a bass's open strings (EADG) are the low
-    # four of the guitar, so the same standard/drop names apply at the same
-    # offsets. Bass callers must normalize FIRST (`normalize_bass_offsets`):
-    # stored bass arrays are commonly six elements with a padded tail, and the
-    # padding must never reach this namer. See the block above.
+def tuning_name(offsets: list[int], *, is_bass: bool = False) -> str:
+    """Display name for a set of per-string offsets.
 
-    # Standard tunings (all strings same offset)
-    standard = {
+    `is_bass` is load-bearing, not cosmetic: string COUNT alone cannot
+    identify the instrument. A 6-string BASS has six offsets just like a
+    6-string guitar, but its lowest string is B, not E — so the guitar
+    ladder labels an all-zeros bass "E Standard" (it is B/Standard) and a
+    whole-step-down bass "D Standard" (it is A Standard). That is exactly
+    the error the 7-string comment below warned about, on the axis nobody
+    guarded. Callers that know the instrument must say so; the default
+    stays guitar for backward compatibility.
+
+    All the pattern checks are gated on the expected string count. The
+    guitar conventions are 6-string-specific — e.g. a 7-string all-zeros
+    tuning has a low B, not an E, so labeling it "E Standard" would be
+    wrong. 7+-string guitar content falls through to the numeric
+    fallback. See #43.
+    """
+    # Standard tunings (all strings same offset), named off the LOWEST
+    # string. Bass 4-string sits on the E ladder like a guitar; bass 5/6
+    # add a low B, so they sit on the B ladder — the same convention the
+    # 7-string guitar presets use.
+    guitar_standard = {
         0: "E Standard", -1: "Eb Standard", -2: "D Standard",
         -3: "C# Standard", -4: "C Standard", -5: "B Standard",
         -6: "Bb Standard", -7: "A Standard",
         1: "F Standard", 2: "F# Standard",
     }
-    if len(offsets) in (4, 6) and all(o == offsets[0] for o in offsets):
-        name = standard.get(offsets[0])
+    bass_low_b_standard = {
+        0: "Standard", -1: "Bb Standard", -2: "A Standard",
+        -3: "G# Standard", -4: "G Standard", -5: "F# Standard",
+        1: "C Standard", 2: "C# Standard",
+    }
+    # A four-offset array is unambiguously a bass tuning; preserve the
+    # historical one-argument behavior used by the library perspective.
+    if len(offsets) == 4:
+        is_bass = True
+
+    if is_bass:
+        # 4-string bass is E-A-D-G — the guitar ladder's low four, so it
+        # keeps the E-based names. 5/6-string add the low B.
+        table = guitar_standard if len(offsets) == 4 else bass_low_b_standard
+        if len(offsets) in (4, 5, 6) and all(o == offsets[0] for o in offsets):
+            name = table.get(offsets[0])
+            if name:
+                return name
+        # Drop tunings: the lowest string alone goes down 2 semitones.
+        if (len(offsets) in (4, 5, 6)
+                and offsets[0] == offsets[1] - 2
+                and all(o == offsets[1] for o in offsets[1:])):
+            base = STANDARD_OPEN_MIDIS.get(f"bass-{len(offsets)}")
+            if base:
+                low = base[0] + offsets[0]
+                names = ["C", "C#", "D", "Eb", "E", "F",
+                         "F#", "G", "Ab", "A", "Bb", "B"]
+                return f"Drop {names[low % 12]}"
+        if not offsets:
+            return "Unknown"
+        return "Custom Tuning"
+
+    if len(offsets) == 6 and all(o == offsets[0] for o in offsets):
+        name = guitar_standard.get(offsets[0])
         if name:
             return name
 
     # Drop tunings (low string 2 semitones below the rest)
     # Named after the low string's note: e.g. offsets[-2,0,0,0,0,0] = Drop D (low E dropped to D)
-    if len(offsets) in (4, 6) and offsets[0] == offsets[1] - 2 and all(o == offsets[1] for o in offsets[1:]):
+    if len(offsets) == 6 and offsets[0] == offsets[1] - 2 and all(o == offsets[1] for o in offsets[1:]):
         note_names = ["E", "F", "F#", "G", "Ab", "A", "Bb", "B", "C", "C#", "D", "Eb"]
         low_note = note_names[offsets[0] % 12]
         return f"Drop {low_note}"

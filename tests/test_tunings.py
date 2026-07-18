@@ -4,10 +4,15 @@ import pytest
 
 from tunings import (
     DEFAULT_TUNINGS,
+    PERSPECTIVES,
     TUNING_PRESET_MIDIS,
     _valid_tuning_for_key,
     apply_flat_instrument_patch_to_profiles,
+    normalize_offsets,
     open_midis_to_freqs,
+    perspective_low_pitch,
+    perspective_tuning_key,
+    perspective_tuning_name,
     settings_with_instrument_profiles,
     tuning_midis_from_offsets,
     tuning_name,
@@ -214,7 +219,11 @@ def test_settings_profiles_migrate_legacy_flat_bass_selection():
     })
     assert settings["active_instrument_profile"] == "bass"
     assert settings["instrument_profiles"]["bass"]["string_count"] == 6
-    assert settings["instrument_profiles"]["bass"]["tuning"] == "C Standard"
+    # The legacy 6-string-bass name migrates to the corrected one: the
+    # pitches [19,24,29,34,39,44] sound lowest G, and extended-range bass is
+    # named off its actual lowest string. Same tuning, right label — and the
+    # alias is what keeps this profile VALID rather than rejected.
+    assert settings["instrument_profiles"]["bass"]["tuning"] == "G Standard"
     assert settings["reference_pitch"] == 432
     assert settings["pathway"] == "practice"
     assert settings["instrument_profiles"]["bass"]["pathway"] == "practice"
@@ -279,3 +288,97 @@ def test_freqs_to_midis_rejects_garbage():
     assert freqs_to_midis([float("inf")]) is None      # non-finite
     assert freqs_to_midis([float("-inf")]) is None     # non-finite
     assert freqs_to_midis([]) == []                    # vacuously fine
+
+
+# ── Extended-range BASS naming (feedBack: 6-string bass read as guitar) ──────
+# A 6-string bass has SIX offsets exactly like a 6-string guitar, but its
+# lowest string is B, not E. `tuning_name` gated its guitar ladder on
+# `len(offsets) == 6` alone, so a bass got guitar names: an all-zeros bass
+# read "E Standard" (it is Standard/B) and a whole-step-down bass read
+# "D Standard" (it is A Standard). Reported from a real Sleep Token chart
+# tuned A0 D1 G1 C2 F2 A#2; the player called it A standard and was right.
+# Convention (bass- and guitar-pedagogy seats, 2026-07-18): name extended
+# range by the ACTUAL lowest string, matching the 7-string guitar presets.
+
+def test_bass_perspective_keeps_proven_six_string_tuning_but_truncates_padding():
+    bass = PERSPECTIVES["bass"]
+
+    # Legacy four-string Rocksmith data pads its unused tail with zeroes.
+    assert normalize_offsets([-2, -2, -2, -2, 0, 0], bass) == [-2] * 4
+
+    # A uniform non-zero six-string tuning cannot be that padding shape.
+    extended = normalize_offsets([-2] * 6, bass)
+    assert extended == [-2] * 6
+    assert perspective_tuning_name(extended, bass) == "A Standard"
+    assert perspective_tuning_key(extended, bass) == "bass:21:26:31:36:41:46"
+    assert perspective_low_pitch(extended, bass) == 21
+
+
+BASS_STANDARD_CASES = [
+    # 4-string bass is E-A-D-G — the guitar ladder's low four, names unchanged.
+    ([0, 0, 0, 0], "E Standard"),
+    ([-1, -1, -1, -1], "Eb Standard"),
+    ([-2, -2, -2, -2], "D Standard"),
+    # 5-string adds a low B → the B ladder.
+    ([0] * 5, "Standard"),
+    ([-1] * 5, "Bb Standard"),
+    ([-2] * 5, "A Standard"),
+    ([-3] * 5, "G# Standard"),
+    ([-4] * 5, "G Standard"),
+    # 6-string: same names, extra top string.
+    ([0] * 6, "Standard"),
+    ([-1] * 6, "Bb Standard"),
+    ([-2] * 6, "A Standard"),
+    ([-3] * 6, "G# Standard"),
+    ([-4] * 6, "G Standard"),
+]
+
+
+@pytest.mark.parametrize("offsets,expected", BASS_STANDARD_CASES)
+def test_bass_standard_tunings(offsets, expected):
+    assert tuning_name(offsets, is_bass=True) == expected
+
+
+def test_six_offsets_alone_do_not_imply_a_guitar():
+    """The regression the bug report came from."""
+    sleep_token = [-2] * 6           # A0 D1 G1 C2 F2 A#2
+    assert tuning_name(sleep_token, is_bass=True) == "A Standard"
+    # ...and the identical offsets on a guitar keep the guitar name.
+    assert tuning_name(sleep_token) == "D Standard"
+    # A STANDARD 6-string bass is not "E Standard" either.
+    assert tuning_name([0] * 6, is_bass=True) == "Standard"
+    assert tuning_name([0] * 6) == "E Standard"
+
+
+def test_bass_drop_tunings_name_the_resulting_low_string():
+    # 5-string B standard, low string dropped a whole step → A.
+    assert tuning_name([-2, 0, 0, 0, 0], is_bass=True) == "Drop A"
+    # 4-string E standard → D.
+    assert tuning_name([-2, 0, 0, 0], is_bass=True) == "Drop D"
+
+
+def test_bass_presets_are_named_off_their_lowest_string():
+    """Every bass preset's name must match the note its low string sounds."""
+    names = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+    alt = {"Ab": "G#", "G#": "Ab", "Bb": "A#", "A#": "Bb", "Eb": "D#", "D#": "Eb"}
+    for key in ("bass-4", "bass-5", "bass-6"):
+        for name, midis in TUNING_PRESET_MIDIS[key].items():
+            if not name.endswith("Standard") or name == "Standard":
+                continue
+            root = name.rsplit(" ", 1)[0]
+            low = names[midis[0] % 12]
+            assert root in (low, alt.get(low)), (
+                f"{key} {name!r} lowest string sounds {low}"
+            )
+
+
+def test_superseded_bass_names_migrate_instead_of_being_rejected():
+    """Renaming must not invalidate saved profiles (both pedagogy seats)."""
+    for key in ("bass-5", "bass-6"):
+        assert _valid_tuning_for_key(key, "D Standard") == "A Standard"
+        assert _valid_tuning_for_key(key, "C Standard") == "G Standard"
+        # Current names still pass straight through.
+        assert _valid_tuning_for_key(key, "A Standard") == "A Standard"
+    # The rename must not leak into other instruments.
+    assert _valid_tuning_for_key("guitar-6", "D Standard") == "D Standard"
+    assert _valid_tuning_for_key("bass-4", "D Standard") == "D Standard"

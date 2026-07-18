@@ -101,7 +101,9 @@ def _extract_meta_sloppak(path: Path) -> dict:
     """Extract metadata for a sloppak (file or directory)."""
     meta = sloppak_mod.extract_meta(path)
     offsets = meta.pop("tuning_offsets", None) or [0] * 6
-    name = tuning_name(offsets)
+    # Naming needs the instrument: six offsets could be a guitar OR a
+    # 6-string bass, whose lowest string is B rather than E.
+    name = tuning_name(offsets, is_bass=bool(meta.pop("tuning_is_bass", False)))
     meta["tuning"] = name
     meta["tuning_name"] = name
     meta["tuning_sort_key"] = sum(offsets)
@@ -137,7 +139,9 @@ def _extract_meta_loosefolder(path: Path, dlc_root: Path | None) -> dict:
     # inside DLC_DIR.
     meta = loosefolder_mod.extract_meta(path, dlc_root=dlc_root)
     offsets = meta.pop("tuning_offsets", None) or [0] * 6
-    name = tuning_name(offsets)
+    # Naming needs the instrument: six offsets could be a guitar OR a
+    # 6-string bass, whose lowest string is B rather than E.
+    name = tuning_name(offsets, is_bass=bool(meta.pop("tuning_is_bass", False)))
     meta["tuning"] = name
     meta["tuning_name"] = name
     meta["tuning_sort_key"] = sum(offsets)

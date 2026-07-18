@@ -1227,17 +1227,33 @@ def load_song(
 
 def _tuning_for_meta(arrangements_manifest: list[dict]) -> list[int]:
     """Best-effort guitar-first tuning for the library index."""
+    offsets, _ = _tuning_for_meta_kind(arrangements_manifest)
+    return offsets
+
+
+def _tuning_for_meta_kind(
+    arrangements_manifest: list[dict],
+) -> tuple[list[int], bool]:
+    """`_tuning_for_meta` plus whether the tuning came from a BASS part.
+
+    The caller names the tuning, and naming needs the instrument: a
+    6-string bass has six offsets exactly like a 6-string guitar but its
+    lowest string is B, so the guitar ladder mislabels it (all-zeros reads
+    "E Standard" when it is Standard/B; a whole step down reads "D
+    Standard" when it is A Standard). Guitar parts still win the tuning
+    itself — this only reports which kind supplied it.
+    """
     for entry in arrangements_manifest:
         name = str(entry.get("name", "")).lower()
         tun = entry.get("tuning")
         if tun and isinstance(tun, list) and name in ("lead", "rhythm", "combo"):
-            return list(tun)
+            return list(tun), False
     # Fallback: first arrangement with a tuning
     for entry in arrangements_manifest:
         tun = entry.get("tuning")
         if tun and isinstance(tun, list):
-            return list(tun)
-    return [0] * 6
+            return list(tun), "bass" in str(entry.get("name", "")).lower()
+    return [0] * 6, False
 
 
 def _role_tuning_for_meta(arrangements_manifest: list[dict], role: str) -> list[int] | None:
@@ -1282,9 +1298,8 @@ def extract_meta(path: Path) -> dict:
         a["index"] = i
 
     has_lyrics = bool(manifest.get("lyrics"))
-    tuning_offsets = _tuning_for_meta(arr_list)
-    # Per-role tunings alongside the song-level one, so the library can answer
-    # for whichever arrangement the player actually plays.
+    tuning_offsets, tuning_is_bass = _tuning_for_meta_kind(arr_list)
+    # Per-role tunings alongside the song-level one.
     role_tunings = {f"{role}_tuning_offsets": _role_tuning_for_meta(arr_list, role)
                     for role in ("bass", "rhythm")}
 
@@ -1327,6 +1342,8 @@ def extract_meta(path: Path) -> dict:
         "tuning_offsets": tuning_offsets,  # caller maps to a name via tunings.tuning_name
         # None = the pack has no arrangement in that role.
         **role_tunings,
+        # Song-level naming also needs the instrument for bass-only packs.
+        "tuning_is_bass": tuning_is_bass,
         "arrangements": arrangements,
         "has_lyrics": has_lyrics,
         "stem_count": stem_count,

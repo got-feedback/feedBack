@@ -1599,6 +1599,11 @@ function createHighway() {
         _clearChartTransformStage();
         const p = hwState._xfProvider;
         if (!p) return;
+        // Pre-ready there is nothing meaningful to transform (chart arrays
+        // are still streaming, songInfo may be empty) — keep the provider
+        // attached and let the `ready` path (which sets hwState.ready BEFORE
+        // _rebuildMasteryFilter) run the first real staging.
+        if (!hwState.ready) return;
         const filterActive = hwState._filteredNotes !== null;
         try {
             let out = p.transform(_cloneChartTransformValue({

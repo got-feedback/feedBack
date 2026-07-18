@@ -513,7 +513,7 @@ Plugins that transpose, simplify, annotate, or otherwise rewrite chart data regi
       "roles": ["provider"],
       "operations": ["chart.transform"],
       "mode": "active",
-      "compatibility": "degrade-noop",
+      "compatibility": "none",
       "ownership": "multi-provider",
       "safety": "safe",
       "version": 1

@@ -153,9 +153,13 @@
         if (!total) return '';
         const mism = results.filter((r) => r.state === 'mismatch').length;
         const unk = results.filter((r) => r.state === 'unknown').length;
-        const box = 'mb-4 rounded-lg border px-3 py-2 text-sm flex flex-wrap items-center gap-x-3 gap-y-2 ';
+        // Plain gap-3 rather than gap-x-3/gap-y-2: the axis-specific pair isn't
+        // in the committed tailwind.min.css, and regenerating it is not
+        // reproducible outside CI (autoprefixer/caniuse drift changes unrelated
+        // bytes), so the summary bar stays within the shipped class set.
+        const box = 'mb-4 rounded-lg border px-3 py-2 text-sm flex flex-wrap items-center gap-3 ';
         if (!mism) {
-            return '<div class="' + box + 'border-fb-good/40 bg-fb-good/10 text-fb-good">' +
+            return '<div class="' + box + 'border-fb-good/40 bg-fb-good/30 text-fb-good">' +
                 '<span>✓ All ' + total + ' songs are in your tuning.</span>' +
                 (unk ? '<span class="text-fb-textDim text-xs">' + unk + ' couldn\'t be checked (no tuning data).</span>' : '') +
                 '</div>';
@@ -165,7 +169,7 @@
             (unk ? '<span class="text-fb-textDim text-xs">' + unk + ' couldn\'t be checked (no tuning data) — left alone.</span>' : '') +
             '<span class="flex-1"></span>' +
             '<button id="v3-pl-tune-only" class="text-xs px-2 py-1 rounded border border-fb-border text-fb-textDim hover:text-fb-text" aria-pressed="false">Show only these</button>' +
-            '<button id="v3-pl-tune-remove" class="text-xs px-2 py-1 rounded border border-fb-accent/50 text-fb-accent hover:bg-fb-accent/10">Remove them…</button>' +
+            '<button id="v3-pl-tune-remove" class="text-xs px-2 py-1 rounded border border-amber-400/40 text-fb-text hover:bg-fb-card">Remove them…</button>' +
             '</div>';
     }
 
@@ -201,10 +205,13 @@
             // user data, so the confirm has to be a list, not a count.
             const doomed = results.filter((r) => r.state === 'mismatch').map((r) => r.song);
             if (!doomed.length) return;
-            const names = doomed.map((s) => '<li>' + esc(s.title || s.filename) + '</li>').join('');
+            const names = doomed.map((s) => '<div>• ' + esc(s.title || s.filename) + '</div>').join('');
             const msg = 'Remove these ' + doomed.length + ' song' + (doomed.length === 1 ? '' : 's')
                 + ' from "' + esc(pl.name) + '"?'
-                + '<ul class="mt-2 text-xs list-disc list-inside max-h-48 overflow-auto">' + names + '</ul>'
+                // Bulleted with a literal •, and sized with max-h-32, so the
+                // confirm needs no Tailwind class the committed CSS lacks —
+                // regenerating tailwind.min.css is not reproducible off CI.
+                + '<div class="mt-2 text-xs max-h-32 overflow-y-auto">' + names + '</div>'
                 + '<p class="text-xs text-fb-textDim mt-2">They stay in your library — only this playlist changes, and you can add them back.</p>';
             const ok = (typeof window.uiConfirm === 'function')
                 ? await window.uiConfirm({

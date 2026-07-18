@@ -261,8 +261,11 @@ test('the check itself never mutates the playlist', () => {
 
 test('bulk removal names every song and is confirmed before any DELETE', () => {
     const body = extractBlock(PL_SRC, 'async function applyTuningCheck(');
-    // The confirm is built from the doomed titles …
-    assert.match(body, /doomed\.map\(\(s\) => '<li>' \+ esc\(s\.title \|\| s\.filename\)/);
+    // The confirm is built from the doomed titles, each escaped. The row markup
+    // moved from <li> to a bulleted <div> so the confirm needs no Tailwind class
+    // the committed CSS lacks — what matters is that every song is named and
+    // escaped, not which element wraps it.
+    assert.match(body, /doomed\.map\(\(s\) => '<(?:li|div)>[^']*' \+ esc\(s\.title \|\| s\.filename\)/);
     // … it is awaited, and an early return happens before the delete loop.
     const confirmAt = body.indexOf('uiConfirm');
     const bailAt = body.indexOf('if (!ok) return;');

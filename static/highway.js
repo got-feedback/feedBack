@@ -1567,6 +1567,10 @@ function createHighway() {
         hwState._xfCentOffset = null;
     }
 
+    function _sortedChartTransformArray(items, key) {
+        return items.slice().sort((a, b) => a[key] - b[key]);
+    }
+
     // Run the installed chart-transform provider over the difficulty-filtered
     // chart and stage its output. A provider error clears the stage (the
     // original chart keeps rendering) and emits highway:chart-transform-failed.
@@ -1597,22 +1601,21 @@ function createHighway() {
                 try {
                     window.feedBack.emit('highway:chart-transform-failed', {
                         id: p.id,
-                        reason: e && e.message ? e.message : String(e),
                     });
                 } catch (_) { /* eventing must not break rendering */ }
             }
             return;
         }
         if (!out || typeof out !== 'object') return;
-        if (Array.isArray(out.notes)) hwState._xfNotes = out.notes;
-        if (Array.isArray(out.chords)) hwState._xfChords = out.chords;
-        if (Array.isArray(out.anchors)) hwState._xfAnchors = out.anchors;
+        if (Array.isArray(out.notes)) hwState._xfNotes = _sortedChartTransformArray(out.notes, 't');
+        if (Array.isArray(out.chords)) hwState._xfChords = _sortedChartTransformArray(out.chords, 't');
+        if (Array.isArray(out.anchors)) hwState._xfAnchors = _sortedChartTransformArray(out.anchors, 'time');
         // Full-difficulty views: explicit allNotes/allChords, or reuse the
         // effective output when no filter is active (effective === raw then).
-        if (Array.isArray(out.allNotes)) hwState._xfNotesAll = out.allNotes;
-        else if (!filterActive && Array.isArray(out.notes)) hwState._xfNotesAll = out.notes;
-        if (Array.isArray(out.allChords)) hwState._xfChordsAll = out.allChords;
-        else if (hwState._filteredChords === null && Array.isArray(out.chords)) hwState._xfChordsAll = out.chords;
+        if (Array.isArray(out.allNotes)) hwState._xfNotesAll = _sortedChartTransformArray(out.allNotes, 't');
+        else if (!filterActive && Array.isArray(out.notes)) hwState._xfNotesAll = hwState._xfNotes;
+        if (Array.isArray(out.allChords)) hwState._xfChordsAll = _sortedChartTransformArray(out.allChords, 't');
+        else if (hwState._filteredChords === null && Array.isArray(out.chords)) hwState._xfChordsAll = hwState._xfChords;
         if (Array.isArray(out.chordTemplates)) hwState._xfChordTemplates = out.chordTemplates;
         if (Number.isFinite(out.stringCount) && out.stringCount >= 1) {
             // Same [1, 8] clamp as the song_info stringCount handler.
@@ -1620,7 +1623,9 @@ function createHighway() {
         }
         if (Array.isArray(out.tuning) && out.tuning.length) hwState._xfTuning = out.tuning;
         if (Number.isFinite(out.capo) && out.capo >= 0) hwState._xfCapo = Math.trunc(out.capo);
-        if (Array.isArray(out.handShapes)) hwState._xfHandShapes = out.handShapes;
+        if (Array.isArray(out.handShapes)) {
+            hwState._xfHandShapes = _sortedChartTransformArray(out.handShapes, 'start_time');
+        }
         if (Number.isFinite(out.centOffset)) hwState._xfCentOffset = out.centOffset;
     }
 

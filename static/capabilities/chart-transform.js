@@ -21,6 +21,7 @@
     if (window.feedBack.chartTransformDomain && window.feedBack.chartTransformDomain.version === 1) return;
 
     const STORAGE_KEY = 'feedBack.chartTransform.selectedProviderId';
+    const PUBLIC_FAILURE_REASON = 'Chart transform provider failed';
 
     // providerId → { id, label, pluginId, transform }
     const providers = new Map();
@@ -74,14 +75,8 @@
         }
     }
 
-    function _redactFailureReason(value) {
-        const normalized = String(value || 'transform failure')
-            .replace(/\/Users\/[^\s/]+(?:\/[^\s]*)?/g, '[path]')
-            .replace(/[A-Za-z]:\\[^\s]+/g, '[path]')
-            .replace(/\/[a-zA-Z][^\s]*(?:\/[^\s]*)?/g, '[path]')
-            .replace(/\s+/g, ' ')
-            .trim();
-        return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+    function _redactFailureReason() {
+        return PUBLIC_FAILURE_REASON;
     }
 
     function _persistSelection(providerId) {
@@ -228,7 +223,9 @@
             _install();
             _emit('transform-changed', { from: providerId, to: null, source: 'provider-unregistered' });
         }
-        if (typeof capabilities.unregisterParticipant === 'function') {
+        const stillHasProvider = Array.from(providers.values())
+            .some(p => p.pluginId === provider.pluginId);
+        if (!stillHasProvider && typeof capabilities.unregisterParticipant === 'function') {
             const live = typeof capabilities.inspect === 'function' ? capabilities.inspect('chart-transform') : null;
             const participant = ((live && live.participants) || []).find(p => p.pluginId === provider.pluginId);
             const roles = participant && Array.isArray(participant.roles) ? participant.roles : [];
@@ -306,7 +303,7 @@
                 const detail = (e && e.detail) || e || {};
                 lastFailure = {
                     providerId: String(detail.id || activeProviderId || 'unknown'),
-                    reason: _redactFailureReason(detail.reason),
+                    reason: _redactFailureReason(),
                 };
                 _emit('transform-failed', { ...lastFailure });
                 _contributeDiagnostics();

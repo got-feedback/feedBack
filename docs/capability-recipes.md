@@ -554,7 +554,7 @@ await api.dispatch({ capability: 'chart-transform', command: 'select-provider',
 await api.dispatch({ capability: 'chart-transform', command: 'refresh', source: 'my_transform' });
 ```
 
-The transform runs once per chart change (ready, mastery recompute, refresh) — never per frame. A throwing transform is skipped for that pass (the original chart renders) and surfaces as the `transform-failed` event with a path-redacted reason. `getSongInfo()` keeps the chart's original tuning/capo by contract; export `tuning` as standard-relative offsets for your target string count so scoring consumers judge the target instrument via `bundle.tuning`/`bundle.capo`/`bundle.centOffset`.
+The transform runs once per chart change (ready, mastery recompute, refresh) — never per frame. The host copies and time-sorts accepted timeline arrays before staging them. A throwing transform is skipped for that pass (the original chart renders) and surfaces as the `transform-failed` event with a fixed public reason; raw exception details remain local to the console. `getSongInfo()` keeps the chart's original tuning/capo by contract; export `tuning` as standard-relative offsets for your target string count so scoring consumers judge the target instrument via `bundle.tuning`/`bundle.capo`/`bundle.centOffset`.
 
 ## Future Expansion Domains
 

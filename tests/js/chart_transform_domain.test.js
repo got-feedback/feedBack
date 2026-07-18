@@ -180,6 +180,33 @@ test('unregister is registrant-only and detaches the active provider', async () 
     assert.equal(window.localStorage.getItem(STORAGE_KEY), 'chart-retuner');
 });
 
+test('unregister keeps a participant while another provider still references it', async () => {
+    const window = loadChartTransform();
+    const api = window.feedBack.capabilities;
+    await registerProvider(api, { providerId: 'guitar-retuner' });
+    await registerProvider(api, { providerId: 'bass-retuner' });
+
+    await api.dispatch({
+        capability: 'chart-transform', command: 'unregister-provider',
+        source: 'chart_retuner', payload: { providerId: 'guitar-retuner' },
+    });
+
+    const participant = api.inspect('chart-transform').participants
+        .find(p => p.pluginId === 'chart_retuner');
+    assert.ok(participant, 'the shared participant remains registered');
+    assert.deepEqual(
+        Array.from(window.feedBack.chartTransformDomain.snapshot().providers, p => p.id),
+        ['bass-retuner'],
+    );
+
+    await api.dispatch({
+        capability: 'chart-transform', command: 'unregister-provider',
+        source: 'chart_retuner', payload: { providerId: 'bass-retuner' },
+    });
+    assert.ok(!api.inspect('chart-transform').participants
+        .some(p => p.pluginId === 'chart_retuner'), 'the final removal unregisters the participant');
+});
+
 test('clear-provider clears the highway hook and the persisted selection', async () => {
     const highway = makeFakeHighway();
     const window = loadChartTransform({ highway });
@@ -256,7 +283,7 @@ test('a panel announced before any selection installs on later select', async ()
     assert.equal(panel.calls.set[0].id, 'chart-retuner');
 });
 
-test('highway failure events are redacted and re-emitted as transform-failed', async () => {
+test('highway failure events expose a fixed public reason', async () => {
     const highway = makeFakeHighway();
     const window = loadChartTransform({ highway });
     const api = window.feedBack.capabilities;
@@ -269,14 +296,14 @@ test('highway failure events are redacted and re-emitted as transform-failed', a
 
     window.feedBack.emit('highway:chart-transform-failed', {
         id: 'chart-retuner',
-        reason: 'boom at /Users/someone/secret/song.sloppak',
+        reason: 'token=secret https://example.test/private chart={notes:[...]}',
     });
 
     const snapshot = window.feedBack.chartTransformDomain.snapshot();
     assert.equal(snapshot.lastFailure.providerId, 'chart-retuner');
-    assert.ok(!snapshot.lastFailure.reason.includes('/Users/'), 'path redacted');
-    assert.match(snapshot.lastFailure.reason, /\[path\]/);
+    assert.equal(snapshot.lastFailure.reason, 'Chart transform provider failed');
     assert.equal(events.length, 1);
+    assert.equal(events[0].payload.reason, 'Chart transform provider failed');
 });
 
 test('diagnostics contribution carries the schema and no song identity fields', async () => {

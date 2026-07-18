@@ -12,6 +12,22 @@ const path = require('node:path');
 const highwayJs = path.join(__dirname, '..', '..', 'static', 'highway.js');
 const highwayDrawJs = path.join(__dirname, '..', '..', 'static', 'js', 'highway-draw.js');
 
+function extractBlock(src, marker) {
+    const start = src.indexOf(marker);
+    assert.ok(start >= 0, `${marker} present`);
+    const open = src.indexOf('{', start);
+    assert.ok(open >= 0, `${marker} has a body`);
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth += 1;
+        else if (src[i] === '}') {
+            depth -= 1;
+            if (depth === 0) return src.slice(start, i + 1);
+        }
+    }
+    assert.fail(`${marker} body is balanced`);
+}
+
 test('highway public API exposes the chart-transform hook', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     assert.match(src, /setChartTransform\s*\(\s*p\s*\)\s*\{/, 'setChartTransform exists');
@@ -40,6 +56,8 @@ test('a throwing provider clears the stage and emits highway:chart-transform-fai
     const src = fs.readFileSync(highwayJs, 'utf8');
     const fn = src.slice(src.indexOf('function _restageChartTransform'), src.indexOf('// ── Public API'));
     assert.match(fn, /catch\s*\(e\)\s*\{[\s\S]*highway:chart-transform-failed[\s\S]*return;/);
+    assert.match(fn, /console\.error\('chart transform:', e\)/, 'raw exception stays in the local console');
+    assert.doesNotMatch(fn, /reason:\s*e/, 'raw exception is not emitted');
     assert.match(fn, /^\s*_clearChartTransformStage\(\);/m, 'stage cleared before the provider runs');
 });
 
@@ -61,8 +79,72 @@ test('transform input carries the effective handShapes; output stages handShapes
     const fn = src.slice(src.indexOf('function _restageChartTransform'), src.indexOf('// ── Public API'));
     assert.match(fn, /handShapes: \(hwState\._filteredHandShapes !== null && hwState\._phrasesHaveHandShapes\)/,
         'input handShapes uses the same effective selection as the bundle');
-    assert.match(fn, /if \(Array\.isArray\(out\.handShapes\)\) hwState\._xfHandShapes = out\.handShapes;/);
+    assert.match(fn, /_sortedChartTransformArray\(out\.handShapes, 'start_time'\)/);
     assert.match(fn, /if \(Number\.isFinite\(out\.centOffset\)\) hwState\._xfCentOffset = out\.centOffset;/);
+});
+
+test('unordered provider timelines are copied and normalized for searches and anchor scans', () => {
+    const highwaySrc = fs.readFileSync(highwayJs, 'utf8');
+    const drawSrc = fs.readFileSync(highwayDrawJs, 'utf8');
+    const snippets = [
+        extractBlock(highwaySrc, 'function _clearChartTransformStage()'),
+        extractBlock(highwaySrc, 'function _sortedChartTransformArray(items, key)'),
+        extractBlock(highwaySrc, 'function _restageChartTransform()'),
+        extractBlock(highwaySrc, 'function bsearchTime(arr, time)'),
+        extractBlock(highwaySrc, 'function getAnchorAt(t)'),
+        extractBlock(highwaySrc, 'function getMaxFretInWindow(t)'),
+        extractBlock(drawSrc, 'export function bsearch(arr, time)').replace('export ', ''),
+    ].join('\n');
+    const providerOutput = {
+        notes: [{ t: 9 }, { t: 1 }, { t: 5 }],
+        chords: [{ t: 8 }, { t: 2 }],
+        anchors: [
+            { time: 10, fret: 20, width: 2 },
+            { time: 0, fret: 1, width: 3 },
+            { time: 5, fret: 10, width: 4 },
+        ],
+        allNotes: [{ t: 7 }, { t: 0 }, { t: 3 }],
+        allChords: [{ t: 6 }, { t: 4 }],
+        handShapes: [{ start_time: 9 }, { start_time: 1 }],
+    };
+    const hwState = {
+        _xfProvider: { id: 'unordered', transform: () => providerOutput },
+        _filteredNotes: [],
+        _filteredChords: [],
+        _filteredAnchors: [],
+        _filteredHandShapes: [],
+        _phrasesHaveHandShapes: true,
+        notes: [], chords: [], anchors: [], handShapes: [], chordTemplates: [],
+        stringCount: 6, songInfo: {},
+    };
+    const helpers = new Function('hwState', 'window', 'VISIBLE_SECONDS', `
+        ${snippets}
+        return { _restageChartTransform, bsearch, bsearchTime, getAnchorAt, getMaxFretInWindow };
+    `)(hwState, {}, 3);
+
+    helpers._restageChartTransform();
+
+    assert.deepEqual(hwState._xfNotes.map(n => n.t), [1, 5, 9]);
+    assert.deepEqual(hwState._xfChords.map(ch => ch.t), [2, 8]);
+    assert.deepEqual(hwState._xfNotesAll.map(n => n.t), [0, 3, 7]);
+    assert.deepEqual(hwState._xfChordsAll.map(ch => ch.t), [4, 6]);
+    assert.deepEqual(hwState._xfAnchors.map(a => a.time), [0, 5, 10]);
+    assert.deepEqual(hwState._xfHandShapes.map(h => h.start_time), [1, 9]);
+    assert.deepEqual(providerOutput.notes.map(n => n.t), [9, 1, 5], 'provider output is not mutated');
+    assert.equal(helpers.bsearch(hwState._xfNotes, 5), 1);
+    assert.equal(helpers.bsearchTime(hwState._xfAnchors, 5), 1);
+    assert.equal(helpers.getAnchorAt(6).time, 5);
+    assert.equal(helpers.getMaxFretInWindow(0), 14);
+
+    hwState._filteredNotes = null;
+    hwState._filteredChords = null;
+    hwState._xfProvider.transform = () => ({
+        notes: [{ t: 4 }, { t: 2 }],
+        chords: [{ t: 3 }, { t: 1 }],
+    });
+    helpers._restageChartTransform();
+    assert.deepEqual(hwState._xfNotesAll.map(n => n.t), [2, 4], 'unfiltered notes still fall back');
+    assert.deepEqual(hwState._xfChordsAll.map(ch => ch.t), [1, 3], 'unfiltered chords still fall back');
 });
 
 test('createHighway announces each instance via highway:created', () => {
@@ -89,9 +171,10 @@ test('anchor zoom helpers read the staged anchors first', () => {
 
 test('init and reconnect clear the stage but keep the provider', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
-    const clears = src.match(/_clearChartTransformStage\(\);/g) || [];
-    // Once inside _restageChartTransform + once in init() + once in reconnect().
-    assert.ok(clears.length >= 3, 'stage cleared on init and reconnect');
+    const initBody = extractBlock(src, 'init(canvasEl, container)');
+    const reconnectBody = extractBlock(src, 'reconnect(filename, arrangement)');
+    assert.match(initBody, /_clearChartTransformStage\(\);/, 'init clears the stage');
+    assert.match(reconnectBody, /_clearChartTransformStage\(\);/, 'reconnect clears the stage');
     assert.ok(!/init\([\s\S]{0,2000}_xfProvider = null/.test(src.slice(src.indexOf('const api = {'))),
         'api reset paths never drop the installed provider');
 });

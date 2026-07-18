@@ -125,6 +125,24 @@ def _put_perspective_value(meta: dict, col: str):
 
 # ── SQLite metadata cache ─────────────────────────────────────────────────────
 
+def _arrangements_all_bass(raw) -> bool:
+    """True when EVERY arrangement on a chart is a bass part (raw ``arrangements``
+    JSON, as stored). Mirrors the library grid's card rule: such a chart's tuning
+    must be scored against bass base pitches, or a 4-string bass tuning read as
+    guitar can false-match a guitarist. A chart with no arrangements is not bass.
+    """
+    try:
+        arrs = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(arrs, list) or not arrs:
+        return False
+    return all(
+        isinstance(a, dict) and re.search(r"\bbass\b", str(a.get("name") or ""), re.I)
+        for a in arrs
+    )
+
+
 def _ensure_smart_names(arrangements: list[dict]) -> list[dict]:
     """Fill in missing ``smart_name`` fields and sort arrangements by smart order.
 
@@ -2683,7 +2701,7 @@ class MetadataDB:
         rows = self.conn.execute(
             f"""SELECT ps.filename, ps.position, s.title, s.artist, s.tuning_name,
                        ps.arrangement, ps.work_key, s.arrangements,
-                       (s.filename IS NULL) AS dead
+                       (s.filename IS NULL) AS dead, s.tuning_offsets
                FROM playlist_songs ps LEFT JOIN songs s ON s.filename = ps.filename
                WHERE ps.playlist_id = ? {dead_filter}
                ORDER BY ps.position, ps.filename""",
@@ -2695,6 +2713,13 @@ class MetadataDB:
             entry = {
                 "filename": r[0], "position": r[1],
                 "title": r[2] or r[0], "artist": r[3] or "", "tuning_name": r[4] or "",
+                # Offsets + the bass-only flag let the playlist tuning check score a
+                # row against the player's working tuning the same way the library
+                # grid's chips do: a NAME alone can't be scored (two "Custom Tuning"
+                # rows are different tunings), and coverage needs to know whether to
+                # measure against bass or guitar base pitches.
+                "tuning_offsets": r[9] or "",
+                "bass_only": _arrangements_all_bass(r[7]),
                 "art_url": f"/api/song/{quote(r[0])}/art",
             }
             if is_album:
@@ -2722,7 +2747,8 @@ class MetadataDB:
         if work_key:
             self._ensure_work_display()
             row = self.conn.execute(
-                "SELECT wd.filename, s.title, s.artist, s.tuning_name, s.arrangements "
+                "SELECT wd.filename, s.title, s.artist, s.tuning_name, s.arrangements, "
+                "s.tuning_offsets "
                 "FROM work_display wd JOIN songs s ON s.filename = wd.filename "
                 "WHERE wd.effective_work_key = ? AND wd.is_group_representative = 1",
                 (work_key,)).fetchone()
@@ -2732,8 +2758,12 @@ class MetadataDB:
                     arrs = _ensure_smart_names(json.loads(row[4]) if row[4] else [])
                 except Exception:
                     arrs = []
+                # An orphan-resolved slot PLAYS a different chart, so it must report
+                # that chart's tuning to the check — not the dead pin's.
                 return {"resolved_filename": row[0], "title": row[1] or row[0],
                         "artist": row[2] or "", "tuning_name": row[3] or "",
+                        "tuning_offsets": row[5] or "",
+                        "bass_only": _arrangements_all_bass(row[4]),
                         "arrangements": arrs,
                         "art_url": f"/api/song/{quote(row[0])}/art",
                         "resolved_from_orphan": True}

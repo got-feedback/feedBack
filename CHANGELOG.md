@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Auto-install custom plugins** — support for the `FEEDBACK_AUTO_INSTALL_PLUGINS` environment variable to automatically download, validate, and extract custom plugins from GitHub repositories or HTTPS zip URLs at startup.
+- **Improved release Docker tagging** — the release workflow now tags pre-release versions with `:preview` and stable versions with `:latest` on tag pushes, keeping them mutually exclusive.
 - **Gold tier (career passports)** — an earned badge turns **gold** when
   Virtuoso verifies an improvised jam in the passport's style (the
   `gold_improv` artifact relays with the drill snapshot; a genre inherits its

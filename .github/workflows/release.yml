@@ -36,7 +36,9 @@ jobs:
           {
             echo "tags<<TAGS_EOF"
             echo "ghcr.io/${GITHUB_REPOSITORY,,}:${version}"
-            if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if [[ "$version" =~ - ]]; then
+              echo "ghcr.io/${GITHUB_REPOSITORY,,}:preview"
+            else
               echo "ghcr.io/${GITHUB_REPOSITORY,,}:latest"
             fi
             echo "TAGS_EOF"

@@ -1168,8 +1168,205 @@ def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=N
     # Collect plugin directories — user plugins first so they override built-in
     plugin_dirs = []
     user_plugins_dir = os.environ.get("FEEDBACK_PLUGINS_DIR") or os.environ.get("SLOPSMITH_PLUGINS_DIR")
+    auto_plugins = (os.environ.get("FEEDBACK_AUTO_INSTALL_PLUGINS") or "").strip()
+    if auto_plugins and not user_plugins_dir:
+        user_plugins_dir = str(Path(os.environ.get("CONFIG_DIR", "/config")) / "plugins")
+
     if user_plugins_dir:
         user_path = Path(user_plugins_dir)
+        
+        # Auto-download custom plugins listed in the environment
+        if auto_plugins:
+            import urllib.request
+            import urllib.error
+            import zipfile
+            import shutil
+            import tempfile
+            from urllib.parse import urlparse
+            import re
+            
+            def _sanitize_url(url_str: str) -> str:
+                try:
+                    parsed = urlparse(url_str)
+                    netloc = parsed.netloc
+                    if "@" in netloc:
+                        netloc = netloc.split("@")[-1]
+                    return f"{parsed.scheme}://{netloc}{parsed.path}"
+                except Exception:
+                    return "[redacted]"
+            
+            class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    if not newurl.startswith("https://"):
+                        sanitized_original = _sanitize_url(req.full_url)
+                        sanitized_new = _sanitize_url(newurl)
+                        raise urllib.error.HTTPError(
+                            sanitized_original, code, f"Redirect to unsafe protocol rejected: {sanitized_new}", headers, fp
+                        )
+                    return super().redirect_request(req, fp, code, msg, headers, newurl)
+            
+            opener = urllib.request.build_opener(SafeRedirectHandler())
+            
+            for item in auto_plugins.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                
+                is_url = item.startswith("http://") or item.startswith("https://")
+                if is_url:
+                    if not item.startswith("https://"):
+                        log.warning("Skipping plugin URL %r: only HTTPS is supported", _sanitize_url(item))
+                        continue
+                    try:
+                        parsed = urlparse(item)
+                        if not parsed.netloc:
+                            log.warning("Skipping plugin URL %r: invalid host", _sanitize_url(item))
+                            continue
+                        url = item
+                        plugin_name = parsed.path.rstrip("/").split("/")[-1]
+                        if plugin_name.endswith(".zip"):
+                            plugin_name = plugin_name[:-4]
+                    except Exception as e:
+                        log.warning("Skipping malformed plugin URL: %s", e)
+                        continue
+                else:
+                    ref = "HEAD"
+                    repo_part = item
+                    if "@" in item:
+                        repo_part, ref = item.split("@", 1)
+                    
+                    if repo_part.count("/") != 1:
+                        log.warning("Skipping invalid repository shorthand %r", item)
+                        continue
+                    
+                    if ref == "HEAD":
+                        url = f"https://github.com/{repo_part}/archive/HEAD.zip"
+                    elif ref.startswith("refs/"):
+                        url = f"https://github.com/{repo_part}/archive/{ref}.zip"
+                    elif re.match(r'^v?\d+(\.\d+)*(-.+)?$', ref) or ref.startswith("v"):
+                        url = f"https://github.com/{repo_part}/archive/refs/tags/{ref}.zip"
+                    else:
+                        url = f"https://github.com/{repo_part}/archive/refs/heads/{ref}.zip"
+                    plugin_name = repo_part.split("/")[-1]
+
+                # Validate plugin name
+                if not plugin_name or plugin_name in (".", "..") or "/" in plugin_name or "\\" in plugin_name:
+                    log.warning("Skipping invalid plugin name %r", plugin_name)
+                    continue
+
+                log.info("Auto-installing plugin %r...", plugin_name)
+                try:
+                    # Keep target directory creation and validation inside the per-plugin try-except block
+                    user_path.mkdir(parents=True, exist_ok=True)
+                    
+                    target_dir = user_path / plugin_name
+                    if target_dir.exists() or target_dir.is_symlink():
+                        if not target_dir.is_dir():
+                            log.warning("Skipping plugin %r: target path exists but is not a directory", plugin_name)
+                            continue
+                        if any(target_dir.iterdir()):
+                            continue
+                    
+                    # Clean up empty placeholder directory if it exists
+                    if target_dir.exists():
+                        shutil.rmtree(target_dir, ignore_errors=True)
+
+                    # Stage under user_path using a temporary directory
+                    with tempfile.TemporaryDirectory(dir=user_path, prefix=".auto-install-") as tmp_dir:
+                        tmp_path = Path(tmp_dir)
+                        zip_path = tmp_path / "plugin.zip"
+                        
+                        # Download with timeout and max size limit (50 MB)
+                        req = urllib.request.Request(
+                            url,
+                            headers={"User-Agent": "feedBack-Auto-Install/1.0"}
+                        )
+                        with opener.open(req, timeout=15) as response:
+                            if response.status != 200:
+                                raise ValueError(f"HTTP error {response.status}")
+                            
+                            max_bytes = 50 * 1024 * 1024
+                            total_bytes = 0
+                            with open(zip_path, "wb") as f:
+                                while True:
+                                    chunk = response.read(64 * 1024)
+                                    if not chunk:
+                                        break
+                                    total_bytes += len(chunk)
+                                    if total_bytes > max_bytes:
+                                        raise ValueError(f"Download size limit exceeded (max {max_bytes} bytes)")
+                                    f.write(chunk)
+                        
+                        extract_path = tmp_path / "extracted"
+                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                            # Validate members before extraction
+                            max_uncompressed_bytes = 100 * 1024 * 1024
+                            total_uncompressed = 0
+                            max_files = 5000
+                            abs_extract_path = os.path.abspath(extract_path)
+                            
+                            zip_members = zip_ref.infolist()
+                            if len(zip_members) > max_files:
+                                raise ValueError(f"Too many files in ZIP archive (max {max_files})")
+                                
+                            for info in zip_members:
+                                total_uncompressed += info.file_size
+                                if total_uncompressed > max_uncompressed_bytes:
+                                    raise ValueError(f"Cumulative uncompressed size limit exceeded (max {max_uncompressed_bytes} bytes)")
+                                
+                                # Prevent path traversal
+                                abs_target = os.path.abspath(extract_path / info.filename)
+                                if os.path.commonpath([abs_extract_path, abs_target]) != abs_extract_path:
+                                    raise ValueError(f"Directory traversal detected in ZIP member: {info.filename}")
+                                
+                                # Reject symlinks and special files
+                                mode = info.external_attr >> 16
+                                if (mode & 0o170000) in (0o120000, 0o140000, 0o010000, 0o060000, 0o020000):
+                                    raise ValueError(f"Symlinks and special files are not allowed: {info.filename}")
+                            
+                            zip_ref.extractall(extract_path)
+                        
+                        roots = [d for d in extract_path.iterdir() if d.is_dir()]
+                        if len(roots) != 1:
+                            raise ValueError(f"Expected exactly one root directory in zip, found {len(roots)}")
+                        
+                        root_dir = roots[0]
+                        manifest_path = root_dir / "plugin.json"
+                        if not manifest_path.exists():
+                            raise ValueError("Extracted root does not contain plugin.json")
+                        
+                        try:
+                            with open(manifest_path, "r", encoding="utf-8") as mf:
+                                manifest_data = json.load(mf)
+                        except Exception as manifest_err:
+                            raise ValueError(f"Failed to parse plugin.json: {manifest_err}")
+                        
+                        if not isinstance(manifest_data, dict):
+                            raise ValueError("plugin.json is not a valid JSON object")
+                        
+                        plugin_id = manifest_data.get("id")
+                        if not isinstance(plugin_id, str) or not plugin_id.strip():
+                            raise ValueError("plugin.json is missing a valid non-empty string 'id'")
+                        
+                        # Clean up the zip file before moving
+                        zip_path.unlink(missing_ok=True)
+                        
+                        # Atomic same-filesystem rename
+                        try:
+                            os.rename(str(root_dir), str(target_dir))
+                        except (FileExistsError, OSError) as rename_err:
+                            if target_dir.exists() and any(target_dir.iterdir()):
+                                log.info("Plugin %r was concurrently installed, skipping", plugin_name)
+                            else:
+                                raise rename_err
+                        
+                    log.info("Successfully installed plugin %r to %s", plugin_name, target_dir)
+                except Exception as e:
+                    err_msg = str(e)
+                    if url in err_msg:
+                        err_msg = err_msg.replace(url, _sanitize_url(url))
+                    log.warning("Failed to auto-install plugin %r: %s", plugin_name, err_msg, exc_info=not isinstance(e, ValueError))
+
         if user_path.is_dir() and user_path != PLUGINS_DIR:
             plugin_dirs.append(user_path)
     if PLUGINS_DIR.is_dir():

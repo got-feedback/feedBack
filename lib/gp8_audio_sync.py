@@ -72,15 +72,59 @@ def _parse_gpif(data: bytes):
         return ET.fromstring(data)
 
 
+def _asset_path_from_registry(root, asset_id: str) -> str | None:
+    """The ZIP path an ``<Asset id=...>`` declares, or None.
+
+    GPIF shape::
+
+        <Assets>
+          <Asset id="0">
+            <EmbeddedFilePath>Content/Assets/&lt;hash&gt;.mp3</EmbeddedFilePath>
+
+    Separators are normalised (a writer may emit backslashes) and the
+    result is returned as-is for the caller to verify against the
+    archive — this function never decides that a path exists.
+    """
+    if root is None or not asset_id:
+        return None
+    try:
+        for asset in root.iter('Asset'):
+            if (asset.get('id') or '').strip() != asset_id:
+                continue
+            node = asset.find('EmbeddedFilePath')
+            path = (node.text or '').strip() if node is not None else ''
+            if not path:
+                return None
+            return path.replace('\\', '/').lstrip('./')
+    except Exception:
+        # A malformed registry is not fatal — the caller has two more
+        # resolution steps behind this one.
+        return None
+    return None
+
+
 def _resolve_audio_asset(zf, root=None) -> tuple[str, str | None]:
     """Resolve the embedded backing-track audio asset inside a .gp ZIP.
 
-    Matches ``BackingTrack/AssetId`` against the audio files under
-    ``Content/Assets/`` (OGG, MP3, M4A, …) and falls back to the first
-    audio asset when the declared id is missing or unmatched. Returns
-    ``(asset_stem, audio_zip_path)``, or ``('', None)`` when the archive
-    has no audio asset. Shared by ``extract_sync`` and ``extract_audio``
-    so the matching logic can't drift between them.
+    ``BackingTrack/AssetId`` is a key into the GPIF's ``<Assets>``
+    registry — ``<Asset id="0"><EmbeddedFilePath>`` names the exact path
+    inside the ZIP — NOT a filename stem. Resolution order:
+
+    1. the registry entry for the declared id (authoritative);
+    2. a filename-stem match (files whose stem IS the id);
+    3. the archive's first audio asset.
+
+    Step 2 was previously the only lookup, which mattered because GP8
+    names embedded files by hash while ids are small integers, so the
+    stem match essentially never hit: every such file logged a warning
+    and fell through to step 3. That was silently correct only because a
+    file almost always carries exactly ONE audio asset — with two, a
+    backing track declaring id 1 resolved to asset 0, i.e. the wrong
+    recording.
+
+    Returns ``(asset_stem, audio_zip_path)``, or ``('', None)`` when the
+    archive has no audio asset. Shared by ``extract_sync`` and
+    ``extract_audio`` so the matching logic can't drift between them.
     """
     audio_files = [
         n for n in zf.namelist()
@@ -115,6 +159,24 @@ def _resolve_audio_asset(zf, root=None) -> tuple[str, str | None]:
             declared = (aid.text or '').strip() if aid is not None else ''
 
     if declared:
+        # 1. The <Assets> registry is authoritative: it maps the id to the
+        #    embedded path directly. Membership in the archive is verified
+        #    rather than trusted — the path comes out of the file, and a
+        #    stale/edited entry must fall through, not resolve to nothing.
+        registry_path = _asset_path_from_registry(root, declared)
+        if registry_path:
+            same_stem = [
+                n for n in audio_files
+                if Path(n).stem == Path(registry_path).stem
+            ]
+            if same_stem:
+                return Path(registry_path).stem, _prefer_ogg(same_stem)
+            _log.warning(
+                'gp8_audio_sync: AssetId %r maps to %r, which is not an audio '
+                'asset in the archive; falling back',
+                declared, registry_path,
+            )
+        # 2. Legacy shape: files whose stem IS the declared id.
         matched = [n for n in audio_files if Path(n).stem == declared]
         if matched:
             return declared, _prefer_ogg(matched)

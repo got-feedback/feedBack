@@ -38,18 +38,25 @@ from gp_autosync import (
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _gpif_bytes(asset_id: str = "abc-123") -> bytes:
+def _gpif_bytes(asset_id: str = "abc-123", registry=None) -> bytes:
+    """`registry` maps Asset id -> EmbeddedFilePath, mirroring real GP8 files."""
     root = ET.Element("GPIF")
     bt = ET.SubElement(root, "BackingTrack")
     ET.SubElement(bt, "AssetId").text = asset_id
+    if registry:
+        assets = ET.SubElement(root, "Assets")
+        for aid, path in registry.items():
+            a = ET.SubElement(assets, "Asset")
+            a.set("id", aid)
+            ET.SubElement(a, "EmbeddedFilePath").text = path
     return ET.tostring(root)
 
 
 def _make_gp_zip(asset_id="abc-123", ogg_stems=("abc-123",),
-                 asset_ext=".ogg") -> zipfile.ZipFile:
+                 asset_ext=".ogg", registry=None) -> zipfile.ZipFile:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Content/score.gpif", _gpif_bytes(asset_id))
+        zf.writestr("Content/score.gpif", _gpif_bytes(asset_id, registry))
         for stem in ogg_stems:
             zf.writestr(f"Content/Assets/{stem}{asset_ext}", b"fake-audio")
     buf.seek(0)
@@ -284,3 +291,87 @@ def test_extract_sync_points_empty_when_no_bars():
     root = ET.Element("GPIF")  # no MasterBars
     _, wp, times, sr, hop = _identity_setup()
     assert _extract_sync_points(wp, root, times, times, sr, hop, 4) == []
+
+
+# ── AssetId is a key into <Assets>, not a filename stem ──────────────────────
+# Real GP8 files name embedded audio by hash while AssetId is a small
+# integer, so the stem match never hit: every such file warned and fell
+# through to "first audio asset". Silently correct with ONE asset; with two,
+# a backing track declaring id 1 resolved to asset 0 — the wrong recording.
+
+_REAL_SHAPE = {"0": "Content/Assets/1312f2aa-10ee-5f35-a4d5-e999eee1d9d0.mp3"}
+
+
+def test_asset_id_resolves_through_the_registry_not_the_stem():
+    zf = _make_gp_zip(
+        asset_id="0",
+        ogg_stems=("1312f2aa-10ee-5f35-a4d5-e999eee1d9d0",),
+        asset_ext=".mp3",
+        registry=_REAL_SHAPE,
+    )
+    stem, path = _resolve_audio_asset(zf)
+    assert path == "Content/Assets/1312f2aa-10ee-5f35-a4d5-e999eee1d9d0.mp3"
+    assert stem == "1312f2aa-10ee-5f35-a4d5-e999eee1d9d0"
+
+
+def test_the_second_asset_is_reachable():
+    """The actual bug: id 1 used to resolve to asset 0."""
+    zf = _make_gp_zip(
+        asset_id="1",
+        ogg_stems=("first-track", "second-track"),
+        registry={
+            "0": "Content/Assets/first-track.ogg",
+            "1": "Content/Assets/second-track.ogg",
+        },
+    )
+    stem, path = _resolve_audio_asset(zf)
+    assert path == "Content/Assets/second-track.ogg", "declared id 1 must win"
+    assert stem == "second-track"
+
+
+def test_registry_entry_pointing_at_a_missing_file_falls_through():
+    zf = _make_gp_zip(
+        asset_id="0",
+        ogg_stems=("real-track",),
+        registry={"0": "Content/Assets/deleted-track.ogg"},
+    )
+    stem, path = _resolve_audio_asset(zf)
+    assert path == "Content/Assets/real-track.ogg"
+
+
+def test_backslash_separators_in_the_registry_are_normalised():
+    zf = _make_gp_zip(
+        asset_id="0",
+        ogg_stems=("winpath",),
+        registry={"0": r"Content\Assets\winpath.ogg"},
+    )
+    _, path = _resolve_audio_asset(zf)
+    assert path == "Content/Assets/winpath.ogg"
+
+
+def test_registry_prefers_ogg_among_same_stem_duplicates():
+    """Quality behaviour is preserved: OGG is copied out, others transcoded."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Content/score.gpif", _gpif_bytes(
+            "0", {"0": "Content/Assets/dual.mp3"}))
+        zf.writestr("Content/Assets/dual.mp3", b"fake")
+        zf.writestr("Content/Assets/dual.ogg", b"fake")
+    buf.seek(0)
+    _, path = _resolve_audio_asset(zipfile.ZipFile(buf))
+    assert path.endswith(".ogg")
+
+
+def test_a_malformed_registry_does_not_break_resolution():
+    for reg in ({"0": ""}, {"9": "Content/Assets/other.ogg"}, {}):
+        zf = _make_gp_zip(asset_id="0", ogg_stems=("fallback",), registry=reg)
+        _, path = _resolve_audio_asset(zf)
+        assert path == "Content/Assets/fallback.ogg"
+
+
+def test_legacy_stem_match_still_works_without_a_registry():
+    """Files whose stem IS the id keep resolving — step 2 of the ladder."""
+    zf = _make_gp_zip(asset_id="abc-123", ogg_stems=("zzz", "abc-123"))
+    stem, path = _resolve_audio_asset(zf)
+    assert stem == "abc-123"
+    assert path == "Content/Assets/abc-123.ogg"

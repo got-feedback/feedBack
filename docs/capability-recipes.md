@@ -499,6 +499,63 @@ window.feedBack.on('progression:quest-completed', (e) => {
 });
 ```
 
+## Chart-Transform Provider
+
+Plugins that remap chart data — retuning to another instrument, simplification, exercise generation — register as `chart-transform` providers (#952) instead of forking a renderer. The substituted chart reaches every consumer: built-in 2D highway, custom viz (bundle), overlays/scorers (getters), on the primary highway and announced splitscreen instances.
+
+```json
+{
+  "id": "my_transform",
+  "name": "My Transform",
+  "standards": ["capability-pipelines.v1"],
+  "capabilities": {
+    "chart-transform": {
+      "roles": ["provider"],
+      "operations": ["chart.transform"],
+      "mode": "active",
+      "compatibility": "degrade-noop",
+      "ownership": "multi-provider",
+      "safety": "safe",
+      "version": 1
+    }
+  }
+}
+```
+
+```js
+const api = window.feedBack.capabilities;
+
+await api.dispatch({
+  capability: 'chart-transform',
+  command: 'register-provider',
+  source: 'my_transform',
+  payload: {
+    providerId: 'my_transform',
+    label: 'My Transform',
+    transform(input) {
+      // input: { notes, chords, anchors, allNotes, allChords,
+      //   chordTemplates, handShapes, stringCount, songInfo }
+      // notes/chords/anchors/handShapes are DIFFICULTY-FILTERED (the
+      // transform applies after the mastery filter). Return any subset of
+      // { notes, chords, anchors, allNotes, allChords, chordTemplates,
+      //   handShapes, stringCount, tuning, capo, centOffset } — or
+      // null/undefined to pass the chart through untouched.
+      if (!/\bguitar|bass|lead|rhythm|combo\b/i.test(input.songInfo?.arrangement || '')) return null;
+      return { notes: remap(input.notes) };
+    },
+  },
+});
+
+// User toggles it on (selection persists and restores on re-registration):
+await api.dispatch({ capability: 'chart-transform', command: 'select-provider',
+  source: 'my_transform', payload: { providerId: 'my_transform' } });
+
+// Settings changed mid-song? Re-run the installed transform live:
+await api.dispatch({ capability: 'chart-transform', command: 'refresh', source: 'my_transform' });
+```
+
+The transform runs once per chart change (ready, mastery recompute, refresh) — never per frame. A throwing transform is skipped for that pass (the original chart renders) and surfaces as the `transform-failed` event with a path-redacted reason. `getSongInfo()` keeps the chart's original tuning/capo by contract; export `tuning` as standard-relative offsets for your target string count so scoring consumers judge the target instrument via `bundle.tuning`/`bundle.capo`/`bundle.centOffset`.
+
 ## Future Expansion Domains
 
 Some domain names are reserved for expected future contracts, but they are not registered in the runtime graph yet. For example, `ui.player-panels` is documented as a likely panel-host surface, but FeedBack does not currently expose a capability command for panel contributions. See [capability-roadmap.md](capability-roadmap.md) for the PR1 domain set and deferred-domain checklist.

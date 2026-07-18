@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`chart-transform` capability domain (#952)** — plugins can now remap the
+  chart (notes, chords, anchors, chord templates, string count, tuning)
+  before rendering and scoring, without forking a renderer. The new
+  core-owned provider-coordinator (`static/capabilities/chart-transform.js`)
+  owns registration, selection (persisted per provider id, restored on
+  re-registration), refresh, failure attribution, and redaction-safe
+  diagnostics (`feedBack.chart_transform.diagnostics.v1`); the data plane is
+  the new synchronous `highway.setChartTransform({ id, transform })` hook.
+  Staged output substitutes the chart for every consumer — the built-in 2D
+  renderer, custom `setRenderer` viz (bundle), and overlay/scoring getters —
+  and is recomputed at chart ready and on every mastery change: the
+  transform always applies AFTER difficulty filtering, so phrase-level
+  selection keys on original-chart identity and providers voice chords for
+  the note set actually played. A throwing provider is skipped for that
+  pass (the original chart keeps rendering) and the failure surfaces as
+  `highway:chart-transform-failed` / the domain's `transform-failed` event.
+  The full contract covers notes (with slide endpoints), chords, anchors,
+  chord templates, hand shapes, string count, tuning, capo, and cent
+  offset (`bundle.centOffset` is new, mirroring `songInfo.centOffset` when
+  untransformed). The active provider installs on every highway surface —
+  `createHighway()` announces instances via a new `highway:created` bus
+  event, so splitscreen panels remap too, each against its own
+  arrangement; per-panel independent selection remains a tracked
+  follow-up. The bundled 3D highway's nut pitch labels now read
+  `bundle.tuning`/`bundle.capo` first (the transform-aware fields;
+  behavior-neutral without a transform since they mirror `songInfo`), so
+  retuned charts label the target instrument's strings.
 - **Gold tier (career passports)** — an earned badge turns **gold** when
   Virtuoso verifies an improvised jam in the passport's style (the
   `gold_improv` artifact relays with the drill snapshot; a genre inherits its

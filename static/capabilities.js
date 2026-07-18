@@ -128,6 +128,7 @@
         stems: Object.freeze({ lifecycle: 'active', label: 'Active contract', tone: 'clean', summary: 'Core-coordinated stem automation, restore, manual override, and compatibility bridge surface backed by the active Stems provider.' }),
         visualization: Object.freeze({ lifecycle: 'active', label: 'Active contract', tone: 'clean', summary: 'Core-coordinated highway renderer providers: discovery, picker selection, auto-match attribution, failure fallback, and redaction-safe diagnostics.' }),
         'note-detection': Object.freeze({ lifecycle: 'active', label: 'Active contract', tone: 'clean', summary: 'Coordinates note-detection providers and requester-owned, context-scoped detection bindings (spec 009); consumers own judgment, hit/miss flow as observability events.' }),
+        'chart-transform': Object.freeze({ lifecycle: 'active', label: 'Active contract', tone: 'clean', summary: 'Coordinates chart-transform providers: pre-render/pre-scoring chart substitution applied after difficulty filtering, with persisted selection, refresh, and redacted failure attribution (#952).' }),
     });
     const EXPECTED_COMPATIBILITY_SHIMS = Object.freeze({});
 

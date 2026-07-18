@@ -400,6 +400,45 @@ highway.setNoteStateProvider((note, chartTime) => {
 - The built-in 2D highway consults it in `drawNote` / `drawSustains` / the chord-frame path: 'hit'/'active' → bright string colour + additive halo + a contained "sizzle" (crackling sparks, throbbing core, a shockwave ring on a fresh strike) on the gem and a bright (vs dim) sustain trail; 'miss' → faint red wash. The bundled **3D highway** reads the same data via `bundle.getNoteState` (bright string-tinted outline + bright body + glowing sustain + a contained sparkle hugging the note rect on hit/active; red outline + suppressed body on miss). Custom renderers that want it call `bundle.getNoteState(note, chartTime)` — it null-guards and returns the normalized `{ state, alpha, color }` (or null).
 - This is orthogonal to the overlay contract: note_detect remains an overlay (HUD, diagnostic miss markers, the "currently detected" indicator) *and* a scorer that feeds this provider. A renderer that ignores `getNoteState` simply doesn't light gems — nothing breaks.
 
+#### 4. Chart-transform provider — remap the chart before rendering AND scoring (feedBack#952)
+
+A plugin that remaps chart data (retuning to a different instrument, simplification, exercise generators) registers as a provider of the core-owned **`chart-transform` capability domain** instead of forking a renderer. The substituted chart flows to EVERY consumer at once: the built-in 2D highway, custom `setRenderer` viz (via the bundle), overlays and scorers (via the highway getters), on the primary highway and every splitscreen panel.
+
+```js
+// Register the provider (in-page; the transform closure passes through dispatch):
+await window.feedBack.capabilities.dispatch({
+    capability: 'chart-transform', command: 'register-provider',
+    source: 'my_plugin',
+    payload: {
+        providerId: 'my_plugin', label: 'My Transform',
+        transform(input) {
+            // input: { notes, chords, anchors, allNotes, allChords,
+            //   chordTemplates, handShapes, stringCount, songInfo }
+            // notes/chords/anchors/handShapes are the DIFFICULTY-FILTERED
+            // chart — the transform applies AFTER the mastery filter, so
+            // solve for the note set the player actually plays. allNotes/
+            // allChords are the full-difficulty arrays (feed getNotes()/
+            // getChords()); omit them from the output when no filter is
+            // active (input.allNotes === input.notes) and core reuses the
+            // effective output. Return ONLY untransformable charts as
+            // null/undefined — core keeps the original.
+            return { notes, chords, anchors, chordTemplates, handShapes,
+                     stringCount, tuning, capo, centOffset };  // any subset
+        },
+    },
+});
+// Selection (persisted per provider id; restores on re-registration):
+//   command 'select-provider' / 'clear-provider' — e.g. from your own toggle.
+// Settings changed mid-song? command 'refresh' re-runs the transform live.
+```
+
+Key rules:
+- **Never per-frame.** The transform runs once per chart change (chart ready, every mastery-filter recompute, explicit `refresh`) via the synchronous `highway.setChartTransform` hook the domain owner manages — don't call the hook yourself; register/select through the domain so selection, persistence, splitscreen propagation, and diagnostics stay coordinated.
+- **Throwing is safe but silent-ish:** a provider error skips that pass (the original chart renders) and fires `highway:chart-transform-failed` → the domain's `transform-failed` event with a path-redacted reason.
+- **`getSongInfo()` keeps the chart's ORIGINAL tuning/capo by contract.** Transform-aware consumers read `bundle.tuning` / `bundle.capo` / `bundle.centOffset` / `bundle.stringCount` (or `getStringCount()`), which reflect the substitution. Export `tuning` as standard-relative offsets for the target string count so pitch-deriving consumers judge the target instrument.
+- **Multi-instance for free:** each highway instance (splitscreen panel) restages with its OWN `songInfo`, so per-arrangement routing happens inside your transform, per panel. One provider is active at a time, on all surfaces; per-panel independent selection is a tracked follow-up.
+- Reference implementation: [feedBack-plugin-chart-retuner](https://github.com/jphinspace/feedBack-plugin-chart-retuner) — tuning remap engine + provider registration + enable toggle in `playerControlSlot()`.
+
 ### Audio mixer fader registration (feedBack#87)
 
 Plugins that produce audio outside the song's `<audio>` element (NAM amp output, synth voices, etc.) can register a labeled fader so users can balance them against the song from one mixer popover in the player controls.

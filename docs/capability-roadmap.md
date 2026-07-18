@@ -60,6 +60,10 @@ The progression slice (spec 010) promotes `progression` as an active exclusive-o
 
 Deferred follow-up slices: a `contributor` role so plugins ship their own challenge/quest content (drums challenges from a drums-scoring plugin, quest-pool entries from minigame plugins), and drums scoring wiring so `song_completed {instrument: "drums"}` goals become satisfiable.
 
+## Chart-Transform Control Plane Slice
+
+The chart-transform slice (#952) promotes `chart-transform` as an active provider-coordinator core domain. It owns provider registration/unregistration (registrant-only), selection with per-provider persistence and restore-on-registration, explicit refresh, failure attribution with path-redacted reasons, and diagnostics under `feedBack.chart_transform.diagnostics.v1`. The data plane is the synchronous `highway.setChartTransform` hook: staged output substitutes the chart for the built-in 2D renderer, custom renderers (bundle), and overlay/scoring getters, and is recomputed at chart ready and on every mastery change — the transform always applies AFTER difficulty filtering. The slice ships no compatibility shims (no legacy chart-substitution surface exists). The active provider installs on every highway surface — the primary instance plus any announced via `highway:created` (splitscreen panels) — with per-panel *independent selection* as a tracked follow-up.
+
 ## Recommended Next Slices
 
 The plugin inventory suggests this migration order after the audio graph/session and playback slices:
@@ -111,6 +115,7 @@ These domains are planned but should stay out of the runtime graph until a host 
 | `midi-control` | multi-provider | sensitive | MIDI control mappings only (CC/pitchbend/note → action routing), consuming `midi-input` for device access. Device discovery/selection/open is split out to the delivered `midi-input` domain (spec 012). | A concrete mapping/routing workflow on top of the `midi-input` device plane (#882). |
 | `audio-input` | multi-provider | sensitive | Audio input device providers, source selection, open/close lifecycle, shared sessions, and redacted failure diagnostics. | Promoted by the audio graph/session slice and implemented by the audio-input control-plane slice. |
 | `tempo-clock` | multi-provider | safe | Tempo/clock provider registration and consumers. | A concrete tempo source and consumer workflow. |
+| `chart-transform` | multi-provider | safe | Pre-render/pre-scoring chart substitution on the highway data plane: the active provider remaps the difficulty-filtered notes/chords/anchors/chord-templates/string-count/tuning — always downstream of the mastery filter, so phrase-level selection keys on original-chart identity and chord revoicing solves for the note set actually played — before renderers, overlays, and note-detection consumers read them. Covers provider selection, refresh/invalidation on filter recompute and target-tuning change, and redacted remap diagnostics. | Promoted by the chart-transform control-plane slice (#952). |
 
 Deferred domains may remain documented or reserved, but they should not produce expected shims, inspector links, or runtime handlers before their implementation slice.
 

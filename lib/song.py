@@ -56,6 +56,13 @@ class Note:
     strum_group: int = -1
     scale_degree: int = -1
     ignore: bool = False
+    # Keys hand assignment ('lh'/'rh', None = unassigned) — authored per-note,
+    # e.g. from a MusicXML grand staff import in the editor. Lets the notation
+    # hand split and hands-separate practice honor the author instead of the
+    # mean-pitch heuristic. Distinct from `right_hand` (the bass plucking
+    # finger); spelled-out `hand` on the wire because `rh` is taken.
+    # Default-omitted on the wire; older readers ignore it.
+    hand: str | None = None
 
 
 @dataclass
@@ -272,6 +279,10 @@ def note_to_wire(n: Note) -> dict:
         out["ch"] = n.strum_group
     if n.scale_degree != -1:
         out["sd"] = n.scale_degree
+    # Keys hand assignment — default-omitted; validated on emit so a
+    # directly-constructed Note can't put junk ('LH', True, …) on the wire.
+    if n.hand in ("lh", "rh"):
+        out["hand"] = n.hand
     return out
 
 
@@ -532,6 +543,10 @@ def note_from_wire(d: dict, time: float | None = None) -> Note:
         strum_group=_wire_int_optional(d.get("ch"), -1),
         scale_degree=_wire_int_optional(d.get("sd"), -1),
         ignore=bool(d.get("ig", False)),
+        # Keys hand assignment — strict enum decode: anything but 'lh'/'rh'
+        # (junk, wrong case, bools) falls back to unassigned rather than
+        # poisoning downstream hand-split/practice logic.
+        hand=d.get("hand") if d.get("hand") in ("lh", "rh") else None,
     )
 
 

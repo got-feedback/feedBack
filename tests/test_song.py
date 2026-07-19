@@ -249,6 +249,34 @@ def test_note_teaching_marks_tolerate_malformed_optional_ints():
         assert n.scale_degree == -1
 
 
+# ── Keys hand assignment ─────────────────────────────────────────────────────
+
+def test_note_hand_round_trips_under_literal_key():
+    """The keys hand assignment survives the wire as the literal `hand` key
+    (spelled out — `rh` is taken by right_hand, the bass plucking finger)."""
+    for hand in ("lh", "rh"):
+        n = Note(time=0.0, string=2, fret=12, hand=hand)
+        wire = note_to_wire(n)
+        assert wire["hand"] == hand
+        assert note_from_wire(wire) == n
+
+
+def test_note_hand_omitted_when_unassigned():
+    wire = note_to_wire(Note(time=0.0, string=0, fret=0))
+    assert "hand" not in wire
+    assert note_from_wire(wire).hand is None
+
+
+def test_note_hand_junk_never_emitted_and_decodes_to_unassigned():
+    """Emit side validates ('LH', True, … stay off the wire); decode side is a
+    strict enum so a hand-edited pack can't poison hand-split logic."""
+    for junk in ("LH", "left", "", True, 1, ["lh"]):
+        assert "hand" not in note_to_wire(
+            Note(time=0.0, string=0, fret=0, hand=junk))
+        assert note_from_wire(
+            {"t": 0.0, "s": 0, "f": 0, "hand": junk}).hand is None
+
+
 # ── Scale-degree derivation helpers (§6.2.2 / §7.7) ──────────────────────────
 
 @pytest.mark.parametrize("key,pc", [

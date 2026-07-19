@@ -165,12 +165,20 @@ def _resolve_audio_asset(zf, root=None) -> tuple[str, str | None]:
         #    stale/edited entry must fall through, not resolve to nothing.
         registry_path = _asset_path_from_registry(root, declared)
         if registry_path:
+            # Matched on STEM, not the whole path, so a format variant of the
+            # same recording can win (see _prefer_ogg) — but constrained to the
+            # directory the registry actually named. Without that constraint an
+            # unrelated file that merely shares the stem could stand in for the
+            # declared asset, which is the failure the registry lookup exists
+            # to prevent.
+            declared_path = Path(registry_path)
             same_stem = [
                 n for n in audio_files
-                if Path(n).stem == Path(registry_path).stem
+                if Path(n).stem == declared_path.stem
+                and Path(n).parent == declared_path.parent
             ]
             if same_stem:
-                return Path(registry_path).stem, _prefer_ogg(same_stem)
+                return declared_path.stem, _prefer_ogg(same_stem)
             _log.warning(
                 'gp8_audio_sync: AssetId %r maps to %r, which is not an audio '
                 'asset in the archive; falling back',

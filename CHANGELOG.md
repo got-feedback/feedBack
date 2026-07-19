@@ -235,6 +235,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine (`app.js`, `highway.js`, `playSong`, `showScreen`, the capability registry).
 
 ### Fixed
+- **GP8 asset resolution honours the directory the registry named.**
+  `<EmbeddedFilePath>` is matched on filename stem so a format variant of the
+  same recording can win (an `.ogg` beside the declared `.mp3` is copied out
+  losslessly instead of transcoded) — but the search was not restricted to the
+  declared directory, so an unrelated file elsewhere in the archive that merely
+  shared the stem could stand in for the declared asset. That is the exact
+  substitution the registry lookup exists to prevent. Candidates are now
+  confined to the registry path's own directory; a genuinely absent asset
+  falls through as documented.
 - **Guitar Pro 8: the right backing track is extracted when a file carries more than one.**
   `BackingTrack/AssetId` is a key into the GPIF's `<Assets>` registry — `<Asset
   id="0"><EmbeddedFilePath>` names the exact path inside the archive — but it

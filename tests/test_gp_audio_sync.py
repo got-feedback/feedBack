@@ -375,3 +375,51 @@ def test_legacy_stem_match_still_works_without_a_registry():
     stem, path = _resolve_audio_asset(zf)
     assert stem == "abc-123"
     assert path == "Content/Assets/abc-123.ogg"
+
+
+def test_a_same_stem_file_in_another_directory_cannot_stand_in():
+    """The registry names a PATH, not just a name.
+
+    Resolution matches on stem so a format variant of the same recording can
+    win, but an unrelated file that merely shares the stem must not satisfy
+    the declaration — that substitution is what the registry lookup exists to
+    prevent. The declared asset is genuinely absent here, so the right answer
+    is the documented fall-through, not the decoy.
+
+    ZIP order matters to this test: `real.ogg` is written FIRST so the
+    fall-through target differs from the decoy. Otherwise both the fixed and
+    unfixed code return the same file and the test proves nothing.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Content/score.gpif", _gpif_bytes(
+            "0", {"0": "Content/Audio/track.ogg"}))
+        zf.writestr("Content/Assets/real.ogg", b"fake")     # fall-through target
+        zf.writestr("Content/Assets/track.ogg", b"decoy")   # shares the stem only
+    buf.seek(0)
+    _, path = _resolve_audio_asset(zipfile.ZipFile(buf))
+    assert path == "Content/Assets/real.ogg", (
+        "a same-stem file in a directory the registry never named must not "
+        "satisfy the declaration"
+    )
+
+
+def test_the_declared_directory_still_resolves_its_own_format_variants():
+    """The directory constraint must not cost us the OGG preference.
+
+    The shallower decoy is written FIRST, so unfixed code (which searches
+    every directory) picks it and this test fails.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Content/score.gpif", _gpif_bytes(
+            "0", {"0": "Content/Assets/nested/take.mp3"}))
+        zf.writestr("Content/Assets/take.ogg", b"decoy-one-level-up")
+        zf.writestr("Content/Assets/nested/take.mp3", b"declared")
+        zf.writestr("Content/Assets/nested/take.ogg", b"same-take-lossless")
+    buf.seek(0)
+    stem, path = _resolve_audio_asset(zipfile.ZipFile(buf))
+    assert path == "Content/Assets/nested/take.ogg", (
+        "the OGG variant in the DECLARED directory wins over a shallower decoy"
+    )
+    assert stem == "take"

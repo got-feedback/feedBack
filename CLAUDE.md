@@ -400,6 +400,14 @@ highway.setNoteStateProvider((note, chartTime) => {
 - The built-in 2D highway consults it in `drawNote` / `drawSustains` / the chord-frame path: 'hit'/'active' → bright string colour + additive halo + a contained "sizzle" (crackling sparks, throbbing core, a shockwave ring on a fresh strike) on the gem and a bright (vs dim) sustain trail; 'miss' → faint red wash. The bundled **3D highway** reads the same data via `bundle.getNoteState` (bright string-tinted outline + bright body + glowing sustain + a contained sparkle hugging the note rect on hit/active; red outline + suppressed body on miss). Custom renderers that want it call `bundle.getNoteState(note, chartTime)` — it null-guards and returns the normalized `{ state, alpha, color }` (or null).
 - This is orthogonal to the overlay contract: note_detect remains an overlay (HUD, diagnostic miss markers, the "currently detected" indicator) *and* a scorer that feeds this provider. A renderer that ignores `getNoteState` simply doesn't light gems — nothing breaks.
 
+#### 4. Chart-transform provider — remap the chart before rendering AND scoring (feedBack#952)
+
+The core-owned `chart-transform` provider coordinator applies synchronous chart substitutions after difficulty filtering. Register and select providers through the capability domain; it owns persistence, refresh, splitscreen propagation, failure attribution, and diagnostics.
+
+Provider inputs and staged outputs are isolated copies. Async returns or provider errors fail back to the original chart and expose only a fixed public failure reason. `getSongInfo()` remains the original chart contract; transform-aware consumers use the renderer bundle or `getStringCount()`, `getTuning()`, `getCapo()`, and `getCentOffset()`.
+
+See [docs/capability-recipes.md](docs/capability-recipes.md#chart-transform-provider) for the manifest and registration example.
+
 ### Audio mixer fader registration (feedBack#87)
 
 Plugins that produce audio outside the song's `<audio>` element (NAM amp output, synth voices, etc.) can register a labeled fader so users can balance them against the song from one mixer popover in the player controls.

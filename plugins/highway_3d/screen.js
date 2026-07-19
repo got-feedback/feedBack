@@ -858,9 +858,13 @@
      */
     function _openStringPitchLabelsForTuning(bundle, songInfo, nEffective) {
         const n = Number.isFinite(nEffective) ? Math.min(Math.max(1, Math.trunc(nEffective)), MAX_RENDER_STRINGS) : resolveStringCount(bundle);
-        let tuning = (songInfo && songInfo.tuning) || bundle.tuning;
-        let cap = songInfo && songInfo.capo;
-        cap = Number.isFinite(cap) ? cap : (Number.isFinite(bundle.capo) ? bundle.capo : 0);
+        // bundle first: chart-transform substitutes tuning/capo there, while
+        // songInfo keeps the chart's originals by contract. A malformed
+        // (non-array) bundle.tuning falls back to songInfo instead of
+        // blanking the labels.
+        let tuning = Array.isArray(bundle.tuning) ? bundle.tuning : (songInfo && songInfo.tuning);
+        let cap = bundle.capo;
+        cap = Number.isFinite(cap) ? cap : (songInfo && Number.isFinite(songInfo.capo) ? songInfo.capo : 0);
         if (!Array.isArray(tuning)) tuning = [];
 
         const base = _baseOpenStringMidis(n, songInfo?.arrangement);
@@ -5604,13 +5608,15 @@
 
         function _openStringLabelSignature(bundle, labels) {
             const si = bundle && bundle.songInfo;
-            const tun = si && si.tuning;
+            // Same bundle-first preference as _openStringPitchLabelsForTuning.
             let tStr = '';
-            if (Array.isArray(tun)) tStr = tun.slice(0, labels.length).join(',');
-            else if (bundle && Array.isArray(bundle.tuning)) tStr = bundle.tuning.slice(0, labels.length).join(',');
+            if (bundle && Array.isArray(bundle.tuning)) tStr = bundle.tuning.slice(0, labels.length).join(',');
+            else if (si && Array.isArray(si.tuning)) tStr = si.tuning.slice(0, labels.length).join(',');
+            // Fallback 0 matches _openStringPitchLabelsForTuning, so the
+            // signature reflects exactly what was rendered.
             const capo =
-                si && Number.isFinite(si.capo) ? si.capo
-                    : (bundle && Number.isFinite(bundle.capo) ? bundle.capo : '');
+                bundle && Number.isFinite(bundle.capo) ? bundle.capo
+                    : (si && Number.isFinite(si.capo) ? si.capo : 0);
             const arrIdx = si && si.arrangement_index != null ? si.arrangement_index : '';
             let palSig = '';
             const nLab = labels.length;
@@ -5645,8 +5651,8 @@
             const tunRef = (si && Array.isArray(si.tuning)) ? si.tuning : null;
             const bundleTunRef = Array.isArray(bundle.tuning) ? bundle.tuning : null;
             const capo =
-                si && Number.isFinite(si.capo) ? si.capo
-                    : (Number.isFinite(bundle.capo) ? bundle.capo : NaN);
+                Number.isFinite(bundle.capo) ? bundle.capo
+                    : (si && Number.isFinite(si.capo) ? si.capo : 0);
             const arrIdx = si && si.arrangement_index != null ? si.arrangement_index : undefined;
             if (
                 _tuningLabelSprites.length === nStr &&

@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`chart-transform` capability domain (#952)** — plugins can now remap the
+  chart before rendering and scoring through a core-owned provider
+  coordinator. Synchronous transforms run after difficulty filtering; host
+  data is isolated from providers, accepted timelines are time-sorted, and
+  failures fall back to the original chart with a fixed public reason.
+  Effective chart arrays and metadata are available to 2D/custom renderers
+  and highway getters, while `getSongInfo()` retains the original metadata.
+  Provider selection persists and applies to primary and splitscreen highways.
 - **Library filter: one-click "Not split" + a piano stem pill.** The v3 Filters drawer's
   stems section gains a **Not split** shortcut that selects "lacks every instrument stem"
   in one tap — the same query Stem Splitter's missing-stems view runs — instead of

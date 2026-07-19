@@ -60,6 +60,10 @@ The progression slice (spec 010) promotes `progression` as an active exclusive-o
 
 Deferred follow-up slices: a `contributor` role so plugins ship their own challenge/quest content (drums challenges from a drums-scoring plugin, quest-pool entries from minigame plugins), and drums scoring wiring so `song_completed {instrument: "drums"}` goals become satisfiable.
 
+## Chart-Transform Control Plane Slice
+
+The chart-transform slice (#952) is an active provider-coordinator domain. It owns provider lifecycle, persisted selection, refresh, failure attribution, and redaction-safe diagnostics. Its synchronous highway hook applies isolated provider output after difficulty filtering to built-in, custom-renderer, and getter consumers across primary and splitscreen highways. No compatibility shim is needed; per-panel independent selection remains a follow-up.
+
 ## Recommended Next Slices
 
 The plugin inventory suggests this migration order after the audio graph/session and playback slices:

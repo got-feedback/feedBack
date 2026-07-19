@@ -52,6 +52,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data-driven bar (avg ≥ 75%) — into the career state; abandoned sets never
   log (no fail state: the gig you finished is the gig you played). Passports
   carry their gig log; instruments their gig count.
+- **3D Highway: fret wires flash on a confirmed hit** — when a scorer (note_detect)
+  confirms a note through the `getNoteState` provider (feedBack#254), the fret wires
+  bracketing it light up. A fretted note lights the wire behind it and the wire it's
+  pressed against; a chord lights only the outermost wires of its shape; an open
+  string lights the anchor lane's edge wires (its gem is drawn as a slab spanning the
+  lane, so those are the wires it sits between); a chord likewise lights the lane's edge
+  wires — the lit lane strip can run a fret past the chord's outermost fret, and a
+  bracket one wire inside the lit lane reads as misaligned (the shape's own outer pair
+  survives only as the fallback on anchor-less charts). At most **two wires are ever lit at
+  once**: when overlapping decay tails (fast passages) would light a run of wires, the
+  flash collapses to the outermost pair of the lit span — one bracket, never a picket
+  fence. The gem's rim joins in: on a confirmed hit the outline flashes in the
+  string's own colour with the same intensity treatment as the wires, fading with the
+  scorer's alpha. With no scorer attached, nothing changes.
 
 ### Changed
 - **`GET /api/song/{f}?stems=1`** (new, opt-in) — returns the pack's playable stem
@@ -72,6 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tree — which is how the song-preview menu check ended up eating ~50% of the
   renderer and dropping the app to 2.7 fps. Lists longer than 200 songs are now
   windowed (25–31 rows in the DOM instead of 50,000); shorter lists are unchanged.
+- **3D Highway: fret wires read as a focus cue** — the contrast between the active
+  anchor lane and the rest of the neck is widened (the lane's wires brighter, the rest
+  dimmer), and the wires themselves are slightly thicker.
 - **The full mix is a stem** (#933) — core no longer depends on `original_audio:`, a
   top-level manifest key this repo invented (#583) that the feedpak spec never had.
   The format already carried the pre-separation mixdown as a stem; feedpak 1.15.0

@@ -1,8 +1,9 @@
 // Pins the renderOrder hierarchy in plugins/highway_3d/screen.js.
 //
 // Three.js renders transparent objects by renderOrder first, then back-to-front
-// Z sort within the same renderOrder. All 3D-highway materials use depthTest:false, so
-// renderOrder is the *only* draw-order control — getting it wrong silently
+// Z sort within the same renderOrder. Nearly all 3D-highway materials use
+// depthTest:false (exceptions exist — e.g. the accent halo mats set
+// depthTest:true), so renderOrder is the primary draw-order control — getting it wrong silently
 // causes one layer to bleed through another (gems clipping through chord frames,
 // strings buried under notes, etc.).
 //
@@ -11,6 +12,7 @@
 //   -1   background stage traversal
 //    1   lane quads
 //    2   fret dividers
+//    3   fret inlay dots (above the lane so it no longer hides them)
 //    4   sus-rail bloom (pSusRailBloom seed)           ← highway_3d_sustain_bloom.test.js
 //    5   sus-rail core (pSusRail seed)                 ← highway_3d_sustain_rail.test.js
 //    7   string-line glows (in-lane glow lines)
@@ -142,7 +144,7 @@ test('string mesh in buildBoard uses the named board-string layer', () => {
     assert.ok(layerIndex('BOARD_STRING') < layerIndex('BOARD_FRET_WIRE'));
 });
 
-test('static fret wires use bowed TubeGeometry + MeshStandardMaterial, named board-fret-wire layer, depthTest+depthWrite false, default gray 0x666688', () => {
+test('static fret wires use bowed TubeGeometry + MeshStandardMaterial, named board-fret-wire layer, depthTest+depthWrite false, idle tier FRET_WIRE_IDLE_HEX', () => {
     // Fret wires are a single shared, bowed TubeGeometry (backported from
     // highway_babylon): a CatmullRom curve whose middle pushes away from the
     // camera by FRET_BOW_DZ so the row of frets reads as wrapping a cylindrical
@@ -184,22 +186,34 @@ test('static fret wires use bowed TubeGeometry + MeshStandardMaterial, named boa
         /new\s+T\.MeshStandardMaterial\(/,
         'fret wires must use MeshStandardMaterial so scene light shades the metal',
     );
+    // The wire tiers moved to named constants (feedBack#969): idle is the
+    // dimmed 0x4A4A60 so the neck recedes and the anchor lane reads as the
+    // focus cue. Assert the material uses the constant AND pin the constant's
+    // value, so a retune is a deliberate two-line change here.
     assert.match(
         s,
-        /color\s*:\s*0x666688/,
-        'fret wire material must have default gray color 0x666688',
-    );
-    // Both depth flags asserted independently so the test doesn't pin property
-    // order in the material literal.
-    assert.match(
-        s,
-        /depthTest\s*:\s*false/,
-        'fret wire material must set depthTest: false',
+        /color\s*:\s*FRET_WIRE_IDLE_HEX/,
+        'fret wire material must take its default color from FRET_WIRE_IDLE_HEX',
     );
     assert.match(
         s,
-        /depthWrite\s*:\s*false/,
-        'fret wire material must set depthWrite: false (no z-buffer pollution)',
+        /FRET_WIRE_IDLE_HEX\s*=\s*0x4A4A60/,
+        'FRET_WIRE_IDLE_HEX must be the dimmed idle gray-violet 0x4A4A60',
+    );
+    // Both depth flags anchored to the fret-wire material literal (via its
+    // FRET_WIRE_IDLE_HEX color, unique to it) — an unscoped match would pass
+    // off any other depthTest:false material in the file. Asserted as two
+    // separate anchored matches so property order inside the literal still
+    // isn't pinned.
+    assert.match(
+        s,
+        /color\s*:\s*FRET_WIRE_IDLE_HEX[\s\S]{0,400}?depthTest\s*:\s*false/,
+        'the fret wire material itself must set depthTest: false',
+    );
+    assert.match(
+        s,
+        /color\s*:\s*FRET_WIRE_IDLE_HEX[\s\S]{0,400}?depthWrite\s*:\s*false/,
+        'the fret wire material itself must set depthWrite: false (no z-buffer pollution)',
     );
     assert.match(
         s,
@@ -208,7 +222,7 @@ test('static fret wires use bowed TubeGeometry + MeshStandardMaterial, named boa
     );
 });
 
-test('update() sets fret wire gold (0xD8A636) for in-anchor frets, gray (0x666688) otherwise', () => {
+test('update() sets fret wire FRET_WIRE_ACTIVE_HEX (gold) for in-anchor frets, FRET_WIRE_IDLE_HEX otherwise', () => {
     // Uses anchorLaneBoundsAt() — the same helper the dynamic lane uses —
     // so fret wire highlight aligns exactly with the lane edges:
     //   dMin = fret - 1,  dMax = fret + width - 1
@@ -226,13 +240,18 @@ test('update() sets fret wire gold (0xD8A636) for in-anchor frets, gray (0x66668
     );
     assert.match(
         s,
-        /_m\.color\.setHex\(\s*0xD8A636\s*\)/,
-        'update() must set gold 0xD8A636 for in-anchor fret wires',
+        /_m\.color\.setHex\(\s*FRET_WIRE_ACTIVE_HEX\s*\)/,
+        'update() must set FRET_WIRE_ACTIVE_HEX for in-anchor fret wires',
     );
     assert.match(
         s,
-        /_m\.color\.setHex\(\s*0x666688\s*\)/,
-        'update() must set gray 0x666688 for out-of-anchor fret wires',
+        /FRET_WIRE_ACTIVE_HEX\s*=\s*0xD8A636/,
+        'FRET_WIRE_ACTIVE_HEX must stay the anchor-lane gold 0xD8A636',
+    );
+    assert.match(
+        s,
+        /_m\.color\.setHex\(\s*FRET_WIRE_IDLE_HEX\s*\)/,
+        'update() must set FRET_WIRE_IDLE_HEX for out-of-anchor fret wires',
     );
     assert.match(
         s,

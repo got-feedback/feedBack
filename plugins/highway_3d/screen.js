@@ -14062,7 +14062,10 @@
                         // (intensity applied per string in the flash pass).
                         _ndOutline = mRimFlash[s] ?? mHitBright[s] ?? mGlow[s];
                         _ndFaceMat = mHitBrightArrays[s] ?? null;
-                        if (_vAlpha > _rimFlashIn[s]) _rimFlashIn[s] = _vAlpha;
+                        // Clamp like the wire path does — a provider returning
+                        // alpha > 1 must not over-drive emissiveIntensity.
+                        const _rimA = Math.max(0, Math.min(1, _vAlpha));
+                        if (_rimA > _rimFlashIn[s]) _rimFlashIn[s] = _rimA;
                         _hitPunch = 1 + 0.22 * _hitFx * _vAlpha;   // #3 scale-punch (biggest at strike, eases)
                         if (_verdictMarks) { const _tc = _timingHex(_ndMatchedMark && _ndMatchedMark.timingState); _ndLabels.push({ x, y: y + NH * 1.7, z: noteZ + 0.02, labels: [{ text: '✓', color: '#' + _tc.toString(16).padStart(6, '0') }] }); }  // #6 + #5
                         if (_sparks && _hitFx > 0 && _vAlpha > 0.5) {

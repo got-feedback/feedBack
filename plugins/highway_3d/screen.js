@@ -4036,6 +4036,13 @@
         // Built in initScene() after mGlow. Array share the same material
         // instances so outline and face fill always match exactly.
         let mHitBright = [], mHitBrightArrays = [];
+        // Gem-rim hit flash ("just the rims"): per-string materials that flash
+        // in the STRING'S OWN colour with the same intensity treatment as the
+        // fret wires (FRET_WIRE_HIT_INTENSITY ramp, provider-alpha fade). Shared
+        // per string, so the applied intensity is the per-frame MAX alpha across
+        // that string's flashing gems — same compromise mGlow already makes.
+        let mRimFlash = [];
+        const _rimFlashIn = new Float32Array(S_COL.length);
         // [verdict glow] Per-frame accumulation of the note-state provider's
         // alpha (note_detect drives this from the live input level for held
         // sustains, and as a time-fade for fresh strikes). Applied at the top of
@@ -7048,13 +7055,21 @@
                 transparent: true, opacity: 1.0, depthWrite: false,
             }));
             mHitBrightArrays = mHitBright.map(m => [m, m, m, m, mEdgeTransparent, mEdgeTransparent]);
+
+            // Rim flash: string-coloured, wire-fashion intensity. Colour and
+            // emissive both take the palette colour so the rim reads as the
+            // string lighting up, not as a white wash over it.
+            mRimFlash = activePalette.map((c) => new T.MeshLambertMaterial({
+                color: c, emissive: c, emissiveIntensity: 1,
+                transparent: true, opacity: 1.0, depthWrite: false,
+            }));
             // Readability (#2 / charrette): the note gems + their outlines punch THROUGH
             // the distance fog so upcoming notes stay legible as they render in at the
             // horizon. The board, lane, sustains and background scenery keep their
             // atmospheric fog — only the note-defining materials are exempted, so the
             // highway still reads as deep while the notes never dissolve into the haze.
             [mWhiteOutline, mMissOutline].forEach(m => { if (m) m.fog = false; });
-            [mStr, mGlow, mStrHitOutline, mHitBright].forEach(arr => arr && arr.forEach(m => { if (m) m.fog = false; }));
+            [mStr, mGlow, mStrHitOutline, mHitBright, mRimFlash].forEach(arr => arr && arr.forEach(m => { if (m) m.fog = false; }));
             // Outline materials render at a lower renderOrder than the body.
             // The body is rendered on top with opacity:1 on hit/miss, which
             // fully covers the outline center — only the fringe that extends
@@ -8365,6 +8380,10 @@
                     if (mStr[s].emissive) mStr[s].emissive.setHex(c);
                 }
                 if (mGlow[s]) mGlow[s].emissive.setHex(c);
+                if (mRimFlash[s]) {
+                    mRimFlash[s].color.setHex(c);
+                    mRimFlash[s].emissive.setHex(c);
+                }
                 if (mSus[s]) mSus[s].color.setHex(c);
                 if (mStrHitOutline[s]) {
                     mStrHitOutline[s].color.setHex(c);
@@ -10738,6 +10757,7 @@
             _scrStringAnticipation.fill(0, 0, nStr);
             _scrFretHeat.fill(0);           // always NFRETS+1, cheap flat fill
             _fwHitIn.fill(0);               // this frame's confirmed-hit frets
+            _rimFlashIn.fill(0);            // this frame's per-string rim-flash alphas
             _fwChordAcc.clear();
             _scrStrGlow.fill(0.5, 0, nStr);
             _scrAccentFillBoost.fill(0, 0, nStr);
@@ -12714,6 +12734,16 @@
                     _m.emissiveIntensity = 1 + (FRET_WIRE_HIT_INTENSITY - 1) * _g;
                     _m.opacity += (FRET_WIRE_HIT_OP - _m.opacity) * _g;
                 }
+
+                // Gem-rim flash: same intensity ramp as the wires, in the
+                // string's own colour. No decay tail of our own — the material
+                // is only ever ASSIGNED while the provider confirms the note,
+                // and the provider's alpha already fades; when it goes silent
+                // the outline reverts and idle intensity is irrelevant.
+                for (let _s = 0; _s < mRimFlash.length; _s++) {
+                    const _m = mRimFlash[_s];
+                    if (_m) _m.emissiveIntensity = 1 + (FRET_WIRE_HIT_INTENSITY - 1) * _rimFlashIn[_s];
+                }
             }
 
             // ── Dynamic highway lane ──────────────────────────────────────
@@ -14028,8 +14058,11 @@
                         _streakHits = 0;            // #7 break the streak (heat eases down)
                         if (_verdictMarks) _ndLabels.push({ x, y: y + NH * 1.7, z: noteZ + 0.02, labels: [{ text: '✗', color: '#ff5a7a' }] });  // #6
                     } else if (_ndGood) {
-                        _ndOutline = mHitBright[s] ?? mGlow[s];
+                        // Rim flashes in the string's own colour, wire-fashion
+                        // (intensity applied per string in the flash pass).
+                        _ndOutline = mRimFlash[s] ?? mHitBright[s] ?? mGlow[s];
                         _ndFaceMat = mHitBrightArrays[s] ?? null;
+                        if (_vAlpha > _rimFlashIn[s]) _rimFlashIn[s] = _vAlpha;
                         _hitPunch = 1 + 0.22 * _hitFx * _vAlpha;   // #3 scale-punch (biggest at strike, eases)
                         if (_verdictMarks) { const _tc = _timingHex(_ndMatchedMark && _ndMatchedMark.timingState); _ndLabels.push({ x, y: y + NH * 1.7, z: noteZ + 0.02, labels: [{ text: '✓', color: '#' + _tc.toString(16).padStart(6, '0') }] }); }  // #6 + #5
                         if (_sparks && _hitFx > 0 && _vAlpha > 0.5) {
@@ -15378,6 +15411,7 @@
             mHitSusOutline?.dispose?.();
             mEdgeTransparent?.dispose?.(); mEdgeTransparent = null;
             for (const m of mHitBright) m?.dispose?.(); mHitBright = []; mHitBrightArrays = [];
+            for (const m of mRimFlash) m?.dispose?.(); mRimFlash = [];
             for (const k in txtCache) {
                 const tm = txtCache[k];
                 tm.userData.h3dGhostFretMeshMat?.dispose?.();

@@ -55,7 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   survives only as the fallback on anchor-less charts). At most **two wires are ever lit at
   once**: when overlapping decay tails (fast passages) would light a run of wires, the
   flash collapses to the outermost pair of the lit span — one bracket, never a picket
-  fence. With no scorer attached, nothing changes.
+  fence. The gem's rim joins in: on a confirmed hit the outline flashes in the
+  string's own colour with the same intensity treatment as the wires, fading with the
+  scorer's alpha. With no scorer attached, nothing changes.
 
 ### Changed
 - **`GET /api/song/{f}?stems=1`** (new, opt-in) — returns the pack's playable stem

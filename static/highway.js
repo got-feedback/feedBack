@@ -60,6 +60,7 @@ import {
     bsearchChords,
     drawChords,
     drawLyrics,
+    getLyricsDisplayCfg,
     drawNote,
     drawNotes,
     drawStrumGroups,
@@ -2748,6 +2749,18 @@ function createHighway() {
             if (hwState._onLyricsChange) hwState._onLyricsChange(hwState.showLyrics);
         },
         setOnLyricsChange(fn) { hwState._onLyricsChange = fn; },
+
+        // Lyric display window (current + upcoming context). Live-tunable:
+        // takes effect on the next drawn frame, shared with the 3D highway
+        // via the same localStorage key. Partial updates merge over the
+        // current values; out-of-range values are clamped by the reader.
+        //   highway.setLyricsDisplay({ upcomingLines: 3, lookaheadSec: 12 })
+        getLyricsDisplay() { return { ...getLyricsDisplayCfg() }; },
+        setLyricsDisplay(opts) {
+            const next = { ...getLyricsDisplayCfg(), ...(opts || {}) };
+            localStorage.setItem('lyricsDisplay', JSON.stringify(next));
+            return { ...getLyricsDisplayCfg() };
+        },
 
         // Teaching marks (§6.2.2): toggle the opt-in sd/ch overlays. The fg
         // numeral has its own toggle below. Persisted to localStorage.

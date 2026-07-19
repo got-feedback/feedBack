@@ -921,11 +921,42 @@ export function drawChords(hwState, W, H) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
+
+// Live-tunable lyric display window, persisted as JSON under
+// localStorage['lyricsDisplay'] and settable in-game via
+// highway.setLyricsDisplay({upcomingLines, lookaheadSec}). Read per frame
+// behind a raw-string compare so a tweak takes effect on the next frame
+// without a reload.
+//   upcomingLines — how many lines beyond the current one may be shown (0-4)
+//   lookaheadSec  — how far ahead a line may start and still be previewed (1-30)
+const LYRICS_DISPLAY_DEFAULTS = { upcomingLines: 2, lookaheadSec: 8 };
+let _lyricsCfgRaw;
+let _lyricsCfg = LYRICS_DISPLAY_DEFAULTS;
+export function getLyricsDisplayCfg() {
+    let raw = null;
+    try { raw = localStorage.getItem('lyricsDisplay'); } catch (e) { /* storage denied */ }
+    if (raw === _lyricsCfgRaw) return _lyricsCfg;
+    _lyricsCfgRaw = raw;
+    let parsed = null;
+    try { parsed = raw ? JSON.parse(raw) : null; } catch (e) { /* corrupt -> defaults */ }
+    if (!parsed || typeof parsed !== 'object') parsed = {};
+    const num = (v, dflt, lo, hi) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+    };
+    _lyricsCfg = {
+        upcomingLines: num(parsed.upcomingLines, LYRICS_DISPLAY_DEFAULTS.upcomingLines, 0, 4) | 0,
+        lookaheadSec: num(parsed.lookaheadSec, LYRICS_DISPLAY_DEFAULTS.lookaheadSec, 1, 30),
+    };
+    return _lyricsCfg;
+}
+
 export function drawLyrics(hwState, W, H) {
     if (!hwState.lyrics.length) return;
 
     const fontSize = Math.max(18, H * 0.028) | 0;
     const lineY = H * 0.04;
+    const cfg = getLyricsDisplayCfg();
 
     // Vocal markers: a trailing "-" means the syllable joins the
     // next one into a single word (no space); a trailing "+" marks the end
@@ -975,67 +1006,88 @@ export function drawLyrics(hwState, W, H) {
     const allLines = hwState.lyrics._lines;
     if (!allLines.length) return;
 
-    // Current line = most recently started line. Before the first line has
-    // started, preview the first line if it's within 2s of starting.
-    let currentIdx = -1;
-    for (let i = 0; i < allLines.length; i++) {
-        if (allLines[i].start <= hwState.currentTime) currentIdx = i;
-        else break;
-    }
-    if (currentIdx === -1) {
-        if (allLines[0].start - hwState.currentTime > 2.0) return;
-        currentIdx = 0;
-    }
-
-    const currentLine = allLines[currentIdx];
-    const nextLine = allLines[currentIdx + 1] || null;
-    const gapToNext = nextLine ? (nextLine.start - currentLine.end) : Infinity;
-
-    // Hide once the current line is clearly over and nothing relevant follows.
-    if (hwState.currentTime > currentLine.end + 0.5 && gapToNext > 3.0) return;
-
-    const linesToShow = [currentLine];
-    if (nextLine && gapToNext <= 3.0) linesToShow.push(nextLine);
-
     const sylText = (s) => {
         const t = s.w || '';
         return (t.endsWith('+') || t.endsWith('-')) ? t.slice(0, -1) : t;
     };
 
     hwState.ctx.font = `bold ${fontSize}px sans-serif`;
-    const spaceWidth = _measureLyricText(hwState, hwState.ctx, fontSize, ' ');
     const maxWidth = W * 0.8;
 
-    // Respect authored line breaks; wrap only if a line overflows maxWidth.
-    const rows = [];
-    for (const authoredLine of linesToShow) {
-        let row = [], rowWidth = 0;
-        for (const wordSyls of authoredLine.words) {
-            const parts = [];
-            let wordWidth = 0;
-            for (const s of wordSyls) {
-                const text = sylText(s);
-                const w = _measureLyricText(hwState, hwState.ctx, fontSize, text);
-                parts.push({ syl: s, text, width: w });
-                wordWidth += w;
+    // Display lines: authored lines pre-split at word boundaries so every
+    // display line fits maxWidth — one display line is exactly one rendered
+    // row. This is what keeps a giant transcribed line (word-timed lyrics
+    // break only on long gaps) from blowing up into an unbounded wrap block:
+    // its segments become ordinary lines that scroll through the window
+    // below. Cached per (lyrics, fontSize, W); measure work never runs per
+    // frame.
+    let layout = hwState._lyricLayout;
+    if (!layout || layout.lyricsRef !== hwState.lyrics || layout.fontSize !== fontSize || layout.W !== W) {
+        const spaceWidth = _measureLyricText(hwState, hwState.ctx, fontSize, ' ');
+        const displayLines = [];
+        for (const authoredLine of allLines) {
+            let row = [], rowWidth = 0, start = null, end = null;
+            const flushRow = () => {
+                if (!row.length) return;
+                displayLines.push({ row, width: rowWidth - spaceWidth, start, end });
+                row = []; rowWidth = 0; start = null; end = null;
+            };
+            for (const wordSyls of authoredLine.words) {
+                const parts = [];
+                let wordWidth = 0;
+                for (const s of wordSyls) {
+                    const text = sylText(s);
+                    const w = _measureLyricText(hwState, hwState.ctx, fontSize, text);
+                    parts.push({ syl: s, text, width: w });
+                    wordWidth += w;
+                }
+                const advance = wordWidth + spaceWidth;
+                if (row.length > 0 && rowWidth + advance > maxWidth) flushRow();
+                row.push({ parts, advance });
+                rowWidth += advance;
+                const first = wordSyls[0], last = wordSyls[wordSyls.length - 1];
+                if (start === null) start = first.t;
+                end = end === null ? last.t + last.d : Math.max(end, last.t + last.d);
             }
-            const advance = wordWidth + spaceWidth;
-            if (row.length > 0 && rowWidth + advance > maxWidth) {
-                rows.push(row);
-                row = []; rowWidth = 0;
-            }
-            row.push({ parts, advance });
-            rowWidth += advance;
+            flushRow();
         }
-        if (row.length) rows.push(row);
+        layout = hwState._lyricLayout = { lyricsRef: hwState.lyrics, fontSize, W, spaceWidth, displayLines };
+    }
+    const displayLines = layout.displayLines;
+    const spaceWidth = layout.spaceWidth;
+    if (!displayLines.length) return;
+
+    // Rolling window: the current line plus up to cfg.upcomingLines of
+    // context. An upcoming line joins the window once it starts within
+    // cfg.lookaheadSec (this also serves as the pre-song preview window).
+    let currentIdx = -1;
+    for (let i = 0; i < displayLines.length; i++) {
+        if (displayLines[i].start <= hwState.currentTime) currentIdx = i;
+        else break;
+    }
+    const nextLine = displayLines[currentIdx + 1] || null;
+    // Hide once the current line is clearly over and nothing upcoming is
+    // close enough to preview.
+    if (currentIdx >= 0
+        && hwState.currentTime > displayLines[currentIdx].end + 0.5
+        && (!nextLine || nextLine.start - hwState.currentTime > cfg.lookaheadSec)) {
+        return;
     }
 
+    const maxLines = 1 + cfg.upcomingLines;
+    const startIdx = currentIdx === -1 ? 0 : currentIdx;
+    const shown = [];
+    for (let i = startIdx; i < displayLines.length && shown.length < maxLines; i++) {
+        if (i !== currentIdx && displayLines[i].start - hwState.currentTime > cfg.lookaheadSec) break;
+        shown.push(displayLines[i]);
+    }
+    if (!shown.length) return;
+
     const rowHeight = fontSize + 6;
-    const totalHeight = rows.length * rowHeight + 10;
+    const totalHeight = shown.length * rowHeight + 10;
     let bgWidth = 0;
-    for (const row of rows) {
-        const rw = row.reduce((s, w) => s + w.advance, 0) - spaceWidth;
-        if (rw > bgWidth) bgWidth = rw;
+    for (const dl of shown) {
+        if (dl.width > bgWidth) bgWidth = dl.width;
     }
     bgWidth = Math.min(bgWidth + 30, W * 0.85);
 
@@ -1046,10 +1098,9 @@ export function drawLyrics(hwState, W, H) {
     hwState.ctx.textAlign = 'left';
     hwState.ctx.textBaseline = 'top';
 
-    for (let r = 0; r < rows.length; r++) {
-        const row = rows[r];
-        const rowWidth = row.reduce((s, w) => s + w.advance, 0) - spaceWidth;
-        let xPos = W/2 - rowWidth/2;
+    for (let r = 0; r < shown.length; r++) {
+        const row = shown[r].row;
+        let xPos = W/2 - shown[r].width/2;
         const yPos = lineY + r * rowHeight + 2;
 
         for (const w of row) {

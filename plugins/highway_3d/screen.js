@@ -6954,11 +6954,37 @@
             return boxH;
         }
 
-        // Lyrics layout cache — measureText per syllable + row wrapping
-        // only changes when the displayed line(s), font size, or canvas
-        // width change, not per frame. Keyed below; the per-frame work is
-        // just drawing over the cached widths.
-        let _lyrRowsCache = null;
+        // Lyrics layout cache — measureText per syllable + width-splitting
+        // only changes when the lyric set, font size, or canvas width
+        // change, not per frame. Keyed below; the per-frame work is just
+        // windowing + drawing over the cached widths.
+        let _lyrLayoutCache = null;
+
+        // Same live-tunable window config as the 2D highway
+        // (static/js/highway-draw.js getLyricsDisplayCfg) — duplicated
+        // because this plugin deliberately does not import the shared
+        // module. Both read localStorage['lyricsDisplay'], so
+        // highway.setLyricsDisplay() tunes both at once.
+        const LYRICS_DISPLAY_DEFAULTS = { upcomingLines: 2, lookaheadSec: 8 };
+        let _lyrCfgRaw, _lyrCfg = LYRICS_DISPLAY_DEFAULTS;
+        function getLyricsDisplayCfg() {
+            let raw = null;
+            try { raw = localStorage.getItem('lyricsDisplay'); } catch (e) { /* storage denied */ }
+            if (raw === _lyrCfgRaw) return _lyrCfg;
+            _lyrCfgRaw = raw;
+            let parsed = null;
+            try { parsed = raw ? JSON.parse(raw) : null; } catch (e) { /* corrupt -> defaults */ }
+            if (!parsed || typeof parsed !== 'object') parsed = {};
+            const num = (v, dflt, lo, hi) => {
+                const n = Number(v);
+                return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+            };
+            _lyrCfg = {
+                upcomingLines: num(parsed.upcomingLines, LYRICS_DISPLAY_DEFAULTS.upcomingLines, 0, 4) | 0,
+                lookaheadSec: num(parsed.lookaheadSec, LYRICS_DISPLAY_DEFAULTS.lookaheadSec, 1, 30),
+            };
+            return _lyrCfg;
+        }
 
         function drawLyrics(lyrics, currentTime, ctx, W, H) {
             if (!lyrics._lines) {
@@ -6985,41 +7011,29 @@
             const allLines = lyrics._lines;
             if (!allLines.length) return 0;
 
-            let currentIdx = -1;
-            for (let i = 0; i < allLines.length; i++) {
-                if (allLines[i].start <= currentTime) currentIdx = i;
-                else break;
-            }
-            if (currentIdx === -1) {
-                if (allLines[0].start - currentTime > 2.0) return 0;
-                currentIdx = 0;
-            }
-            const currentLine = allLines[currentIdx];
-            const nextLine = allLines[currentIdx + 1] || null;
-            const gapToNext = nextLine ? (nextLine.start - currentLine.end) : Infinity;
-            if (currentTime > currentLine.end + 0.5 && gapToNext > 3.0) return 0;
-
-            const linesToShow = [currentLine];
-            if (nextLine && gapToNext <= 3.0) linesToShow.push(nextLine);
-
+            const cfg = getLyricsDisplayCfg();
             const fontSize = Math.max(18, H * 0.028) | 0;
             const lineY = H * 0.04;
             const sylText = s => { const t = s.w || ''; return (t.endsWith('+') || t.endsWith('-')) ? t.slice(0, -1) : t; };
 
             ctx.font = `bold ${fontSize}px sans-serif`;
-            let rows, spaceWidth, bgWidth;
-            const _lc = _lyrRowsCache;
-            if (_lc && _lc.lyricsRef === lyrics && _lc.idx === currentIdx
-                && _lc.shown === linesToShow.length
-                && _lc.fontSize === fontSize && _lc.W === W) {
-                rows = _lc.rows; spaceWidth = _lc.spaceWidth; bgWidth = _lc.bgWidth;
-            } else {
-                spaceWidth = ctx.measureText(' ').width;
-                const maxWidth = W * 0.8;
 
-                rows = [];
-                for (const authoredLine of linesToShow) {
-                    let row = [], rowWidth = 0;
+            // Display lines: authored lines pre-split at word boundaries so
+            // every display line fits maxWidth — one display line is exactly
+            // one rendered row, so a giant transcribed line scrolls through
+            // the window instead of wrapping into an unbounded block.
+            let layout = _lyrLayoutCache;
+            if (!layout || layout.lyricsRef !== lyrics || layout.fontSize !== fontSize || layout.W !== W) {
+                const spaceWidth = ctx.measureText(' ').width;
+                const maxWidth = W * 0.8;
+                const displayLines = [];
+                for (const authoredLine of allLines) {
+                    let row = [], rowWidth = 0, start = null, end = null;
+                    const flushRow = () => {
+                        if (!row.length) return;
+                        displayLines.push({ row, width: rowWidth - spaceWidth, start, end });
+                        row = []; rowWidth = 0; start = null; end = null;
+                    };
                     for (const wordSyls of authoredLine.words) {
                         const parts = [];
                         let wordWidth = 0;
@@ -7030,28 +7044,53 @@
                             wordWidth += w;
                         }
                         const advance = wordWidth + spaceWidth;
-                        if (row.length > 0 && rowWidth + advance > maxWidth) { rows.push(row); row = []; rowWidth = 0; }
+                        if (row.length > 0 && rowWidth + advance > maxWidth) flushRow();
                         row.push({ parts, advance });
                         rowWidth += advance;
+                        const first = wordSyls[0], last = wordSyls[wordSyls.length - 1];
+                        if (start === null) start = first.t;
+                        end = end === null ? last.t + last.d : Math.max(end, last.t + last.d);
                     }
-                    if (row.length) rows.push(row);
+                    flushRow();
                 }
+                layout = _lyrLayoutCache = { lyricsRef: lyrics, fontSize, W, spaceWidth, displayLines };
+            }
+            const displayLines = layout.displayLines;
+            const spaceWidth = layout.spaceWidth;
+            if (!displayLines.length) return 0;
 
-                bgWidth = 0;
-                for (const row of rows) {
-                    const rw = row.reduce((s, w) => s + w.advance, 0) - spaceWidth;
-                    if (rw > bgWidth) bgWidth = rw;
-                }
-                bgWidth = Math.min(bgWidth + 30, W * 0.85);
-                _lyrRowsCache = {
-                    lyricsRef: lyrics, idx: currentIdx,
-                    shown: linesToShow.length, fontSize, W,
-                    rows, spaceWidth, bgWidth,
-                };
+            // Rolling window: current line + up to cfg.upcomingLines of
+            // context, each joining once it starts within cfg.lookaheadSec
+            // (also the pre-song preview window).
+            let currentIdx = -1;
+            for (let i = 0; i < displayLines.length; i++) {
+                if (displayLines[i].start <= currentTime) currentIdx = i;
+                else break;
+            }
+            const nextLine = displayLines[currentIdx + 1] || null;
+            if (currentIdx >= 0
+                && currentTime > displayLines[currentIdx].end + 0.5
+                && (!nextLine || nextLine.start - currentTime > cfg.lookaheadSec)) {
+                return 0;
             }
 
+            const maxLines = 1 + cfg.upcomingLines;
+            const startIdx = currentIdx === -1 ? 0 : currentIdx;
+            const shown = [];
+            for (let i = startIdx; i < displayLines.length && shown.length < maxLines; i++) {
+                if (i !== currentIdx && displayLines[i].start - currentTime > cfg.lookaheadSec) break;
+                shown.push(displayLines[i]);
+            }
+            if (!shown.length) return 0;
+
+            let bgWidth = 0;
+            for (const dl of shown) {
+                if (dl.width > bgWidth) bgWidth = dl.width;
+            }
+            bgWidth = Math.min(bgWidth + 30, W * 0.85);
+
             const rowHeight = fontSize + 6;
-            const totalHeight = rows.length * rowHeight + 10;
+            const totalHeight = shown.length * rowHeight + 10;
 
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.beginPath();
@@ -7069,10 +7108,9 @@
 
             ctx.textAlign = 'left';
             ctx.textBaseline = 'top';
-            for (let r = 0; r < rows.length; r++) {
-                const row = rows[r];
-                const rowWidth = row.reduce((s, w) => s + w.advance, 0) - spaceWidth;
-                let xPos = W / 2 - rowWidth / 2;
+            for (let r = 0; r < shown.length; r++) {
+                const row = shown[r].row;
+                let xPos = W / 2 - shown[r].width / 2;
                 const yPos = lineY + r * rowHeight + 2;
                 for (const w of row) {
                     for (const part of w.parts) {

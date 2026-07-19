@@ -8,14 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Background controls in the player (3D Highway)** — change the highway
-  background mid-song from the player's Plugin Controls popover instead of
-  opening Settings: a style dropdown, a Reactive toggle, and an Intensity
-  slider, all kept in sync with the Settings page. Controls that the active
-  style ignores are greyed out with a reason on hover (Custom video and
-  Butterchurn use neither; Custom image uses Intensity but not Reactive), so
-  a knob is never present-but-inert. The control disappears when a non-3D
-  renderer is selected.
 - **Gold tier (career passports)** — an earned badge turns **gold** when
   Virtuoso verifies an improvised jam in the passport's style (the
   `gold_improv` artifact relays with the drill snapshot; a genre inherits its
@@ -66,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fence. The gem's rim joins in: on a confirmed hit the outline flashes in the
   string's own colour with the same intensity treatment as the wires, fading with the
   scorer's alpha. With no scorer attached, nothing changes.
+- **Background controls in the player (3D Highway)** — change the highway
+  background mid-song from the player's Plugin Controls popover instead of
+  opening Settings: a style dropdown, a Reactive toggle, and an Intensity
+  slider, all kept in sync with the Settings page. Controls that the active
+  style ignores are greyed out with a reason on hover (Custom video and
+  Butterchurn use neither; Custom image uses Intensity but not Reactive), so
+  a knob is never present-but-inert. The control disappears when a non-3D
+  renderer is selected.
 
 ### Changed
 - **`GET /api/song/{f}?stems=1`** (new, opt-in) — returns the pack's playable stem

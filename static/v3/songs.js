@@ -4259,6 +4259,127 @@
         },
     };
 
+    // ── Grid cursor navigation (arrow keys / gamepad d-pad) ─────────────────
+    // shortcuts.js's generic library arrow-nav (_handleLibArrowNav) can't reach
+    // this screen: it assumes every navigable item is already a DOM node, but
+    // this grid is windowed — most of the library isn't in the DOM at any given
+    // scroll position. Cursor state here is an absolute index into state.songs,
+    // and moving it may need to fetch a page and/or scroll the window before the
+    // target card exists to highlight or activate.
+    let _gpIdx = null;
+
+    function _gpCardEl(idx) {
+        return document.querySelector('#v3-songs-grid [data-idx="' + idx + '"]');
+    }
+
+    function _gpApplyHighlight() {
+        const prev = document.querySelector('#v3-songs-grid [data-gp-cursor]');
+        if (prev) {
+            prev.removeAttribute('data-gp-cursor');
+            prev.querySelector('[data-v3-play]')?.classList.remove('ring-2', 'ring-fb-primary');
+        }
+        if (_gpIdx == null) return;
+        const el = _gpCardEl(_gpIdx);
+        if (!el) return;
+        el.setAttribute('data-gp-cursor', '1');
+        el.querySelector('[data-v3-play]')?.classList.add('ring-2', 'ring-fb-primary');
+    }
+
+    async function _gpEnsureVisible(idx) {
+        const main = document.getElementById('v3-main'), sizer = _sizerEl();
+        if (!main || !sizer) return;
+        const { cols, rowH } = measureGeom();
+        const row = Math.floor(idx / Math.max(1, cols));
+        const sizerTop = _sizerTopInScroller(main, sizer);
+        const rowTop = sizerTop + row * rowH;
+        const rowBottom = rowTop + rowH;
+        const viewTop = main.scrollTop, viewBottom = viewTop + main.clientHeight;
+        if (rowTop < viewTop) main.scrollTop = rowTop;
+        else if (rowBottom > viewBottom) main.scrollTop = rowBottom - main.clientHeight;
+        await renderWindow();
+
+        // #v3-songs-toolbar is sticky, but only pins to the top once scrolled
+        // PAST its natural in-flow position — before that point it isn't
+        // covering anything, after it covers a fixed band. That makes its
+        // occlusion scroll-dependent in a way no single precomputed offset
+        // captures, so measure the real rendered overlap and correct for it,
+        // rather than assuming the toolbar's height is always "lost" space.
+        const toolbar = document.getElementById('v3-songs-toolbar');
+        const cardEl = _gpCardEl(idx);
+        if (toolbar && cardEl) {
+            const overlap = toolbar.getBoundingClientRect().bottom - cardEl.getBoundingClientRect().top;
+            if (overlap > 0) {
+                // Push the row DOWN the screen to clear the toolbar — that means
+                // scrolling the content back UP, i.e. decreasing scrollTop (screen
+                // position = content position - scrollTop).
+                main.scrollTop -= overlap;
+                await renderWindow();
+            }
+        }
+    }
+
+    async function _gpMove(delta) {
+        if (!state.total) return;
+        if (_gpIdx == null) {
+            // Nothing selected yet — land on the first card and stop, same as
+            // shortcuts.js's legacy _handleLibArrowNav does for an empty
+            // selection: the first press establishes a cursor, it doesn't also
+            // move it (Right/Down previously skipped straight past row 0).
+            _gpIdx = 0;
+        } else {
+            const next = Math.max(0, Math.min(state.total - 1, _gpIdx + delta));
+            if (next === _gpIdx) return;
+            _gpIdx = next;
+        }
+        await ensureWindow(Math.max(0, _gpIdx - 1), Math.min(state.total, _gpIdx + 2));
+        await _gpEnsureVisible(_gpIdx);
+        _gpApplyHighlight();
+    }
+
+    function _gpActivate() {
+        if (_gpIdx == null) return;
+        _gpCardEl(_gpIdx)?.querySelector('[data-v3-play]')?.click();
+    }
+
+    // Bails on focus inside anything with its own keyboard semantics — form
+    // controls, buttons, and dialog/drawer overlays — same intent as
+    // shortcuts.js's _isInsideInteractiveControl, reimplemented locally since
+    // this is a plain script (not an ES module) and can't import it.
+    //
+    // The form-control/button check requires the element to be VISIBLE, not
+    // merely present: screens stay in the DOM (hidden, not removed) when you
+    // navigate away, so a real <button> focused on some OTHER now-hidden
+    // screen (dashboard, etc.) can leave document.activeElement pointing at
+    // it — an el.closest('#v3-songs') scope check would let that stale focus
+    // through fine, but would ALSO wrongly stop blocking genuinely-focused
+    // shared chrome like the topbar search input (#v3-search lives outside
+    // #v3-songs's DOM subtree even while v3-songs is the active screen).
+    // Visibility is the actual distinction that matters here, not DOM
+    // nesting. The dialog/drawer-overlay and contentEditable checks stay as
+    // they were — overlay-level concerns regardless of which screen sits
+    // underneath.
+    function _gpBlockedTarget(el) {
+        if (!el) return false;
+        if (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(el.tagName) && el.offsetParent !== null) return true;
+        if (el.isContentEditable) return true;
+        if (el.closest && el.closest('[role="dialog"], .feedBack-modal, #lib-filter-drawer')) return true;
+        return false;
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (!songsActive() || state.view !== 'grid') return;
+        if (_gpBlockedTarget(document.activeElement)) return;
+        const isActivate = e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar';
+        if (!isActivate && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+        e.preventDefault();
+        if (isActivate) { _gpActivate(); return; }
+        const { cols } = measureGeom();
+        if (e.key === 'ArrowRight') _gpMove(1);
+        else if (e.key === 'ArrowLeft') _gpMove(-1);
+        else if (e.key === 'ArrowDown') _gpMove(cols);
+        else if (e.key === 'ArrowUp') _gpMove(-cols);
+    });
+
     if (sm && typeof sm.on === 'function') {
         sm.on('screen:changed', (e) => {
             const id = e && e.detail && e.detail.id;

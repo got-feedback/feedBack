@@ -2786,6 +2786,21 @@
         if (globalVal !== null && globalVal !== undefined) return _bgCoerce(key, globalVal);
         return BG_DEFAULTS[key];
     }
+    // Read a setting's GLOBAL value, ignoring any per-panel override. The
+    // player-chrome control is a single shared instance, so it must always
+    // read (and write) the global slot. Passing null as a panelKey to
+    // _bgReadSetting happened to work only because 'h3d_bg_null_<key>' never
+    // exists; this states the intent directly and can't be shadowed if a
+    // panelKey of null is ever used deliberately. Mirrors the global half of
+    // _bgReadSetting exactly (mem-fallback precedence, then persisted, then
+    // default).
+    function _bgReadGlobal(key) {
+        let globalVal = null;
+        try { globalVal = localStorage.getItem('h3d_bg_' + key); } catch (_) { /* storage blocked */ }
+        if (key in _bgMemFallback) return _bgCoerce(key, _bgMemFallback[key]);
+        if (globalVal !== null && globalVal !== undefined) return _bgCoerce(key, globalVal);
+        return BG_DEFAULTS[key];
+    }
     // Shared "stored string -> bool" coercion for every boolean
     // setting. Mirrors settings.html's coerceBool so the renderer and
     // the UI hydration always agree on what a corrupted/unknown value
@@ -4024,8 +4039,10 @@
      * add a style there and it shows up in both places automatically.
      *
      * MOUNTED ONCE, REFCOUNTED. Under splitscreen there are N renderer
-     * instances but these settings are global, so N copies of the control
-     * would be N ways to set one value. init() acquires, destroy() releases,
+     * instances but these settings are global — a panel may set a per-panel
+     * override, but this single shared control only ever reads/writes the
+     * global slot (via _bgReadGlobal), so N copies would be N ways to set
+     * one value. init() acquires, destroy() releases,
      * and the last release unmounts — so the control disappears when the user
      * switches to a non-3D renderer instead of lingering as a dead knob.
      *
@@ -4046,9 +4063,11 @@
     //
     // Derived by reading the BG_STYLES bodies: a style uses `intensity` if its
     // build() reads settings.intensity, and uses `reactive` if its update()
-    // dereferences the `bands` argument. 'butterchurn' is not a BG_STYLES entry
-    // at all - _bgMountStyle falls through to BG_STYLES.off - and it drives its
-    // own audio tap and opacity, so both are false for it.
+    // dereferences the `bands` argument. 'butterchurn' is a mode, not a
+    // BG_STYLES fog-scenery entry: _bcSyncMode owns its controller, which
+    // drives its own audio tap and canvas opacity (only the fog-scenery half
+    // falls through to BG_STYLES.off). So neither knob here reaches it - both
+    // are false, and the tooltip points at Butterchurn's own controls.
     //
     // KEEP IN STEP WITH BG_STYLES. If a style starts reading bands or intensity
     // and its row is not updated, the control stays greyed out and lies the
@@ -4074,7 +4093,7 @@
     // shows on hover — the whole "greyed out, says why on hover" affordance
     // would be dead. The reason lives on these wrappers instead, and the
     // disabled control gets pointer-events:none so the hover reaches them.
-    let _pcReactiveWrap = null, _pcIntensityWrap = null;
+    let _pcReactiveWrap = null, _pcIntensityWrap = null, _pcReason = null;
     let _pcListener = null, _pcRetry = 0, _pcRetryTimer = 0;
 
     // The player chrome exposes this slot once it has initialised. A host
@@ -4130,6 +4149,8 @@
         btn._on = !!on && !disabled;
         btn.disabled = !!disabled;
         btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+        // A toggle button must expose its state, not just its label.
+        btn.setAttribute('aria-pressed', btn._on ? 'true' : 'false');
         // pointer-events:none lets the hover fall through to _pcReactiveWrap,
         // which carries the reason a disabled button's own title can't show.
         btn.style.pointerEvents = disabled ? 'none' : '';
@@ -4164,17 +4185,29 @@
         // entered it. An unknown id enables everything rather than disabling
         // it, so a style added without a _PC_USES row is merely unhelpful.
         const venue = !!_venueSceneOverride;
-        const effectiveStyle = venue ? 'venue' : _bgReadSetting(null, 'style');
+        const effectiveStyle = venue ? 'venue' : _bgReadGlobal('style');
         const uses = _PC_USES[effectiveStyle] || { intensity: true, reactive: true };
         const why = uses.why || 'This background style ignores this setting';
+        if (_pcReason) _pcReason.textContent = why;
+        // Point a screen reader at the reason, but only while a control is
+        // inert - cleared otherwise so an enabled control is not described by a
+        // stale reason.
+        const _pcDescribe = (el, inert) => {
+            if (!el) return;
+            if (inert) el.setAttribute('aria-describedby', 'h3d-pc-reason');
+            else el.removeAttribute('aria-describedby');
+        };
+        _pcDescribe(_pcSel, venue);
+        _pcDescribe(_pcReactive, !uses.reactive);
+        _pcDescribe(_pcIntensity, !uses.intensity);
         if (_pcSel) {
             // The custom slots stay unselectable until something is uploaded -
             // same rule settings.html applies.
             const img = _pcSel.querySelector('option[value="image"]');
             const vid = _pcSel.querySelector('option[value="video"]');
-            if (img) img.disabled = !_bgReadSetting(null, 'customImageDataUrl');
-            if (vid) vid.disabled = !_bgReadSetting(null, 'customVideoName');
-            _pcSel.value = _bgReadSetting(null, 'style');
+            if (img) img.disabled = !_bgReadGlobal('customImageDataUrl');
+            if (vid) vid.disabled = !_bgReadGlobal('customVideoName');
+            _pcSel.value = _bgReadGlobal('style');
             // The dropdown still SHOWS the stored style (venue has no option),
             // but it's inert while Venue owns the scene.
             _pcSel.disabled = venue;
@@ -4184,7 +4217,7 @@
             _pcSel.title = venue ? why : '';
         }
         if (_pcReactive) {
-            _pcPaint(_pcReactive, !!_bgReadSetting(null, 'reactive'), !uses.reactive,
+            _pcPaint(_pcReactive, !!_bgReadGlobal('reactive'), !uses.reactive,
                 uses.reactive ? 'React to the audio' : why);
         }
         // The reason shows via the wrapper (see _pcReactiveWrap); empty when
@@ -4194,7 +4227,7 @@
             _pcReactiveWrap.style.cursor = uses.reactive ? '' : 'not-allowed';
         }
         if (_pcIntensity) {
-            _pcIntensity.value = String(_bgReadSetting(null, 'intensity'));
+            _pcIntensity.value = String(_bgReadGlobal('intensity'));
             _pcIntensity.disabled = !uses.intensity;
             _pcIntensity.setAttribute('aria-disabled', uses.intensity ? 'false' : 'true');
             _pcIntensity.style.pointerEvents = uses.intensity ? '' : 'none';
@@ -4221,10 +4254,10 @@
     function _pcSyncSettingsPanel() {
         try {
             const st = document.getElementById('h3d-bg-style');
-            if (st) st.value = _bgReadSetting(null, 'style');
+            if (st) st.value = _bgReadGlobal('style');
             const re = document.getElementById('h3d-bg-reactive');
-            if (re) re.checked = !!_bgReadSetting(null, 'reactive');
-            const inten = _bgReadSetting(null, 'intensity');
+            if (re) re.checked = !!_bgReadGlobal('reactive');
+            const inten = _bgReadGlobal('intensity');
             const ie = document.getElementById('h3d-bg-intensity');
             if (ie) ie.value = String(inten);
             // The panel prints the numeric value beside the slider; keep its
@@ -4244,6 +4277,16 @@
         const box = document.createElement('div');
         box.className = 'h3d-pc';
         box.style.cssText = 'display:flex;flex-direction:column;width:100%;';
+        // Visually-hidden text carrying the "why greyed out" reason to screen
+        // readers; disabled controls point aria-describedby here. A title alone
+        // is announced unreliably and never on touch. One span suffices - every
+        // greyed control shares the same reason (derived from the single
+        // effective style).
+        _pcReason = document.createElement('span');
+        _pcReason.id = 'h3d-pc-reason';
+        _pcReason.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;'
+            + 'margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;';
+        box.appendChild(_pcReason);
 
         box.appendChild(_pcGroupLabel('Background'));
         // A dropdown, not pills: the style list is 8 entries and growing, and
@@ -4252,6 +4295,7 @@
         // raw <select>.
         _pcSel = document.createElement('select');
         _pcSel.title = 'Background style';
+        _pcSel.setAttribute('aria-label', 'Background style');
         _pcSel.style.cssText = 'width:100%;padding:.375rem .5rem;border:0;border-radius:.5rem;'
             + 'font-size:.75rem;line-height:1rem;cursor:pointer;'
             + 'background-color:' + _PC_C.idle + ';color:' + _PC_C.text + ';';
@@ -4288,6 +4332,7 @@
         _pcIntensity.type = 'range';
         _pcIntensity.min = '0'; _pcIntensity.max = '1'; _pcIntensity.step = '0.05';
         _pcIntensity.title = 'Background intensity';
+        _pcIntensity.setAttribute('aria-label', 'Background intensity');
         _pcIntensity.style.cssText = 'width:100%;accent-color:#4080e0;';
         // 'change' (fires on release), NOT 'input'. Every write goes through
         // _bgWriteGlobal -> _bgEmitChange -> _bgRebuild(), which tears the
@@ -4323,7 +4368,7 @@
         if (_pcListener) { _bgUnsubscribe(_pcListener); _pcListener = null; }
         if (_pcEl && _pcEl.parentNode) _pcEl.parentNode.removeChild(_pcEl);
         _pcEl = null; _pcSel = null; _pcReactive = null; _pcIntensity = null;
-        _pcReactiveWrap = null; _pcIntensityWrap = null;
+        _pcReactiveWrap = null; _pcIntensityWrap = null; _pcReason = null;
     }
     function _pcAcquire() {
         _pcRefs++;

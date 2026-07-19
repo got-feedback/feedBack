@@ -37,8 +37,9 @@ const END_LF = '    /* =========================================================
 // table, which would only assert that the table equals itself.
 //   intensity: true  => the style's build() reads settings.intensity
 //   reactive:  true  => the style's update() dereferences its `bands` argument
-// 'butterchurn' is not a BG_STYLES entry at all (mount falls through to
-// BG_STYLES.off) and drives its own audio tap, so both are false.
+// 'butterchurn' is a mode, not a BG_STYLES fog-scenery entry: _bcSyncMode
+// owns its controller and drives its own audio tap + canvas opacity (only
+// the fog-scenery half falls through to BG_STYLES.off), so both are false.
 const EXPECTED_USES = {
     off: { intensity: false, reactive: false },
     particles: { intensity: true, reactive: true },
@@ -73,6 +74,7 @@ function makeDom() {
         }
         addEventListener(t, fn) { (this.listeners[t] || (this.listeners[t] = [])).push(fn); }
         setAttribute(k, v) { this[k] = v; }
+        removeAttribute(k) { delete this[k]; }
         get isConnected() {
             let n = this;
             while (n.parentNode) n = n.parentNode;
@@ -132,6 +134,7 @@ function load({ store: initialStore } = {}) {
         // sandbox._venueSceneOverride and fire the 'venueScene' bus key.
         _venueSceneOverride: false,
         _bgReadSetting: (_panelKey, key) => store[key],
+        _bgReadGlobal: (key) => store[key],
         _bgSubscribe: (fn) => listeners.add(fn),
         _bgUnsubscribe: (fn) => listeners.delete(fn),
         setTimeout: (fn) => { timers.push(fn); return timers.length; },
@@ -169,6 +172,7 @@ function load({ store: initialStore } = {}) {
         + '   get sel() { return _pcSel; },'
         + '   get react() { return _pcReactive; },'
         + '   get intens() { return _pcIntensity; },'
+        + '   get reason() { return _pcReason; },'
         + '   get refs() { return _pcRefs; } })',
         sandbox,
     );
@@ -176,6 +180,50 @@ function load({ store: initialStore } = {}) {
     const screenHooks = () => (bus['screen:changed'] || []).length;
     return { api, dom, store, emit, writes, timers, sandbox, listenerCount: () => listeners.size, fireScreenChanged, screenHooks };
 }
+
+// Slice the real _bgReadSetting + _bgReadGlobal out of screen.js and run them
+// against a localStorage stub. The main suite stubs both helpers identically,
+// so it can't tell the #2 refactor from a no-op; this one proves the actual
+// helper bodies differ where they must: _bgReadGlobal ignores a per-panel
+// override that _bgReadSetting(panelKey, ...) still honours.
+test('_bgReadGlobal reads the global slot, ignoring per-panel overrides', () => {
+    const src = fs.readFileSync(SCREEN_JS, 'utf8');
+    const rgStart = src.indexOf('    function _bgReadSetting(panelKey, key) {');
+    const rgEnd = src.indexOf('    // Shared "stored string -> bool" coercion');
+    assert.ok(rgStart !== -1 && rgEnd > rgStart, 'could not slice the read helpers');
+    const block = src.slice(rgStart, rgEnd);
+
+    const storage = new Map();
+    const sandbox = {
+        localStorage: { getItem: (k) => (storage.has(k) ? storage.get(k) : null) },
+        _bgCoerce: (_key, v) => v,           // identity: we test key resolution, not coercion
+        _bgMemFallback: Object.create(null),
+        BG_DEFAULTS: { style: 'particles' },
+    };
+    sandbox.globalThis = sandbox;
+    const api = vm.runInNewContext(block + '\n({ _bgReadSetting, _bgReadGlobal, _bgMemFallback })', sandbox);
+
+    storage.set('h3d_bg_style', 'lights');            // global
+    storage.set('h3d_bg_panel3_style', 'geometric');  // a per-panel override
+
+    // The renderer, reading with a panel key, honours the per-panel override...
+    assert.equal(api._bgReadSetting('panel3', 'style'), 'geometric');
+    // ...but the shared control's global read must NOT see it - this is the
+    // whole point of #2 (previously _bgReadSetting(null, ...) relied on
+    // 'h3d_bg_null_style' never existing).
+    assert.equal(api._bgReadGlobal('style'), 'lights');
+
+    // In-memory staged value wins over the persisted global (matches
+    // _bgReadSetting's precedence).
+    api._bgMemFallback.style = 'aurora';
+    assert.equal(api._bgReadGlobal('style'), 'aurora');
+    delete api._bgMemFallback.style;
+
+    // Nothing stored -> BG_DEFAULTS.
+    assert.equal(api._bgReadGlobal('style'), 'lights');
+    storage.delete('h3d_bg_style');
+    assert.equal(api._bgReadGlobal('style'), 'particles');
+});
 
 test('mounts one control into the player-control slot', () => {
     const { api, dom } = load();
@@ -327,6 +375,49 @@ test('the dropdown and Reactive pill drive the real setters', () => {
     assert.ok(writes.some((w) => w[0] === 'reactive'));
 });
 
+test('exposes state and reasons to assistive tech', () => {
+    const ctl = load({ store: { style: 'image', reactive: true } });   // image: reactive inert
+    ctl.api._pcAcquire();
+
+    // The reason live-region must be a REAL mounted element with the id the
+    // controls reference - not a dangling pointer. Assert resolution, not a
+    // literal (a wrong id in code would still equal the literal).
+    const reason = ctl.api.reason;
+    assert.ok(reason, 'the reason span was not created');
+    assert.equal(reason.id, 'h3d-pc-reason');
+    assert.equal(reason.parentNode, ctl.api.el, 'the reason span must be mounted in the control');
+
+    // aria-pressed: a toggle button must expose its state. image greys
+    // Reactive, so not-pressed AND disabled, and it points at the reason.
+    assert.equal(ctl.api.react['aria-pressed'], 'false', 'greyed toggle is not pressed');
+    assert.equal(ctl.api.react['aria-disabled'], 'true');
+    // Pointer must resolve to the actual span's id (kills a wrong-id mutation),
+    // and the span must carry the current reason text (kills a never-set-text
+    // mutation).
+    assert.equal(ctl.api.react['aria-describedby'], reason.id, 'inert control must reference the reason span');
+    assert.equal(reason.textContent, 'This background does not react to audio', 'reason text must match the style');
+    assert.equal(ctl.api.intens['aria-describedby'], undefined, 'an ENABLED control carries no reason');
+
+    // The intensity describe path: a style where INTENSITY is inert.
+    ctl.store.style = 'video'; ctl.emit('style');
+    assert.equal(ctl.api.intens.disabled, true, 'precondition: video greys intensity');
+    assert.equal(ctl.api.intens['aria-describedby'], reason.id, 'inert intensity must reference the reason');
+    assert.equal(reason.textContent, 'The video plays as-is - nothing to adjust here');
+
+    // Both enabled: describedby drops, aria-pressed follows the value.
+    ctl.store.style = 'particles'; ctl.store.reactive = true; ctl.emit('style');
+    assert.equal(ctl.api.react['aria-describedby'], undefined, 'enabled control drops the reason');
+    assert.equal(ctl.api.intens['aria-describedby'], undefined);
+    assert.equal(ctl.api.react['aria-pressed'], 'true', 'reactive on for particles');
+    ctl.store.reactive = false; ctl.emit('reactive');
+    assert.equal(ctl.api.react['aria-pressed'], 'false', 'aria-pressed follows the value');
+
+    // Accessible names on the non-label controls.
+    assert.equal(ctl.api.sel['aria-label'], 'Background style');
+    assert.equal(ctl.api.intens['aria-label'], 'Background intensity');
+    ctl.api._pcRelease();
+});
+
 test('greys out exactly the controls each style ignores', () => {
     const { api, store, emit } = load();
     api._pcAcquire();
@@ -352,6 +443,13 @@ test('the Venue override greys the whole Background group', () => {
     assert.equal(ctl.api.react.disabled, true, 'reactive should grey under Venue');
     assert.equal(ctl.api.sel.disabled, true, 'the dropdown should be inert under Venue too');
     assert.match(ctl.api.intens.title, /venue/i, 'reason should mention Venue');
+    // All three inert controls point at the reason under Venue (kills a
+    // 'describe reactive only' regression on the select/intensity paths).
+    const vReason = ctl.api.reason.id;
+    assert.equal(ctl.api.sel['aria-describedby'], vReason, 'select must reference the reason under Venue');
+    assert.equal(ctl.api.intens['aria-describedby'], vReason, 'intensity must reference the reason under Venue');
+    assert.equal(ctl.api.react['aria-describedby'], vReason, 'reactive must reference the reason under Venue');
+    assert.match(ctl.api.reason.textContent, /venue/i, 'the reason span carries the Venue text');
 
     // The dropdown still shows the stored style (venue has no option), but
     // selecting must not write while it's inert.
@@ -367,6 +465,8 @@ test('the Venue override greys the whole Background group', () => {
     assert.equal(ctl.api.intens.disabled, false, 'intensity re-enables when Venue exits');
     assert.equal(ctl.api.react.disabled, false);
     assert.equal(ctl.api.sel.disabled, false, 'the dropdown re-enables when Venue exits');
+    assert.equal(ctl.api.sel['aria-describedby'], undefined, 'select drops the reason off-Venue');
+    assert.equal(ctl.api.intens['aria-describedby'], undefined, 'intensity drops the reason off-Venue');
     ctl.api._pcRelease();
 });
 

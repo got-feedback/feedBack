@@ -1,8 +1,9 @@
 // Pins the renderOrder hierarchy in plugins/highway_3d/screen.js.
 //
 // Three.js renders transparent objects by renderOrder first, then back-to-front
-// Z sort within the same renderOrder. All 3D-highway materials use depthTest:false, so
-// renderOrder is the *only* draw-order control — getting it wrong silently
+// Z sort within the same renderOrder. Nearly all 3D-highway materials use
+// depthTest:false (exceptions exist — e.g. the accent halo mats set
+// depthTest:true), so renderOrder is the primary draw-order control — getting it wrong silently
 // causes one layer to bleed through another (gems clipping through chord frames,
 // strings buried under notes, etc.).
 //
@@ -199,17 +200,20 @@ test('static fret wires use bowed TubeGeometry + MeshStandardMaterial, named boa
         /FRET_WIRE_IDLE_HEX\s*=\s*0x4A4A60/,
         'FRET_WIRE_IDLE_HEX must be the dimmed idle gray-violet 0x4A4A60',
     );
-    // Both depth flags asserted independently so the test doesn't pin property
-    // order in the material literal.
+    // Both depth flags anchored to the fret-wire material literal (via its
+    // FRET_WIRE_IDLE_HEX color, unique to it) — an unscoped match would pass
+    // off any other depthTest:false material in the file. Asserted as two
+    // separate anchored matches so property order inside the literal still
+    // isn't pinned.
     assert.match(
         s,
-        /depthTest\s*:\s*false/,
-        'fret wire material must set depthTest: false',
+        /color\s*:\s*FRET_WIRE_IDLE_HEX[\s\S]{0,400}?depthTest\s*:\s*false/,
+        'the fret wire material itself must set depthTest: false',
     );
     assert.match(
         s,
-        /depthWrite\s*:\s*false/,
-        'fret wire material must set depthWrite: false (no z-buffer pollution)',
+        /color\s*:\s*FRET_WIRE_IDLE_HEX[\s\S]{0,400}?depthWrite\s*:\s*false/,
+        'the fret wire material itself must set depthWrite: false (no z-buffer pollution)',
     );
     assert.match(
         s,

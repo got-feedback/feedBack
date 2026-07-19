@@ -27,7 +27,11 @@ import logging
 from pathlib import Path
 
 from song import compute_smart_names
-from tunings import tuning_name
+from tunings import (
+    DEFAULT_PERSPECTIVE, PERSPECTIVES, ROLE_PERSPECTIVES, normalize_offsets,
+    perspective_low_pitch, perspective_tuning_key, perspective_tuning_name,
+    tuning_name,
+)
 import sloppak as sloppak_mod
 import loosefolder as loosefolder_mod
 
@@ -43,6 +47,56 @@ def _relpath(f: Path, dlc: Path) -> str:
         return f.name
 
 
+def _apply_role_tunings(meta: dict) -> None:
+    """Derive each ROLE perspective's tuning columns from the raw offsets the
+    extractor emitted (currently bass + rhythm; guitar-lead reads the
+    song-level columns the scanner has always written).
+
+    The domain rules live in `tunings` (see the PERSPECTIVES table and the
+    block above it for the evidence behind each):
+
+    1. NORMALIZE FIRST. Stored bass arrays are commonly six elements whose
+       last two slots are padding, so bass truncates to four strings before
+       anything looks at them — padding must never reach the namer or the
+       grouping key. Guitar does NOT truncate (a 7-string array is real).
+    2. Refuse to name data the perspective distrusts (bass up-tuning), so the
+       library can't send a player off to a tuning nobody plays.
+    3. Group on CANONICAL PITCHES, not the raw offsets string — the same
+       physical tuning serialized two ways must be ONE facet entry.
+
+    A song with no arrangement in that role gets EMPTY strings / 0, not NULL:
+    '' is the indexed "we looked, there is no such chart" state the library's
+    fallback keys on, while NULL means "never extracted" and re-scans.
+    """
+    for persp in ROLE_PERSPECTIVES:
+        raw = meta.pop(f"{persp.role}_tuning_offsets", None)
+        offsets = normalize_offsets(raw, persp)
+        if offsets is None:
+            meta[persp.column("name")] = ""
+            meta[persp.column("sort_key")] = 0
+            meta[persp.column("offsets")] = ""
+            meta[persp.column("key")] = ""
+            meta[persp.column("low_pitch")] = None
+            continue
+        meta[persp.column("name")] = perspective_tuning_name(offsets, persp)
+        meta[persp.column("sort_key")] = sum(offsets)
+        # The NORMALIZED offsets are what we store: padding is not data, and a
+        # client rendering target notes must not print phantom strings.
+        meta[persp.column("offsets")] = " ".join(str(o) for o in offsets)
+        meta[persp.column("key")] = perspective_tuning_key(offsets, persp)
+        meta[persp.column("low_pitch")] = perspective_low_pitch(offsets, persp)
+
+
+def _apply_song_low_pitch(meta: dict, offsets: list[int]) -> None:
+    """Lowest open-string pitch of the SONG-level (guitar-lead) tuning, for
+    the "playable without retuning" comparison. Indexed here, on the existing
+    manifest-only pass — never by reopening chart JSON."""
+    persp = PERSPECTIVES[DEFAULT_PERSPECTIVE]
+    norm = normalize_offsets(offsets, persp)
+    meta["tuning_low_pitch"] = (
+        perspective_low_pitch(norm, persp) if norm is not None else None)
+
+
 def _extract_meta_sloppak(path: Path) -> dict:
     """Extract metadata for a sloppak (file or directory)."""
     meta = sloppak_mod.extract_meta(path)
@@ -52,6 +106,8 @@ def _extract_meta_sloppak(path: Path) -> dict:
     meta["tuning_name"] = name
     meta["tuning_sort_key"] = sum(offsets)
     meta["tuning_offsets"] = " ".join(str(o) for o in offsets)
+    _apply_song_low_pitch(meta, offsets)
+    _apply_role_tunings(meta)
     meta["format"] = "sloppak"
     # `extract_meta` already populates `stem_ids` (feedBack#129);
     # default to empty for older callers / mocks.
@@ -86,6 +142,8 @@ def _extract_meta_loosefolder(path: Path, dlc_root: Path | None) -> dict:
     meta["tuning_name"] = name
     meta["tuning_sort_key"] = sum(offsets)
     meta["tuning_offsets"] = " ".join(str(o) for o in offsets)
+    _apply_song_low_pitch(meta, offsets)
+    _apply_role_tunings(meta)
     meta["format"] = "loose"
     meta.setdefault("stem_ids", [])
     # The library helper exposes absolute filesystem paths for audio/art

@@ -267,6 +267,19 @@ function createHighway() {
     hwState._filteredChords = null;
     hwState._filteredAnchors = null;
     hwState._filteredHandShapes = null;
+    // Transform stage; null fields fall through to filtered/original data.
+    hwState._xfProvider = null;      // { id, transform } or null
+    hwState._xfNotes = null;         // effective (post-filter) views
+    hwState._xfChords = null;
+    hwState._xfAnchors = null;
+    hwState._xfNotesAll = null;      // full-difficulty views (getNotes/getChords)
+    hwState._xfChordsAll = null;
+    hwState._xfChordTemplates = null;
+    hwState._xfStringCount = null;   // number or null
+    hwState._xfTuning = null;        // array or null
+    hwState._xfCapo = null;          // number or null
+    hwState._xfHandShapes = null;    // array or null
+    hwState._xfCentOffset = null;    // number or null
     // Tracks whether ANY phrase level carries handshape data. Lets us
     // distinguish "this difficulty has none" (respect strictly — even
     // when empty) from "the chart's phrase data never authored any
@@ -397,7 +410,8 @@ function createHighway() {
     function getAnchorAt(t) {
         // Same master-difficulty fallback as the render loops — the
         // anchor ladder pairs with the note ladder.
-        const src = hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
+        const src = hwState._xfAnchors !== null ? hwState._xfAnchors
+            : hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
         let a = src[0] || { fret: 1, width: 4 };
         for (const anc of src) {
             if (anc.time > t) break;
@@ -408,7 +422,8 @@ function createHighway() {
 
     function getMaxFretInWindow(t) {
         // Find the highest fret needed across all anchors visible on screen
-        const src = hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
+        const src = hwState._xfAnchors !== null ? hwState._xfAnchors
+            : hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
         let maxFret = 0;
         for (const anc of src) {
             if (anc.time > t + VISIBLE_SECONDS + 2) break; // Skip anchors well in the future (with a little buffer to avoid moving early the cutoff)
@@ -541,17 +556,20 @@ function createHighway() {
 
         // Chart content (filter-aware — difficulty-filtered arrays
         // preferred; raw arrays are the fallback when no ladder data).
-        b.notes = hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
-        b.chords = hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords;
-        b.anchors = hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
+        b.notes = hwState._xfNotes !== null ? hwState._xfNotes
+            : hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
+        b.chords = hwState._xfChords !== null ? hwState._xfChords
+            : hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords;
+        b.anchors = hwState._xfAnchors !== null ? hwState._xfAnchors
+            : hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors;
         b.beats = hwState.beats;
         b.sections = hwState.sections;
-        b.chordTemplates = hwState.chordTemplates;
-        b.stringCount = hwState.stringCount;
-        // Mirrors song_info tuning capo offsets (±semitones from the
-        // instrument’s standard open-string layout). Live reference.
-        b.tuning = hwState.songInfo?.tuning;
-        b.capo = hwState.songInfo?.capo;
+        b.chordTemplates = hwState._xfChordTemplates !== null ? hwState._xfChordTemplates : hwState.chordTemplates;
+        b.stringCount = hwState._xfStringCount !== null ? hwState._xfStringCount : hwState.stringCount;
+        // Effective tuning metadata; live references like the chart arrays.
+        b.tuning = hwState._xfTuning !== null ? hwState._xfTuning : hwState.songInfo?.tuning;
+        b.capo = hwState._xfCapo !== null ? hwState._xfCapo : hwState.songInfo?.capo;
+        b.centOffset = hwState._xfCentOffset !== null ? hwState._xfCentOffset : hwState.songInfo?.centOffset;
         b.lyrics = hwState.lyrics;
         b.lyricsSource = hwState.lyricsSource;
         b.toneChanges = hwState.toneChanges;
@@ -572,9 +590,10 @@ function createHighway() {
         // don't belong. Only fall back to the flat list when the
         // phrase data carries no handshapes at all (common on DLC
         // where handshapes ship on the arrangement root).
-        b.handShapes = (hwState._filteredHandShapes !== null && hwState._phrasesHaveHandShapes)
-            ? hwState._filteredHandShapes
-            : hwState.handShapes;
+        b.handShapes = hwState._xfHandShapes !== null ? hwState._xfHandShapes
+            : (hwState._filteredHandShapes !== null && hwState._phrasesHaveHandShapes)
+                ? hwState._filteredHandShapes
+                : hwState.handShapes;
 
         // Display flags
         b.inverted = hwState._inverted;
@@ -1372,9 +1391,10 @@ function createHighway() {
         // slots, so 4 strings spread across the full band rather than
         // using the upper 4/6ths of the 6-string layout. The Math.max
         // guards against a hypothetical 1-string instrument (denom=0).
-        const span = Math.max(1, hwState.stringCount - 1);
-        for (let i = 0; i < hwState.stringCount; i++) {
-            const yi = hwState._inverted ? (hwState.stringCount - 1 - i) : i;
+        const sc = hwState._xfStringCount !== null ? hwState._xfStringCount : hwState.stringCount;
+        const span = Math.max(1, sc - 1);
+        for (let i = 0; i < sc; i++) {
+            const yi = hwState._inverted ? (sc - 1 - i) : i;
             const y = strTop + (yi / span) * (strBot - strTop);
             hwState.ctx.strokeStyle = hwState.STRING_COLORS[i] || '#888';
             hwState.ctx.lineWidth = 3;
@@ -1477,6 +1497,7 @@ function createHighway() {
             hwState._filteredAnchors = null;
             hwState._filteredHandShapes = null;
             hwState._phrasesHaveHandShapes = false;
+            _restageChartTransform();
             return;
         }
         const outNotes = [];
@@ -1524,6 +1545,116 @@ function createHighway() {
         }
         hwState._filteredHandShapes = outHandShapes;
         hwState._phrasesHaveHandShapes = anyHandShapeInPhrases;
+        _restageChartTransform();
+    }
+
+    function _clearChartTransformStage() {
+        hwState._xfNotes = null;
+        hwState._xfChords = null;
+        hwState._xfAnchors = null;
+        hwState._xfNotesAll = null;
+        hwState._xfChordsAll = null;
+        hwState._xfChordTemplates = null;
+        hwState._xfStringCount = null;
+        hwState._xfTuning = null;
+        hwState._xfCapo = null;
+        hwState._xfHandShapes = null;
+        hwState._xfCentOffset = null;
+    }
+
+    function _cloneChartTransformValue(value, seen = new WeakMap()) {
+        if (!value || typeof value !== 'object') return value;
+        if (seen.has(value)) return seen.get(value);
+        const copy = Array.isArray(value) ? new Array(value.length) : {};
+        seen.set(value, copy);
+        for (const key of Object.keys(value)) {
+            Object.defineProperty(copy, key, {
+                value: _cloneChartTransformValue(value[key], seen),
+                enumerable: true,
+                configurable: true,
+                writable: true,
+            });
+        }
+        return copy;
+    }
+
+    function _sortedChartTransformArray(items, key) {
+        return items.slice().sort((a, b) => a[key] - b[key]);
+    }
+
+    function _reportChartTransformFailure(provider, error) {
+        _clearChartTransformStage();
+        console.error('chart transform:', error);
+        if (window.feedBack && typeof window.feedBack.emit === 'function') {
+            try {
+                window.feedBack.emit('highway:chart-transform-failed', {
+                    id: provider.id,
+                });
+            } catch (_) { /* eventing must not break rendering */ }
+        }
+    }
+
+    // Stage one synchronous transform over the difficulty-filtered chart.
+    function _restageChartTransform() {
+        _clearChartTransformStage();
+        const p = hwState._xfProvider;
+        if (!p) return;
+        // Pre-ready there is nothing meaningful to transform (chart arrays
+        // are still streaming, songInfo may be empty) — keep the provider
+        // attached and let the `ready` path (which sets hwState.ready BEFORE
+        // _rebuildMasteryFilter) run the first real staging.
+        if (!hwState.ready) return;
+        const filterActive = hwState._filteredNotes !== null;
+        try {
+            let out = p.transform(_cloneChartTransformValue({
+                notes: filterActive ? hwState._filteredNotes : hwState.notes,
+                chords: hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords,
+                anchors: hwState._filteredAnchors !== null ? hwState._filteredAnchors : hwState.anchors,
+                allNotes: hwState.notes,
+                allChords: hwState.chords,
+                chordTemplates: hwState.chordTemplates,
+                // Same effective selection the bundle uses (see b.handShapes).
+                handShapes: (hwState._filteredHandShapes !== null && hwState._phrasesHaveHandShapes)
+                    ? hwState._filteredHandShapes
+                    : hwState.handShapes,
+                stringCount: hwState.stringCount,
+                songInfo: hwState.songInfo,
+            }));
+            if (out && typeof out.then === 'function') {
+                try {
+                    const catchAsyncFailure = out.catch;
+                    if (typeof catchAsyncFailure === 'function') {
+                        catchAsyncFailure.call(out, error => console.error('chart transform async:', error));
+                    }
+                } catch (_) { /* the synchronous failure below remains authoritative */ }
+                throw new TypeError('Chart transform providers must return synchronously');
+            }
+            if (!out || typeof out !== 'object') return;
+            out = _cloneChartTransformValue(out);
+            if (Array.isArray(out.notes)) hwState._xfNotes = _sortedChartTransformArray(out.notes, 't');
+            if (Array.isArray(out.chords)) hwState._xfChords = _sortedChartTransformArray(out.chords, 't');
+            if (Array.isArray(out.anchors)) hwState._xfAnchors = _sortedChartTransformArray(out.anchors, 'time');
+            // Full-difficulty views: explicit allNotes/allChords, or reuse the
+            // effective output when no filter is active (effective === raw then).
+            if (Array.isArray(out.allNotes)) hwState._xfNotesAll = _sortedChartTransformArray(out.allNotes, 't');
+            else if (!filterActive && Array.isArray(out.notes)) hwState._xfNotesAll = hwState._xfNotes;
+            if (Array.isArray(out.allChords)) hwState._xfChordsAll = _sortedChartTransformArray(out.allChords, 't');
+            else if (hwState._filteredChords === null && Array.isArray(out.chords)) hwState._xfChordsAll = hwState._xfChords;
+            if (Array.isArray(out.chordTemplates)) hwState._xfChordTemplates = out.chordTemplates;
+            if (Number.isFinite(out.stringCount) && out.stringCount >= 1) {
+                // Same [1, 8] clamp as the song_info stringCount handler.
+                hwState._xfStringCount = Math.max(1, Math.min(8, Math.trunc(out.stringCount)));
+            }
+            if (Array.isArray(out.tuning) && out.tuning.length) hwState._xfTuning = out.tuning;
+            if (Number.isFinite(out.capo) && out.capo >= 0) hwState._xfCapo = Math.trunc(out.capo);
+            if (Array.isArray(out.handShapes)) {
+                hwState._xfHandShapes = _sortedChartTransformArray(out.handShapes, 'start_time');
+            }
+            if (Number.isFinite(out.centOffset)) hwState._xfCentOffset = out.centOffset;
+        } catch (e) {
+            _reportChartTransformFailure(p, e);
+            return;
+        }
     }
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -1568,6 +1699,8 @@ function createHighway() {
             hwState._filteredAnchors = null;
             hwState._filteredHandShapes = null;
             hwState._phrasesHaveHandShapes = false;
+            // Keep _xfProvider (persists across songs); drop staged output.
+            _clearChartTransformStage();
             _resetChordRenderState();
         },
 
@@ -2454,8 +2587,11 @@ function createHighway() {
             hwState._domVisSampledFrame = NaN;
             return _isHighwayVisible();
         },
-        getNotes() { return hwState.notes; },
-        getChords() { return hwState.chords; },
+        // When a chart transform is active these return its full-difficulty
+        // views (falling through to the original arrays if the provider
+        // supplied only the filtered view).
+        getNotes() { return hwState._xfNotesAll !== null ? hwState._xfNotesAll : hwState.notes; },
+        getChords() { return hwState._xfChordsAll !== null ? hwState._xfChordsAll : hwState.chords; },
         // Difficulty-filtered variants of getNotes()/getChords(). Returns the
         // master-difficulty-filtered arrays when the current song has phrase-level
         // data (i.e. the mastery slider is active). For songs with a single
@@ -2463,8 +2599,14 @@ function createHighway() {
         // these fall through to the raw arrays, the same as getNotes()/getChords().
         // Plugins that score or analyse only the notes the player is currently
         // expected to play should prefer these over getNotes()/getChords(). Read-only.
-        getFilteredNotes()  { return hwState._filteredNotes  !== null ? hwState._filteredNotes  : hwState.notes;  },
-        getFilteredChords() { return hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords; },
+        getFilteredNotes()  {
+            if (hwState._xfNotes !== null) return hwState._xfNotes;
+            return hwState._filteredNotes  !== null ? hwState._filteredNotes  : hwState.notes;
+        },
+        getFilteredChords() {
+            if (hwState._xfChords !== null) return hwState._xfChords;
+            return hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords;
+        },
         // Live reference to the chord-template lookup table —
         // `getChords()[i].id` is an index into this array. Each
         // template carries `{ name, fingers, frets }`:
@@ -2479,7 +2621,7 @@ function createHighway() {
         // its entries. Not difficulty-filter-aware (templates are
         // static metadata; every chord_id referenced by `getChords()`
         // is guaranteed valid).
-        getChordTemplates() { return hwState.chordTemplates; },
+        getChordTemplates() { return hwState._xfChordTemplates !== null ? hwState._xfChordTemplates : hwState.chordTemplates; },
         getToneChanges() { return hwState.toneChanges; },
         getToneBase() { return hwState.toneBase; },
         getSections() { return hwState.sections; },
@@ -2507,7 +2649,10 @@ function createHighway() {
         // string-indexed UI / geometry against THIS rather than
         // assuming 6. Defaults to 6 between songs (until the next
         // song_info message arrives).
-        getStringCount() { return hwState.stringCount; },
+        getStringCount() { return hwState._xfStringCount !== null ? hwState._xfStringCount : hwState.stringCount; },
+        getTuning() { return hwState._xfTuning !== null ? hwState._xfTuning : hwState.songInfo?.tuning; },
+        getCapo() { return hwState._xfCapo !== null ? hwState._xfCapo : hwState.songInfo?.capo; },
+        getCentOffset() { return hwState._xfCentOffset !== null ? hwState._xfCentOffset : hwState.songInfo?.centOffset; },
         addDrawHook(fn) {
             hwState._drawHooks.push(fn);
         },
@@ -2531,6 +2676,17 @@ function createHighway() {
          */
         setNoteStateProvider(fn) { hwState._noteStateProvider = (typeof fn === 'function') ? fn : null; },
         getNoteStateProvider() { return hwState._noteStateProvider; },
+        // Install one synchronous provider for this highway. The capability
+        // domain owns registration and selection; null clears the provider.
+        setChartTransform(p) {
+            hwState._xfProvider = (p && typeof p.transform === 'function')
+                ? { id: String(p.id || 'anonymous'), transform: p.transform }
+                : null;
+            _restageChartTransform();
+        },
+        getChartTransform() { return hwState._xfProvider; },
+        // Re-run the installed provider (e.g. its target settings changed).
+        refreshChartTransform() { _restageChartTransform(); },
         /** Current per-string base colors (copy). Index 0..7. */
         getStringColors() { return hwState.STRING_COLORS.slice(); },
         /**
@@ -2638,6 +2794,8 @@ function createHighway() {
             hwState._filteredAnchors = null;
             hwState._filteredHandShapes = null;
             hwState._phrasesHaveHandShapes = false;
+            // Keep _xfProvider (persists across songs); drop staged output.
+            _clearChartTransformStage();
             _resetChordRenderState();
             const wsParams = new URLSearchParams();
             if (arrangement !== undefined) wsParams.set('arrangement', arrangement);
@@ -2735,6 +2893,11 @@ function createHighway() {
          */
         isDefaultRenderer() { return hwState._renderer === _defaultRenderer || hwState._renderer == null; },
     };
+    // Let cross-instance coordinators discover this highway.
+    if (window.feedBack && typeof window.feedBack.emit === 'function') {
+        try { window.feedBack.emit('highway:created', { highway: api }); }
+        catch (e) { console.error('highway:created emit:', e); }
+    }
     return api;
 }
 const highway = createHighway();

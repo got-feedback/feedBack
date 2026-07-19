@@ -1680,7 +1680,7 @@ def convert_file(
             filepath = safe_join(out, filename)
             if filepath is None:
                 raise ValueError(f"unsafe output filename from track name: {track['name']!r}")
-            filepath.write_text(xml_str)
+            filepath.write_text(xml_str, encoding="utf-8")
             output_files.append(str(filepath))
             continue
 
@@ -2108,7 +2108,7 @@ def convert_file(
         filepath = safe_join(out, filename)
         if filepath is None:
             raise ValueError(f"unsafe output filename from track name: {track['name']!r}")
-        filepath.write_text(xml_str)
+        filepath.write_text(xml_str, encoding="utf-8")
         output_files.append(str(filepath))
 
         # Keys/piano tracks additionally get a standard-notation sidecar

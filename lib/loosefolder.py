@@ -225,13 +225,18 @@ def _detect_arrangements(path: Path) -> tuple[list[dict], dict]:
     Returns (arrangements_list, shared_meta).
     shared_meta contains title/artist/album/year/duration/tuning_offsets
     sourced from the highest-priority arrangement (lead > combo > rhythm >
-    bass) — picking the guitar tuning when both bass and lead are present.
+    bass) — picking the guitar tuning when both bass and lead are present —
+    plus `bass_tuning_offsets` from the first bass arrangement (None when the
+    folder has none), so the index can carry both tunings.
     """
     arrangements = []
     # Track which arrangement priority sourced shared_meta so a later,
     # higher-priority arrangement (lead < bass in sort order) overrides.
     shared_meta = {}
     shared_priority = None
+    # First tuning seen per arrangement ROLE, kept alongside the guitar-first
+    # song tuning so the library can answer for the part a player plays.
+    role_tunings: dict[str, list[int] | None] = {"bass": None, "rhythm": None}
 
     for xml in sorted(_iter_local_xmls(path)):
         # Trust the XML root over the filename — a custom named
@@ -269,6 +274,10 @@ def _detect_arrangements(path: Path) -> tuple[list[dict], dict]:
                             "duration", "tuning_offsets")}
             shared_priority = priority
 
+        if (arr_type in role_tunings and role_tunings[arr_type] is None
+                and meta.get("tuning_offsets")):
+            role_tunings[arr_type] = list(meta["tuning_offsets"])
+
         arrangements.append({
             "type":     arr_type,
             "name":     arr_name,
@@ -281,6 +290,8 @@ def _detect_arrangements(path: Path) -> tuple[list[dict], dict]:
         a["index"] = i
         del a["priority"]
 
+    for role, offs in role_tunings.items():
+        shared_meta[f"{role}_tuning_offsets"] = offs
     return arrangements, shared_meta
 
 
@@ -412,6 +423,14 @@ def extract_meta(path: Path, dlc_root: Path | None = None) -> dict:
                                 xml_meta.get("duration", 0))
     tuning_offsets = _coerce_tuning_offsets(manifest.get("tuning_offsets"),
                                             xml_meta.get("tuning_offsets"))
+    # Per-role tunings: XML-derived only. A manifest `tuning_offsets` overrides
+    # the SONG tuning (above) but says nothing about WHICH chart it describes,
+    # so it must never be mistaken for a specific part's tuning.
+    role_tunings = {}
+    for role in ("bass", "rhythm"):
+        offs = xml_meta.get(f"{role}_tuning_offsets")
+        role_tunings[f"{role}_tuning_offsets"] = (
+            offs if isinstance(offs, list) and offs else None)
 
     manifest_arr = _validate_manifest_arrangements(manifest.get("arrangements"))
     if manifest_arr is not None:
@@ -427,6 +446,7 @@ def extract_meta(path: Path, dlc_root: Path | None = None) -> dict:
         "year":           year,
         "duration":       duration,
         "tuning_offsets": tuning_offsets,
+        **role_tunings,   # None = no arrangement in that role
         "arrangements":   arrangements,
         "audio_path":     str(audio) if audio else None,
         "art_path":       str(art)   if art   else None,

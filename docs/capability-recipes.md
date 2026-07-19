@@ -499,6 +499,57 @@ window.feedBack.on('progression:quest-completed', (e) => {
 });
 ```
 
+## Chart-Transform Provider
+
+Plugins that transpose, simplify, annotate, or otherwise rewrite chart data register as `chart-transform` providers (#952). The effective chart reaches the built-in highway, custom renderers, and highway getters on primary and splitscreen instances.
+
+```json
+{
+  "id": "my_transform",
+  "name": "My Transform",
+  "standards": ["capability-pipelines.v1"],
+  "capabilities": {
+    "chart-transform": {
+      "roles": ["provider"],
+      "operations": ["chart.transform"],
+      "mode": "active",
+      "compatibility": "none",
+      "ownership": "multi-provider",
+      "safety": "safe",
+      "version": 1
+    }
+  }
+}
+```
+
+```js
+const api = window.feedBack.capabilities;
+
+await api.dispatch({
+  capability: 'chart-transform',
+  command: 'register-provider',
+  source: 'my_transform',
+  payload: {
+    providerId: 'my_transform',
+    label: 'My Transform',
+    transform(input) {
+      const notes = rewriteNotes(input.notes);
+      const allNotes = input.allNotes === input.notes ? notes : rewriteNotes(input.allNotes);
+      return { notes, allNotes };
+    },
+  },
+});
+
+await api.dispatch({ capability: 'chart-transform', command: 'select-provider',
+  source: 'my_transform', payload: { providerId: 'my_transform' } });
+
+await api.dispatch({ capability: 'chart-transform', command: 'refresh', source: 'my_transform' });
+```
+
+`transform(input)` receives filtered `notes`, `chords`, `anchors`, and `handShapes`, plus full-difficulty `allNotes`/`allChords`, `chordTemplates`, `stringCount`, and `songInfo`. It may synchronously return any subset of those arrays plus `tuning`, `capo`, or `centOffset`; null leaves the chart unchanged. The host isolates provider inputs and outputs, time-sorts accepted timelines, and falls back to the original chart on failure.
+
+Transforms run at chart ready, mastery recompute, and explicit `refresh`, never per frame. Selection persists by provider id. `getSongInfo()` retains original metadata; effective metadata is available through the renderer bundle and `getStringCount()`, `getTuning()`, `getCapo()`, and `getCentOffset()`.
+
 ## Future Expansion Domains
 
 Some domain names are reserved for expected future contracts, but they are not registered in the runtime graph yet. For example, `ui.player-panels` is documented as a likely panel-host surface, but FeedBack does not currently expose a capability command for panel contributions. See [capability-roadmap.md](capability-roadmap.md) for the PR1 domain set and deferred-domain checklist.

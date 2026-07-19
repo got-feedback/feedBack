@@ -44,7 +44,7 @@
     ];
     const FORMATS = [['', 'All formats'], ['sloppak', 'Feedpak'], ['loose', 'Folder']];
     const ARRANGEMENTS = ['Lead', 'Rhythm', 'Bass', 'Combo', 'Vocals'];
-    const STEMS = ['guitar', 'bass', 'drums', 'vocals', 'other'];
+    const STEMS = ['guitar', 'bass', 'drums', 'vocals', 'piano', 'other'];
     const PAGE_SIZE = 24;
     // Extra rows rendered above/below the viewport so a fast scroll doesn't flash
     // blank before the next window render lands.
@@ -62,7 +62,7 @@
         artist: '', album: '',
         grouping: true,     // one card per song (multi-chart grouping); persisted
 
-        filters: { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [] },
+        filters: { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [], tuningMatch: 'exact' },
         page: 0, total: 0, loading: false, built: false, accuracy: {}, tuningNames: [], genres: [],
         artistCatalog: [], renderedHash: '',
         scrollBound: false,
@@ -120,7 +120,7 @@
     function activeFilterCount() {
         const f = state.filters;
         return f.arr_has.length + f.arr_lacks.length + f.stem_has.length + f.stem_lacks.length +
-            (f.lyrics ? 1 : 0) + f.tunings.length + (f.mastery ? f.mastery.length : 0) +
+            (f.lyrics ? 1 : 0) + (f.tuningMatch === 'playable' ? 1 : f.tunings.length) + (f.mastery ? f.mastery.length : 0) +
             (f.match ? f.match.length : 0) + (f.genre ? f.genre.length : 0) +
             (state.artist ? 1 : 0) + (state.album ? 1 : 0);
     }
@@ -280,7 +280,15 @@
         if (f.stem_has.length) p.set('stems_has', f.stem_has.join(','));
         if (f.stem_lacks.length) p.set('stems_lacks', f.stem_lacks.join(','));
         if (f.lyrics) p.set('has_lyrics', f.lyrics);
-        if (f.tunings.length) p.set('tunings', f.tunings.join(','));
+        // The two modes answer different questions, so only one filters at a
+        // time: sending both would silently intersect them.
+        if (f.tunings.length && f.tuningMatch !== 'playable') p.set('tunings', f.tunings.join(','));
+        // Which perspective the `tunings` filter + the tuning sort read.
+        if (libInstrument() !== 'guitar-lead') p.set('instrument', libInstrument());
+        // "Playable without retuning": send the player's LIVE tuning and let the
+        // server do the pitch maths (the pitch tables live in lib/tunings.py —
+        // duplicating them here is how the two drift apart).
+        applyPlayableParams(p, f);
         if (f.mastery && f.mastery.length) p.set('mastery', f.mastery.join(','));
         if (f.match && f.match.length) p.set('match', f.match.join(','));
         if (f.genre && f.genre.length) p.set('genre', f.genre.join(','));
@@ -786,6 +794,10 @@
     // so without them the chips render exactly as before. Decoration runs AFTER the
     // (sync) window paint so scrolling stays snappy; a token cancels a superseded pass.
     let _tuningDecorToken = 0;
+    // The instrument the current grid was queried/painted for, so a
+    // working-tuning change can tell a guitar<->bass SWITCH (re-query) from a
+    // retune within the same instrument (re-colour only).
+    let _lastRenderInstrument = null;
     function _applyChipMatch(chip, stateName) {
         chip.classList.remove('bg-fb-mid', 'bg-emerald-500', 'bg-amber-400');
         chip.classList.add(stateName === 'match' ? 'bg-emerald-500'
@@ -825,22 +837,31 @@
         const shown = song.display_chart ? Object.assign({}, song, song.display_chart) : song;
         // In select mode the checkbox occupies top-2 left-2, so shift the
         // tuning chip right (left-9) to avoid overlapping it.
+        // Bass players see the bass chart's tuning (guitar fallback) — the card
+        // must agree with the facet/filter or the grid contradicts the pills.
+        const shownTuning = shownTuningName(shown);
         const tuningLabel = (typeof window.displayTuningName === 'function')
-            ? window.displayTuningName(shown.tuning_name || shown.tuning)
-            : (shown.tuning_name || '');
+            ? window.displayTuningName(shownTuning)
+            : (shownTuning || '');
         let tuning = '';
         if (tuningLabel) {
             const rawOffsets = (typeof window.parseRawTuningOffsets === 'function')
-                ? (window.parseRawTuningOffsets(shown.tuning_offsets)
-                    || window.parseRawTuningOffsets(shown.tuning_name || shown.tuning))
+                ? (window.parseRawTuningOffsets(shownTuningOffsets(shown))
+                    || window.parseRawTuningOffsets(shownTuning))
                 : null;
             const targetNotes = (tuningLabel === 'Custom Tuning' && rawOffsets
                 && typeof window.displayTuningTargets === 'function')
                 ? window.displayTuningTargets(rawOffsets, { tuningName: tuningLabel })
                 : '';
-            const badgeTitle = targetNotes
+            // Mark a tuning we INFERRED from the guitar chart (this song has no
+            // bass arrangement) so a bass player isn't shown a borrowed tuning
+            // as if it were their part's. `~` keeps the chip compact; the title
+            // spells it out.
+            const inferred = shown.tuning_inferred === true;
+            const badgeTitle = (targetNotes
                 ? ('Custom Tuning: ' + targetNotes)
-                : tuningLabel;
+                : tuningLabel)
+                + (inferred ? ' — from the guitar chart (no bass arrangement)' : '');
             const pos = 'absolute top-2 ' + (state.selectMode ? 'left-9' : 'left-2');
             // Tag the chip with its offsets so decorateTuningChips() can colour it
             // green (matches your current tuning) / amber (needs a retune) after paint.
@@ -848,8 +869,14 @@
             // scores its bass tuning against the bass base pitches, not guitar — otherwise
             // a 4-string bass tuning read as guitar can false-match a guitar player.
             const chipArrs = shown.arrangements || [];
-            const chipIsBass = chipArrs.length > 0
-                && chipArrs.every((a) => /\bbass\b/i.test((a && a.name) || ''));
+            // Bass either because the chip is SHOWING the bass chart's tuning
+            // (a bass player on a song that has one), or because every
+            // arrangement is a bass part. Checked via libInstrument() rather
+            // than comparing the two names — they are EQUAL for most songs, so
+            // a value comparison would flag a guitarist's chip as bass.
+            const chipIsBass = (libInstrument() === 'bass' && !!shown.bass_tuning_name)
+                || (chipArrs.length > 0
+                    && chipArrs.every((a) => /\bbass\b/i.test((a && a.name) || '')));
             const matchAttr = (rawOffsets && rawOffsets.length)
                 ? ' data-tuning-chip data-tuning-offsets="' + esc(rawOffsets.join(',')) + '"'
                     + (chipIsBass ? ' data-tuning-bass="1"' : '') : '';
@@ -857,7 +884,7 @@
                 tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.5625rem] font-bold px-1.5 py-0.5 rounded-sm leading-tight max-w-[5.5rem] text-center"' + matchAttr + ' title="' + esc(badgeTitle) + '">'
                     + esc('Custom Tuning') + '<br><span class="font-semibold tracking-wide">' + esc(targetNotes) + '</span></span>';
             } else {
-                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.625rem] font-bold px-1.5 py-0.5 rounded-sm"' + matchAttr + ' title="' + esc(badgeTitle) + '">' + esc(tuningLabel) + '</span>';
+                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.625rem] font-bold px-1.5 py-0.5 rounded-sm"' + matchAttr + ' title="' + esc(badgeTitle) + '">' + esc(tuningLabel) + (inferred ? '<span class="opacity-60"> ~</span>' : '') + '</span>';
             }
         }
         // Display-only (pointer-events-none) so a click falls through to the
@@ -2489,6 +2516,89 @@
 
     function _artistHostEl() { return document.getElementById('v3-songs-artistpage'); }
 
+    // ── Instrument-aware tuning (the bass-player tuning-filter report) ────────
+    // A song's bass chart is often in a different tuning from its guitar chart,
+    // so the tuning facet/filter/sort and the card chip must speak for the
+    // instrument the player actually plays. The host's working-tuning
+    // capability already holds the live selection (seeded from /api/settings on
+    // boot, updated when the player switches) — read it rather than adding
+    // another settings fetch. `state.settingsInstrument` is the fallback for
+    // hosts where the capability isn't mounted.
+    // Three perspectives, matching `active_instrument_profile`: lead and rhythm
+    // guitar charts can be tuned differently too, so a rhythm player hits the
+    // same bug a bassist did. The PROFILE is the only three-valued source (the
+    // working-tuning capability knows guitar-vs-bass but not lead-vs-rhythm),
+    // so it wins; the capability is the live fallback for hosts where the
+    // profile hasn't loaded.
+    const PERSPECTIVES = ['guitar-lead', 'guitar-rhythm', 'bass'];
+    function libInstrument() {
+        if (PERSPECTIVES.indexOf(state.settingsProfile) >= 0) return state.settingsProfile;
+        try {
+            const wt = window.feedBack && window.feedBack.workingTuning;
+            if (wt && typeof wt.get === 'function') {
+                const cur = wt.get();
+                if (cur && cur.instrument === 'bass') return 'bass';
+            }
+        } catch (_) { /* capability absent/erroring — fall through to settings */ }
+        return state.settingsInstrument === 'bass' ? 'bass' : 'guitar-lead';
+    }
+
+    // "Playable without retuning" mode reads the player's CURRENT tuning from
+    // the working-tuning capability (the live session state the tuner writes),
+    // not a separate setting. No capability => we cannot know the current
+    // tuning, so the mode is unavailable rather than guessed.
+    function currentWorkingTuning() {
+        try {
+            const wt = window.feedBack && window.feedBack.workingTuning;
+            if (!wt || typeof wt.get !== 'function') return null;
+            const cur = wt.get();
+            if (!cur || !Array.isArray(cur.offsets) || !cur.offsets.length) return null;
+            return cur;
+        } catch (_) { return null; }
+    }
+
+    function playableAvailable() { return !!currentWorkingTuning(); }
+
+    function applyPlayableParams(p, f) {
+        if (f.tuningMatch !== 'playable') return;
+        const cur = currentWorkingTuning();
+        if (!cur) return;
+        p.set('tuning_match', 'playable');
+        p.set('playable_offsets', cur.offsets.join(','));
+        p.set('playable_instrument', cur.instrument === 'bass' ? 'bass' : 'guitar');
+        p.set('playable_string_count', String(cur.stringCount || cur.offsets.length));
+    }
+
+    // Short human label for the perspective, for the facet/sort headers.
+    function libInstrumentLabel() {
+        const p = libInstrument();
+        return p === 'bass' ? 'bass' : p === 'guitar-rhythm' ? 'rhythm' : 'lead';
+    }
+
+    // The column a row's tuning lives in for the active perspective.
+    function perspectiveTuningField() {
+        const p = libInstrument();
+        return p === 'bass' ? 'bass_tuning_name'
+            : p === 'guitar-rhythm' ? 'rhythm_tuning_name' : '';
+    }
+
+    // The tuning a card should SHOW: bass players see the bass chart's tuning,
+    // falling back to the song (guitar-derived) tuning when the song has no
+    // bass arrangement — the common case, so the fallback is not an edge path.
+    function shownTuningName(song) {
+        const f = perspectiveTuningField();
+        if (f && song[f]) return song[f];
+        return song.tuning_name || song.tuning;
+    }
+
+    function shownTuningOffsets(song) {
+        const f = perspectiveTuningField();
+        if (f && song[f]) {
+            return song[f.replace('_name', '_offsets')] || song.tuning_offsets;
+        }
+        return song.tuning_offsets;
+    }
+
     // Sync the two Settings gates into module state (fire-and-forget — the
     // cached flags gate entry-point rendering; openArtistPage re-checks).
     function refreshArtistPageGates() {
@@ -2496,6 +2606,10 @@
             if (!cfg) return;
             state.artistPagesEnabled = cfg.artist_pages_enabled !== false;
             state.artistLinksEnabled = cfg.artist_external_links === true;
+            // Fallback instrument for hosts without the working-tuning capability.
+            state.settingsInstrument = cfg.instrument === 'bass' ? 'bass' : 'guitar';
+            // The three-valued perspective source (lead / rhythm / bass).
+            state.settingsProfile = cfg.active_instrument_profile || '';
         });
     }
 
@@ -2809,12 +2923,13 @@
         else if (s === 'has') lacksArr.push(value);
         // 'lacks' → cycles back to any (already removed)
     }
-    function triPill(group, value, label, st) {
+    function triPill(group, value, label, st, title) {
         const cls = st === 'has' ? 'bg-fb-good/30 text-fb-good border-fb-good/40'
             : st === 'lacks' ? 'bg-fb-low/30 text-fb-low border-fb-low/40'
                 : 'bg-gray-800/50 text-fb-textDim border-gray-700';
         const mark = st === 'has' ? '✓ ' : st === 'lacks' ? '✕ ' : '';
-        return '<button data-tri="' + group + '" data-val="' + esc(value) + '" class="px-2 py-1 rounded-md text-xs border ' + cls + '">' + mark + esc(label) + '</button>';
+        const tip = title ? ' title="' + esc(title) + '"' : '';
+        return '<button data-tri="' + group + '" data-val="' + esc(value) + '" class="px-2 py-1 rounded-md text-xs border ' + cls + '"' + tip + '>' + mark + esc(label) + '</button>';
     }
     function renderDrawer() {
         const d = document.getElementById('v3-songs-drawer');
@@ -2825,7 +2940,17 @@
             '<div class="flex items-center justify-between"><h3 class="text-lg font-semibold text-fb-text">Filters</h3>' +
             '<button data-drawer-close class="text-fb-textDim hover:text-fb-text">✕</button></div>' +
             section('Arrangements', ARRANGEMENTS.map((a) => triPill('arr', a, a, triState(f.arr_has, f.arr_lacks, a))).join('')) +
-            section('Stems (feedpak)', STEMS.map((s) => triPill('stem', s, s, triState(f.stem_has, f.stem_lacks, s))).join('')) +
+            section('Stems (feedpak)', STEMS.map((s) => triPill('stem', s, s, triState(f.stem_has, f.stem_lacks, s))).join('') +
+                (() => {
+                    // One-click "which songs still need splitting": lacks EVERY
+                    // instrument stem — the same query Stem Splitter's own
+                    // missing-stems view runs. Toggles off if already active.
+                    const on = STEMS.every((s) => f.stem_lacks.includes(s)) && !f.stem_has.length;
+                    return '<button data-stem-unsplit class="px-2 py-1 rounded-md text-xs border '
+                        + (on ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700')
+                        + '" title="Songs with no instrument stems — not yet split">'
+                        + (on ? '✕ ' : '') + 'Not split</button>';
+                })()) +
             section('Lyrics', ['', '1', '0'].map((v) => '<button data-lyrics="' + v + '" class="px-2 py-1 rounded-md text-xs border ' + (f.lyrics === v ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + (v === '' ? 'Any' : v === '1' ? 'Has lyrics' : 'No lyrics') + '</button>').join('')) +
             // Progress (mastery bands) — multi-select; server filters via song_stats.
             section('Progress', [['mastered', 'Mastered'], ['in_progress', 'In progress'], ['not_started', 'Not started']].map((it) => '<button data-mastery="' + it[0] + '" class="px-2 py-1 rounded-md text-xs border ' + (f.mastery.includes(it[0]) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + it[1] + '</button>').join('')) +
@@ -2834,7 +2959,32 @@
             section('Match', [['review', 'To review'], ['matched', 'Matched'], ['unmatched', 'Unmatched'], ['pending', 'Not scanned']].map((it) => '<button data-match="' + it[0] + '" class="px-2 py-1 rounded-md text-xs border ' + (f.match.includes(it[0]) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + it[1] + '</button>').join('')) +
             // Genre facet — dynamic list from /api/library/genres (primary genre).
             (state.genres && state.genres.length ? section('Genre', state.genres.map((g) => '<button data-genre="' + esc(g) + '" class="px-2 py-1 rounded-md text-xs border ' + (f.genre.includes(g) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + esc(g) + '</button>').join('')) : '') +
-            section('Tuning', (state.tuningNames || []).map((t) => {
+            // The facet header NAMES the perspective. Silent instrument-following
+            // is the original bug in a new place: the user must be able to tell
+            // which instrument these tunings describe.
+            section('Tuning (' + libInstrumentLabel() + ')',
+                // MODE toggle. Exact match answers "which tuning is this
+                // labelled"; Playable answers "will this cost me a retune" —
+                // which is what a player actually wants. Both are offered;
+                // exact stays the default so nothing changes unasked.
+                '<div class="flex gap-1 mb-2">'
+                + [['exact', 'Exact tuning'], ['playable', 'Playable without retuning']].map((m) => {
+                    const on = (f.tuningMatch || 'exact') === m[0];
+                    const dis = m[0] === 'playable' && !playableAvailable();
+                    return '<button data-tuning-match="' + m[0] + '"'
+                        + (dis ? ' disabled' : '')
+                        + (dis ? ' title="Needs your current tuning — open the tuner first"' : '')
+                        + ' class="px-2 py-1 rounded-md text-xs border '
+                        + (on ? 'bg-fb-primary text-white border-fb-primary'
+                            : 'bg-gray-800/50 text-fb-textDim border-gray-700')
+                        + (dis ? ' opacity-40 cursor-not-allowed' : '') + '">'
+                        + esc(m[1]) + '</button>';
+                }).join('')
+                + '</div>'
+                + (f.tuningMatch === 'playable'
+                    ? '<div class="text-xs text-fb-textDim mb-2">Charts you can play in your current tuning, no retune. Songs whose lowest string sits below yours are excluded.</div>'
+                    : '')
+                + ((state.tuningNames || []).map((t) => {
                 // Filter on the server's grouping key (raw offsets for customs)
                 // so two "Custom Tuning" entries are distinct; show their target
                 // notes in the label so they're distinguishable.
@@ -2847,8 +2997,17 @@
                     const notes = offs ? window.displayTuningTargets(offs, { tuningName: t.name }) : '';
                     if (notes) label = 'Custom · ' + notes;
                 }
-                return triPill('tuning', val, label + ' (' + t.count + ')', f.tunings.includes(val) ? 'has' : 'any');
-            }).join('') || '<span class="text-xs text-fb-textDim">No tunings</span>') +
+                // Be honest about the fallback: when some of a row's songs have
+                // no bass chart and are borrowing the guitar tuning, say so
+                // rather than presenting a borrowed tuning as a measured one.
+                const inf = t.inferred_count || 0;
+                const title = inf
+                    ? inf + ' of ' + t.count + ' inferred from the guitar chart (no bass arrangement)'
+                    : '';
+                const countLabel = inf ? t.count + ', ' + inf + ' inferred' : String(t.count);
+                return triPill('tuning', val, label + ' (' + countLabel + ')',
+                    f.tunings.includes(val) ? 'has' : 'any', title);
+            }).join('') || '<span class="text-xs text-fb-textDim">No tunings</span>')) +
             // Multi-chart grouping toggle (P5e) — a VIEW mode, not a filter
             // (never counted in the badge, never saved into collection rules).
             // Local provider only: it's the one that implements group=.
@@ -2878,6 +3037,18 @@
             else if (g === 'tuning') { const i = f.tunings.indexOf(v); if (i >= 0) f.tunings.splice(i, 1); else f.tunings.push(v); }
             renderDrawer();
         }));
+        d.querySelectorAll('[data-tuning-match]').forEach((b) => b.addEventListener('click', () => {
+            if (b.disabled) return;
+            f.tuningMatch = b.getAttribute('data-tuning-match');
+            renderDrawer();
+        }));
+        d.querySelector('[data-stem-unsplit]')?.addEventListener('click', () => {
+            const on = STEMS.every((s) => f.stem_lacks.includes(s)) && !f.stem_has.length;
+            f.stem_has.length = 0;
+            f.stem_lacks.length = 0;
+            if (!on) f.stem_lacks.push(...STEMS);
+            renderDrawer();
+        });
         d.querySelectorAll('[data-lyrics]').forEach((b) => b.addEventListener('click', () => { f.lyrics = b.getAttribute('data-lyrics'); renderDrawer(); }));
         d.querySelectorAll('[data-mastery]').forEach((b) => b.addEventListener('click', () => { const v = b.getAttribute('data-mastery'); const i = f.mastery.indexOf(v); if (i >= 0) f.mastery.splice(i, 1); else f.mastery.push(v); renderDrawer(); }));
         d.querySelector('[data-grouping]')?.addEventListener('click', () => {
@@ -2891,7 +3062,7 @@
         d.querySelector('[data-drawer-tidy]')?.addEventListener('click', openArtistTidyUp);
         d.querySelector('[data-drawer-close]')?.addEventListener('click', closeDrawer);
         d.querySelector('[data-drawer-clear]')?.addEventListener('click', async () => {
-            state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [] };
+            state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [], tuningMatch: 'exact' };
             state.artist = '';
             state.album = '';
             renderDrawer();
@@ -3478,13 +3649,15 @@
         const providers = await loadProviders();
         const [, tn] = await Promise.all([
             (async () => { state.accuracy = (await jget('/api/stats/best')) || {}; })(),
-            jget('/api/library/tuning-names?provider=' + enc(state.provider)),
+            jget('/api/library/tuning-names?provider=' + enc(state.provider)
+                + '&instrument=' + enc(libInstrument())),
             loadArtistCatalog(),
             // Artist-page gates (PR-B) ride the initial fetch batch so the
             // first card paint already knows whether artist lines are links.
             refreshArtistPageGates(),
         ]);
         state.tuningNames = (tn && tn.tunings) || [];
+        _lastRenderInstrument = libInstrument();
         try { const _g = await jget('/api/library/genres?provider=' + enc(state.provider)); state.genres = (_g && _g.genres) || []; } catch (e) { state.genres = []; }
 
         const opt = (arr, sel) => arr.map(([v, l]) => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(l) + '</option>').join('');
@@ -3512,7 +3685,13 @@
             '<select id="v3-songs-artist" class="' + ctrl + ' max-w-[11rem]" aria-label="Artist">' + artistSelectHtml() + '</select>' +
             '<select id="v3-songs-album" class="' + ctrl + ' max-w-[11rem]" aria-label="Album"' + (state.artist ? '' : ' disabled') + '>' + albumSelectHtml() + '</select>' +
             '<div class="flex rounded-md overflow-hidden border border-gray-700"><button id="v3-songs-grid-btn" class="px-3 py-2 text-sm">▦</button><button id="v3-songs-tree-btn" class="px-3 py-2 text-sm">≣</button><button id="v3-songs-albums-btn" title="Albums" class="px-3 py-2 text-sm">💿</button><button id="v3-songs-folder-btn" class="px-3 py-2 text-sm" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:2.25rem"><svg fill="currentColor" viewBox="0 0 16 16" style="width:12px;height:12px;flex-shrink:0"><path d="M1 3.5A1.5 1.5 0 012.5 2h3.086a1.5 1.5 0 011.06.44l.915.914H13.5A1.5 1.5 0 0115 4.914V12.5a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 12.5v-9z"/></svg></button></div>' +
-            '<select id="v3-songs-sort" class="' + ctrl + '">' + opt(SORTS, state.sort) + '</select>' +
+            // Name the perspective on the SORT too, not just the filter: tuning
+            // sort orders by musical distance from standard, and for a bass
+            // player that distance is measured on the bass tuning. Unlabelled,
+            // the grid silently reorders with no visible cause.
+            '<select id="v3-songs-sort" class="' + ctrl + '">' + opt(
+                SORTS.map(([v, l]) => [v, v === 'tuning' ? l + ' (' + libInstrumentLabel() + ')' : l]),
+                state.sort) + '</select>' +
             '<select id="v3-songs-format" class="' + ctrl + '">' + opt(FORMATS, state.format) + '</select>' +
             '<button id="v3-songs-filters" class="relative ' + ctrl + ' flex items-center gap-2">Filters<span id="v3-songs-filter-count" class="hidden bg-fb-primary text-white text-xs rounded-full px-1.5">0</span></button>' +
             '<button id="v3-songs-select" class="' + ctrl + (state.selectMode ? ' bg-fb-primary text-white' : '') + '">Select</button>' +
@@ -4097,13 +4276,13 @@
         const prev = document.querySelector('#v3-songs-grid [data-gp-cursor]');
         if (prev) {
             prev.removeAttribute('data-gp-cursor');
-            prev.querySelector('[data-v3-play]')?.classList.remove('ring-2', 'ring-fb-accent');
+            prev.querySelector('[data-v3-play]')?.classList.remove('ring-2', 'ring-fb-primary');
         }
         if (_gpIdx == null) return;
         const el = _gpCardEl(_gpIdx);
         if (!el) return;
         el.setAttribute('data-gp-cursor', '1');
-        el.querySelector('[data-v3-play]')?.classList.add('ring-2', 'ring-fb-accent');
+        el.querySelector('[data-v3-play]')?.classList.add('ring-2', 'ring-fb-primary');
     }
 
     async function _gpEnsureVisible(idx) {
@@ -4251,6 +4430,23 @@
         // visible tuning chips against the new tuning. Cheap: re-decorates in place,
         // no re-fetch or re-paint. No-op off the Songs grid or without the capability.
         sm.on('working-tuning-changed', () => {
+            // A guitar<->bass SWITCH changes which tuning the facet, the filter,
+            // the sort and the card chip speak for, so the grid must re-query —
+            // re-colouring chips would leave the guitar tuning on screen and a
+            // guitar-keyed filter applied. A retune within one instrument still
+            // takes the cheap in-place path below.
+            const inst = libInstrument();
+            if (inst !== _lastRenderInstrument) {
+                _lastRenderInstrument = inst;
+                // A tuning selection keyed to the old instrument means nothing
+                // for the new one; clearing avoids an empty grid the user can't
+                // explain (the pills are re-rendered from the new facet).
+                state.filters.tunings = [];
+                const active = document.querySelector('.screen.active');
+                if (active && active.id === 'v3-songs') reload();
+                else _libraryDirty = true;
+                return;
+            }
             if (typeof songsActive === 'function' && !songsActive()) return;
             if (state.view !== 'grid') return;
             decorateTuningChips(_gridEl());

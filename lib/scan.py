@@ -124,6 +124,29 @@ def _library_dirs(all_songs, dlc: Path) -> set[str]:
     return rels
 
 
+def _has_unextracted_columns() -> bool:
+    """True while any `songs` row still carries NULL in a column added by an
+    additive migration — i.e. metadata the current extractor would fill but
+    that no existing row has yet (currently `bass_tuning_name`).
+
+    The tree-signature fast path only asks "did the file set change"; on a
+    settled library the answer is no forever, so a schema addition would never
+    reach extraction. This one-row probe forces the full pass exactly until the
+    backfill completes — `put()` writes '' rather than NULL, so it self-clears
+    after the rescan instead of disabling the fast path permanently."""
+    try:
+        from metadata_db import MetadataDB
+        cond = " OR ".join(f"{c} IS NULL" for c in MetadataDB._EXTRACTION_MARKER_COLS)
+        row = appstate.meta_db.conn.execute(
+            f"SELECT 1 FROM songs WHERE {cond} LIMIT 1").fetchone()
+    except Exception as e:
+        # A probe failure must not take the scan down; falling back to the fast
+        # path costs at most a delayed backfill.
+        log.debug("scan: unextracted-column probe failed: %s", e)
+        return False
+    return row is not None
+
+
 def _record_dir_signature(all_songs, dlc: Path) -> None:
     sig = _stat_dirs(dlc, _library_dirs(all_songs, dlc))
     if sig is not None:   # a dir vanished mid-scan → skip; next scan is full
@@ -221,7 +244,7 @@ def background_scan(force: bool = False):
     # `force` (manual Refresh) always does the full pass. Seeding above is
     # idempotent — it only writes when a builtin is missing — so it does not
     # perturb the mtimes on a settled library.
-    if not force:
+    if not force and not _has_unextracted_columns():
         stored = _load_dir_signature()
         if stored is not None and stored.get("dlc") == str(dlc):
             current = _stat_dirs(dlc, stored["dirs"].keys())
@@ -318,6 +341,15 @@ def background_scan(force: bool = False):
             log.warning("scan cache lookup failed for %s: %s", cache_key, e)
             cached = None
         if not cached:
+            to_scan.append((f, mtime, size, dlc))
+        elif any(cached.get(c) is None for c in appstate.meta_db._EXTRACTION_MARKER_COLS):
+            # Row predates one of the per-perspective tuning columns (NULL
+            # from the additive migration), so that perspective's tuning was
+            # never extracted for it. Without this
+            # re-queue an existing library would keep every bass column empty
+            # forever — mtime/size still match, so nothing else would ever
+            # bring the row back through extraction. Converges: put() always
+            # writes '' (never NULL), so a rescanned row is never re-queued.
             to_scan.append((f, mtime, size, dlc))
         elif cached.get("arrangements") and any(
             "smart_name" not in a for a in cached["arrangements"]

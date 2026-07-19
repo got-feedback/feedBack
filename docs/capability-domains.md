@@ -153,6 +153,14 @@ The legacy chart-coupled surface — `highway.setNoteStateProvider(fn)`, the sin
 
 Diagnostics live under `feedBack.note_detection_capability.v1` and contain provider ids/labels/kinds, binding summaries (requester, provider, redacted context, target size), availability, and the last bounded outcome (event, binding, provider, MIDI number, hit flag) — never raw audio buffers, sample data, device labels, or song identity.
 
+## Chart-Transform Domain
+
+The chart-transform slice (#952) is a core-owned provider coordinator implemented by [static/capabilities/chart-transform.js](../static/capabilities/chart-transform.js). Its commands register, select, clear, and refresh providers; `chart.transform` is the provider operation. Selection persists by provider id and applies to the primary highway and announced splitscreen instances.
+
+The synchronous `highway.setChartTransform` data-plane hook runs at chart ready, mastery changes, and refresh—not per frame. Transforms receive isolated chart data after difficulty filtering and may replace notes, chords, anchors, hand shapes, chord templates, string count, tuning, capo, and cent offset. Outputs are isolated and timeline arrays are time-sorted before the built-in renderer, renderer bundle, or public getters read them. Async returns and other provider failures clear the stage and retain the original chart.
+
+`getSongInfo()` retains original metadata; effective values are exposed by the renderer bundle and dedicated highway getters. Diagnostics under `feedBack.chart_transform.diagnostics.v1` contain provider selection/install state and a fixed public failure reason, never chart data, song identity, or raw exceptions. The domain has no compatibility shim because no earlier chart-substitution surface exists.
+
 ## MIDI-Input Domain
 
 The MIDI-input slice (spec 012, issues #873/#880) promotes `midi-input` as a **core-owned** provider-coordinator implemented by [static/capabilities/midi-input.js](../static/capabilities/midi-input.js) — the MIDI analog of `audio-input`. It is deliberately separate from `audio-input` (whose source/`open` contract is audio-frame-centric: channel shapes, sample buffers) because MIDI carries discrete messages, not audio; and it is **not** owned by any feature plugin, so the device-access boundary outlives the input-setup wizard (exactly as `audio-input` is `core.audio.session`-owned). Consumers — the `input_setup` onboarding wizard, the `piano`/keys and `drums` plugins, and (as a follow-up, #881) note-detection's Web-MIDI provider — converge here on ONE device-access boundary: one permission prompt, one source list, one redaction boundary, retiring private per-plugin `navigator.requestMIDIAccess()` calls.
@@ -192,7 +200,7 @@ Core domains include review metadata in diagnostics:
 - `active`: wired to current FeedBack behavior and expected to work as an integration point.
 - `diagnostic`: support/inspection-only runtime surfaces.
 
-PR1 includes only the delivered domains listed in [capability-roadmap.md](capability-roadmap.md): `pipeline`, `diagnostics`, and `library`. The follow-up audio graph/session slice promotes `audio-mix`, `audio-input`, `audio-monitoring`, and a coordinated `stems` surface. The playback slice promotes `playback` as an active transport control plane. The audio-effects slice promotes provider-selected effect-chain planning while leaving physical processor loading to compatible executors such as trusted Desktop native audio or a browser/WASM executor. The visualization slice promotes `visualization` as the highway renderer provider-coordinator, and the note-detection slice (spec 009) promotes `note-detection` as the detection-binding control plane. Backend routes, app UI, settings, and other hardware-facing domains remain documented in the roadmap and safety matrix until their own host workflow/provider slice exists.
+PR1 includes only the delivered domains listed in [capability-roadmap.md](capability-roadmap.md): `pipeline`, `diagnostics`, and `library`. The follow-up audio graph/session slice promotes `audio-mix`, `audio-input`, `audio-monitoring`, and a coordinated `stems` surface. The playback slice promotes `playback` as an active transport control plane. The audio-effects slice promotes provider-selected effect-chain planning while leaving physical processor loading to compatible executors such as trusted Desktop native audio or a browser/WASM executor. The visualization slice promotes `visualization` as the highway renderer provider-coordinator, the note-detection slice (spec 009) promotes `note-detection` as the detection-binding control plane, and the chart-transform slice (#952) promotes `chart-transform` as the pre-render/pre-scoring chart substitution coordinator. Backend routes, app UI, settings, and other hardware-facing domains remain documented in the roadmap and safety matrix until their own host workflow/provider slice exists.
 
 Capability metadata is versioned by the `capability-pipelines.v1` standard. Invalid roles, commands, operations, requests, observes, emits, events, owner kinds, compatibility modes, ownership policies, safety classes, or version fields are excluded from the capability graph and surfaced through `capability_validation_warnings`; legacy plugin fields continue to load through their existing app paths. Plugins that declare a future `capability-pipelines` version are reported through `capability_unsupported_versions` and their runtime handlers are marked incompatible.
 
@@ -248,7 +256,7 @@ UI placement and settings contributions are real FeedBack surfaces, but they are
 
 The library provider workflow is the PR1 core adapter and is implemented natively as the `library` capability module. Provider refresh, selection, and sync run through `library` owner commands; backend provider registration remains the way providers enter the library registry, and the browser module turns that registry into provider participants. The app event bus continues to dispatch local `window.feedBack` events for legacy listeners; playback now mirrors song transport, route, seek, and loop lifecycle into `playback`, and visualization attributes renderer selection/failure, while navigation, note, and route-only surfaces remain outside capability domains until their own slices land.
 
-The direct `window.highway` object remains the renderer data plane. Per-frame reads such as notes, chords, beats, and renderer hooks should not be moved behind asynchronous capability commands until there is a dedicated chart/render facade.
+The direct `window.highway` object remains the renderer data plane. Per-frame reads such as notes, chords, beats, and renderer hooks should not be moved behind asynchronous capability commands until there is a dedicated chart/render facade. The `chart-transform` domain follows this doctrine: its substitution runs through the synchronous `highway.setChartTransform` hook (staged once per chart change), while the capability surface owns only registration, selection, and diagnostics.
 
 ## First-Party Management Plugins
 
@@ -295,6 +303,7 @@ From the `feedBack/` directory:
 ```bash
 node --check static/app.js
 node --check static/capabilities.js
+node --check static/capabilities/chart-transform.js
 node --check static/diagnostics.js
 node --check plugins/capability_inspector/screen.js
 node --test tests/js/*.test.js

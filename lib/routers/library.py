@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 import appstate
 from library_registry import (
-    _library_filter_args, _sanitize_collection_rules,
+    _library_filter_args, _normalize_instrument, _sanitize_collection_rules,
     _safe_art_redirect_url, _split_csv, _sync_collection_provider,
     _unregister_collection_provider,
 )
@@ -52,7 +52,8 @@ def _require_library_provider_capability(provider: object, capability: str) -> N
 
 
 _OPTIONAL_NEW_PROVIDER_KWARGS = ("naming_mode", "sort", "want_sort_letters", "after",
-                                 "mastery", "match_states")
+                                 "mastery", "match_states", "instrument",
+                                 "playable_from_pitch")
 
 
 def _filter_provider_kwargs(method: object, kwargs: dict) -> dict:
@@ -235,8 +236,19 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
                        has_lyrics: str = "", tunings: str = "", provider: str = "local",
                        mastery: str = "", tags: str = "", user_difficulty: str = "",
                        match: str = "", genre: str = "", after: str = "", group: int = 0,
-                       naming_mode: str = "legacy"):
+                       naming_mode: str = "legacy", instrument: str = "",
+                       tuning_match: str = "", playable_offsets: str = "",
+                       playable_instrument: str = "", playable_string_count: str = ""):
     """Paginated library search through the selected library provider.
+
+    `instrument` is the tuning PERSPECTIVE ("guitar-lead" default |
+    "guitar-rhythm" | "bass"): which arrangement's tuning the tuning
+    filter/sort speaks for, with a guitar fallback when a song has no chart in
+    that role.
+
+    `tuning_match=playable` switches the tuning filter from exact-match to
+    "playable without retuning" against the caller's current tuning
+    (`playable_offsets` + `playable_instrument` + `playable_string_count`).
 
     `after` is an opaque keyset cursor (feedBack#636 item 3): pass back the
     `next_cursor` from the previous response to fetch the next page with a
@@ -270,7 +282,10 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
             artist=artist, album=album,
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings,
+            has_lyrics=has_lyrics, tunings=tunings, instrument=instrument,
+            tuning_match=tuning_match, playable_offsets=playable_offsets,
+            playable_instrument=playable_instrument,
+            playable_string_count=playable_string_count,
         ),
     )
     # The cursor to resume after this page (effective sort folds in dir=desc).
@@ -292,7 +307,7 @@ async def list_library_albums(q: str = "", page: int = 0, size: int = 120,
                               stems_has: str = "", stems_lacks: str = "",
                               has_lyrics: str = "", tunings: str = "", mastery: str = "",
                               match: str = "", genre: str = "",
-                              provider: str = "local"):
+                              provider: str = "local", instrument: str = ""):
     """Album-condensed browse: distinct (artist, album) groups with a track count
     and a representative cover song. Paged by album. Same filters as /api/library."""
     size = min(size, 500)
@@ -306,7 +321,7 @@ async def list_library_albums(q: str = "", page: int = 0, size: int = 120,
             q=q, favorites=favorites, format=format, artist=artist, album=album,
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings,
+            has_lyrics=has_lyrics, tunings=tunings, instrument=instrument,
         ),
     )
     return {"albums": albums, "total": total, "page": page, "size": size}
@@ -319,7 +334,9 @@ async def list_artists(letter: str = "", q: str = "", favorites: int = 0, page: 
                        arrangements_has: str = "", arrangements_lacks: str = "",
                        stems_has: str = "", stems_lacks: str = "",
                        has_lyrics: str = "", tunings: str = "", provider: str = "local",
-                       naming_mode: str = "legacy"):
+                       naming_mode: str = "legacy", instrument: str = "",
+                       tuning_match: str = "", playable_offsets: str = "",
+                       playable_instrument: str = "", playable_string_count: str = ""):
     """Get artists grouped by letter with albums and songs (for tree view)."""
     size = min(size, 100)
     library_provider = _get_library_provider(provider)
@@ -336,7 +353,7 @@ async def list_artists(letter: str = "", q: str = "", favorites: int = 0, page: 
             artist=artist, album=album,
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings,
+            has_lyrics=has_lyrics, tunings=tunings, instrument=instrument,
         ),
     )
     return {"artists": artists, "total_artists": total, "page": page, "size": size}
@@ -350,7 +367,10 @@ async def library_stats(favorites: int = 0, q: str = "", format: str = "",
                         has_lyrics: str = "", tunings: str = "", provider: str = "local",
                         match: str = "",
                         sort: str = "artist", sort_letters: int = 0,
-                        group: int = 0, naming_mode: str = "legacy"):
+                        group: int = 0, naming_mode: str = "legacy",
+                        instrument: str = "", tuning_match: str = "",
+                        playable_offsets: str = "", playable_instrument: str = "",
+                        playable_string_count: str = ""):
     """Aggregate stats for the UI. Accepts the same filter params as
     /api/library so the letter bar mirrors the active grid filter set.
     `sort` selects the column the jump rail's `sort_letters` keys on;
@@ -375,7 +395,10 @@ async def library_stats(favorites: int = 0, q: str = "", format: str = "",
             artist=artist, album=album,
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings,
+            has_lyrics=has_lyrics, tunings=tunings, instrument=instrument,
+            tuning_match=tuning_match, playable_offsets=playable_offsets,
+            playable_instrument=playable_instrument,
+            playable_string_count=playable_string_count,
         ),
     )
 
@@ -407,14 +430,20 @@ def library_genres(provider: str = "local"):
 
 
 @router.get("/api/library/tuning-names")
-async def list_tuning_names(provider: str = "local"):
+async def list_tuning_names(provider: str = "local", instrument: str = ""):
     """Distinct tuning names present in the library, with per-tuning
     counts. Powers the tuning multi-select. Sorted by `tuning_sort_key`
     so names appear in the same musical order the sort uses
-    (feedBack#22) — E Standard first, then nearest neighbors."""
+    (feedBack#22) — E Standard first, then nearest neighbors.
+
+    `instrument=bass` groups by each song's bass-arrangement tuning
+    (guitar-derived fallback for songs without a bass chart) so bass
+    players see the tunings they'd actually play. Providers that predate
+    the kwarg simply don't receive it (signature-filtered)."""
     library_provider = _get_library_provider(provider)
     _require_library_provider_capability(library_provider, "library.read")
-    return await _call_library_provider_async(library_provider, "tuning_names")
+    return await _call_library_provider_async(
+        library_provider, "tuning_names", instrument=_normalize_instrument(instrument))
 
 
 @router.get("/api/library/practice-suggestions")

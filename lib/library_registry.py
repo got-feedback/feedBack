@@ -17,7 +17,12 @@ import threading
 from typing import ClassVar
 
 import appstate
-from metadata_db import MetadataDB, _tuning_group_key_sql
+from metadata_db import (
+    MetadataDB, _effective_tuning_cols_sql, _perspective_is_inferred_sql,
+    _tuning_group_key_sql,
+)
+import tunings as tunings_mod
+from tunings import DEFAULT_PERSPECTIVE, PERSPECTIVES
 from routers import art as art_router
 
 import logging
@@ -37,9 +42,6 @@ def _safe_art_redirect_url(url: str) -> str | None:
         return url
     except Exception:
         return None
-
-
-_TUNING_GROUP_KEY_SQL = _tuning_group_key_sql("songs")
 
 
 class LocalLibraryProvider:
@@ -69,28 +71,43 @@ class LocalLibraryProvider:
     def query_stats(self, **kwargs) -> dict:
         return self._db.query_stats(**kwargs)
 
-    def tuning_names(self) -> dict:
+    def tuning_names(self, instrument: str = DEFAULT_PERSPECTIVE) -> dict:
         # Group custom tunings on their raw offsets so distinct ones stay
         # distinct (tuning_name collapses them all to "Custom Tuning"); named
         # tunings keep grouping by name (stable across the rescan boundary, no
         # offsets/name split). `key` is the value the client sends back as the
         # filter selector — equal to the name for named tunings, the offsets
         # string for customs; offsets also feed the client's custom-pill label.
+        #
+        # `instrument=bass` swaps every column for its effective bass-facing
+        # expression (bass arrangement's tuning, guitar fallback) — the SAME
+        # expressions _build_intrinsic_where filters on, so a facet entry
+        # always selects exactly the songs it counted.
+        name_sql, offsets_sql, sort_sql = _effective_tuning_cols_sql("songs", instrument)
+        gkey_sql = _tuning_group_key_sql("songs", instrument)
+        # How many of a row's songs are showing an INFERRED tuning — i.e. have
+        # no bass chart of their own and are falling back to the guitar-derived
+        # one. Reported per entry so the UI can be honest about it instead of
+        # presenting a borrowed tuning as a measured one. Always 0 for guitar.
+        inferred_sql = f"SUM({_perspective_is_inferred_sql('songs', instrument)})"
         with self._db._lock:
             rows = self._db.conn.execute(
-                f"SELECT tuning_name, {_TUNING_GROUP_KEY_SQL} AS gkey, "
-                "MIN(tuning_sort_key), COUNT(*), MIN(tuning_offsets) "
-                "FROM songs WHERE title != '' AND COALESCE(tuning_name, '') != '' "
+                f"SELECT {name_sql}, {gkey_sql} AS gkey, "
+                f"MIN({sort_sql}), COUNT(*), MIN({offsets_sql}), {inferred_sql} "
+                f"FROM songs WHERE title != '' AND COALESCE({name_sql}, '') != '' "
                 "GROUP BY gkey COLLATE NOCASE "
-                "ORDER BY ABS(COALESCE(MIN(tuning_sort_key), 0)), "
-                "COALESCE(MIN(tuning_sort_key), 0) ASC, "
-                "tuning_name COLLATE NOCASE"
+                f"ORDER BY ABS(COALESCE(MIN({sort_sql}), 0)), "
+                f"COALESCE(MIN({sort_sql}), 0) ASC, "
+                f"{name_sql} COLLATE NOCASE"
             ).fetchall()
         return {
+            "instrument": instrument,
             "tunings": [
                 {"name": name, "key": gkey, "offsets": offs or "",
-                 "sort_key": int(sk or 0), "count": count}
-                for name, gkey, sk, count, offs in rows
+                 "sort_key": int(sk or 0), "count": count,
+                 # Portion of `count` borrowed from the guitar chart.
+                 "inferred_count": int(inferred or 0)}
+                for name, gkey, sk, count, offs, inferred in rows
             ],
         }
 
@@ -330,9 +347,16 @@ class SmartCollectionProvider:
         # have been hand-edited; never let a bad value reach a query.
         self._rules = _sanitize_collection_rules(collection.get("rules") or {})
 
-    def _filter_kwargs(self) -> dict:
-        return _library_filter_args(**{k: v for k, v in self._rules.items()
+    def _filter_kwargs(self, instrument: str = "", playable_from_pitch=None) -> dict:
+        # `instrument` is the CALLER's play perspective (rides every request),
+        # never part of the saved rules — a collection saved by a guitarist
+        # must still read in bass tunings for a bass player, and vice versa.
+        args = _library_filter_args(**{k: v for k, v in self._rules.items()
                                        if k in _LIBRARY_FILTER_PARAM_KEYS})
+        args["instrument"] = _normalize_instrument(instrument)
+        # The caller's CURRENT tuning is likewise per-request, never a saved rule.
+        args["playable_from_pitch"] = playable_from_pitch
+        return args
 
     def _sort(self, fallback: str) -> str:
         # A collection may pin its own sort (e.g. "recently added"); query_page
@@ -340,28 +364,31 @@ class SmartCollectionProvider:
         return self._rules.get("sort") or fallback
 
     def query_page(self, *, page=0, size=24, sort="artist", direction="asc",
-                   naming_mode="legacy", **_ignore):
+                   naming_mode="legacy", instrument="", playable_from_pitch=None, **_ignore):
         return self._local._db.query_page(
             page=page, size=size, sort=self._sort(sort), direction=direction,
-            naming_mode=naming_mode, **self._filter_kwargs())
+            naming_mode=naming_mode, **self._filter_kwargs(instrument, playable_from_pitch))
 
-    def query_artists(self, *, letter="", page=0, size=50, naming_mode="legacy", **_ignore):
+    def query_artists(self, *, letter="", page=0, size=50, naming_mode="legacy",
+                      instrument="", playable_from_pitch=None, **_ignore):
         return self._local._db.query_artists(
             letter=letter, page=page, size=size, naming_mode=naming_mode,
-            **self._filter_kwargs())
+            **self._filter_kwargs(instrument, playable_from_pitch))
 
-    def query_albums(self, *, page=0, size=120, naming_mode="legacy", **_ignore):
+    def query_albums(self, *, page=0, size=120, naming_mode="legacy",
+                     instrument="", playable_from_pitch=None, **_ignore):
         return self._local._db.query_albums(
-            page=page, size=size, naming_mode=naming_mode, **self._filter_kwargs())
+            page=page, size=size, naming_mode=naming_mode,
+            **self._filter_kwargs(instrument, playable_from_pitch))
 
     def query_stats(self, *, sort="artist", want_sort_letters=False,
-                    naming_mode="legacy", **_ignore):
+                    naming_mode="legacy", instrument="", playable_from_pitch=None, **_ignore):
         return self._local._db.query_stats(
             sort=self._sort(sort), want_sort_letters=want_sort_letters,
-            naming_mode=naming_mode, **self._filter_kwargs())
+            naming_mode=naming_mode, **self._filter_kwargs(instrument, playable_from_pitch))
 
-    def tuning_names(self):
-        return self._local.tuning_names()
+    def tuning_names(self, instrument: str = "guitar"):
+        return self._local.tuning_names(instrument=_normalize_instrument(instrument))
 
     async def get_art(self, song_id: str):
         return await self._local.get_art(song_id)
@@ -390,7 +417,10 @@ def _library_filter_args(q: str = "", favorites: int = 0, format: str = "",
                          artist: str = "", album: str = "",
                          arrangements_has: str = "", arrangements_lacks: str = "",
                          stems_has: str = "", stems_lacks: str = "",
-                         has_lyrics: str = "", tunings: str = "") -> dict:
+                         has_lyrics: str = "", tunings: str = "",
+                         instrument: str = "", tuning_match: str = "",
+                         playable_offsets: str = "", playable_instrument: str = "",
+                         playable_string_count: str = "") -> dict:
     fmt = format if format in ("archive", "sloppak", "loose") else ""
     return {
         "q": q,
@@ -404,7 +434,56 @@ def _library_filter_args(q: str = "", favorites: int = 0, format: str = "",
         "stems_lacks": _split_csv(stems_lacks),
         "has_lyrics": _parse_has_lyrics(has_lyrics),
         "tunings": _split_csv(tunings),
+        # Which perspective the tuning facet/filter/sort speaks for (the
+        # caller's play role, NOT a saved rule — see _sanitize_collection_rules).
+        "instrument": _normalize_instrument(instrument),
+        # "Playable without retuning" mode: the caller's CURRENT tuning,
+        # resolved to the one number the comparison needs. None = exact-match
+        # mode (the default), so the tuning pills behave exactly as before.
+        "playable_from_pitch": (
+            _playable_from_pitch(playable_offsets, playable_instrument,
+                                 playable_string_count)
+            if tuning_match == "playable" else None),
     }
+
+
+def _playable_from_pitch(offsets_csv: str, instrument: str, string_count: str):
+    """Lowest open-string MIDI pitch of the CALLER's current tuning.
+
+    The client sends its live working tuning (offsets + instrument + string
+    count) rather than a precomputed pitch, so the pitch tables stay in one
+    place (lib/tunings.py) instead of being duplicated in JS.
+
+    Returns None for anything unusable — the caller then applies NO playable
+    filter at all. That is the neutral state, not a claim: a malformed tuning
+    must not silently assert that everything is playable OR that nothing is.
+    """
+    try:
+        offsets = [int(x) for x in _split_csv(offsets_csv)]
+    except (TypeError, ValueError):
+        return None
+    if not offsets:
+        return None
+    inst = "bass" if instrument == "bass" else "guitar"
+    try:
+        sc = int(string_count)
+    except (TypeError, ValueError):
+        sc = len(offsets)
+    key = tunings_mod.instrument_key(inst, sc)
+    if key not in tunings_mod.STANDARD_OPEN_MIDIS or len(offsets) != sc:
+        return None
+    midis = tunings_mod.tuning_midis_from_offsets(key, offsets)
+    return min(midis) if midis else None
+
+
+def _normalize_instrument(raw: str) -> str:
+    """Resolve a tuning PERSPECTIVE id (guitar-lead | guitar-rhythm | bass).
+
+    Tolerates the legacy two-valued vocabulary ("guitar" -> guitar-lead) and
+    falls back to the default for anything unknown — an unrecognised value
+    must never silently change filter semantics."""
+    return raw if raw in PERSPECTIVES else (
+        DEFAULT_PERSPECTIVE if raw != "bass" else "bass")
 
 
 def _sync_collection_provider(collection: dict) -> None:

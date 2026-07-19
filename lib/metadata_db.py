@@ -25,6 +25,8 @@ import time
 from pathlib import Path
 
 from song import compute_smart_names
+from tunings import DEFAULT_PERSPECTIVE, ROLE_PERSPECTIVES
+from tunings import perspective as _perspective
 
 log = logging.getLogger("feedBack.server")
 
@@ -34,16 +36,112 @@ log = logging.getLogger("feedBack.server")
 # raw offsets so distinct customs stay distinct, while named tunings keep
 # grouping by name (stable across the offsets-column migration). Used by both
 # the tuning-names listing and the filter WHERE so the contract matches.
-def _tuning_group_key_sql(alias: str) -> str:
-    """The tuning grouping key (name for named tunings, raw offsets for
-    customs) against an explicit table alias — the grouped filter law (§7.1)
-    evaluates chart-intrinsic predicates inside a member subquery, where bare
-    column names would resolve against the wrong scope."""
-    return (f"CASE WHEN {alias}.tuning_name = 'Custom Tuning' AND COALESCE({alias}.tuning_offsets, '') != '' "
-            f"THEN {alias}.tuning_offsets ELSE {alias}.tuning_name END")
+#
+# A non-default PERSPECTIVE (guitar-rhythm / bass) swaps every tuning column
+# for its EFFECTIVE expression: that role's indexed tuning when the song has
+# such an arrangement, falling back to the guitar-derived song tuning
+# otherwise — so a song with no rhythm/bass chart (or a row that predates the
+# columns, NULL there) still groups/filters/sorts instead of disappearing.
+# guitar-lead reads the original unprefixed columns, so it is byte-identical
+# to the historical behaviour.
+def _effective_tuning_cols_sql(alias: str, perspective: str = DEFAULT_PERSPECTIVE) -> tuple[str, str, str]:
+    """(name_sql, offsets_sql, sort_key_sql) for the given perspective."""
+    persp = _perspective(perspective)
+    if not persp.column_prefix:
+        return (f"{alias}.tuning_name", f"{alias}.tuning_offsets", f"{alias}.tuning_sort_key")
+    has_own = f"COALESCE({alias}.{persp.column('name')}, '') != ''"
+    return (
+        f"COALESCE(NULLIF({alias}.{persp.column('name')}, ''), {alias}.tuning_name)",
+        f"CASE WHEN {has_own} THEN {alias}.{persp.column('offsets')} ELSE {alias}.tuning_offsets END",
+        f"CASE WHEN {has_own} THEN {alias}.{persp.column('sort_key')} ELSE {alias}.tuning_sort_key END",
+    )
+
+
+def _effective_low_pitch_sql(alias: str, perspective: str = DEFAULT_PERSPECTIVE) -> str:
+    """Lowest open-string MIDI pitch under this perspective, with the same
+    fallback as the tuning columns — the "playable without retuning"
+    comparison reads it (see tunings.chart_is_playable_in)."""
+    persp = _perspective(perspective)
+    if not persp.column_prefix:
+        return f"{alias}.tuning_low_pitch"
+    has_own = f"COALESCE({alias}.{persp.column('name')}, '') != ''"
+    return (f"CASE WHEN {has_own} THEN {alias}.{persp.column('low_pitch')} "
+            f"ELSE {alias}.tuning_low_pitch END")
+
+
+def _perspective_is_inferred_sql(alias: str, perspective: str) -> str:
+    """1 when this row is BORROWING the guitar-derived song tuning because it
+    has no chart in the perspective's role. Always 0 for guitar-lead, which is
+    never a fallback."""
+    persp = _perspective(perspective)
+    if not persp.column_prefix:
+        return "0"
+    return f"(CASE WHEN COALESCE({alias}.{persp.column('name')}, '') = '' THEN 1 ELSE 0 END)"
+
+
+# ── The custom-tuning group key ──────────────────────────────────────────────
+#
+# Named tunings group by NAME, which is already serialization-agnostic. Custom
+# tunings group on a raw offsets STRING, which is not: the same physical bass
+# tuning stored as "-2 0 0 0" and "-2 0 0 0 0 0" would fragment into two facet
+# rows with split counts.
+#
+# For BASS we therefore group customs on `bass_tuning_key` — the tuning's
+# absolute open-string PITCHES, computed once at scan time
+# (tunings.bass_tuning_key) after the padded tail is truncated away. Pitch is
+# the identity that matters musically and it is serialization-independent, so
+# one physical tuning is one entry however it was authored. Guitar keeps the
+# offsets string (unchanged; six-element guitar arrays are not padded).
+#
+# The key is built HERE, once, and read by the facet listing, the filter WHERE
+# and the grouped member-match alike — a facet row that selected a different
+# set than it counted is exactly the bug this shared expression prevents.
+def _tuning_group_key_sql(alias: str, perspective: str = DEFAULT_PERSPECTIVE) -> str:
+    """The tuning grouping key (name for named tunings, canonical pitches or
+    raw offsets for customs) against an explicit table alias — the grouped
+    filter law (§7.1) evaluates chart-intrinsic predicates inside a member
+    subquery, where bare column names would resolve against the wrong scope."""
+    persp = _perspective(perspective)
+    name_sql, offsets_sql, _ = _effective_tuning_cols_sql(alias, perspective)
+    if persp.column_prefix:
+        # Fall back to the offsets string when the canonical key is absent
+        # (a fallback row borrowing the guitar tuning, or a row scanned before
+        # the key column existed) so a custom never groups under an empty key.
+        offsets_sql = (f"COALESCE(NULLIF({alias}.{persp.column('key')}, ''), "
+                       f"{offsets_sql})")
+    return (f"CASE WHEN {name_sql} = 'Custom Tuning' AND COALESCE({offsets_sql}, '') != '' "
+            f"THEN {offsets_sql} ELSE {name_sql} END")
+
+
+def _put_perspective_value(meta: dict, col: str):
+    """Value to store for one per-perspective column on a freshly-scanned row."""
+    if col.endswith("_low_pitch"):
+        val = meta.get(col)
+        return int(val) if isinstance(val, int) else None
+    if col.endswith("_sort_key"):
+        return int(meta.get(col, 0) or 0)
+    return meta.get(col, "") or ""
 
 
 # ── SQLite metadata cache ─────────────────────────────────────────────────────
+
+def _arrangements_all_bass(raw) -> bool:
+    """True when EVERY arrangement on a chart is a bass part (raw ``arrangements``
+    JSON, as stored). Mirrors the library grid's card rule: such a chart's tuning
+    must be scored against bass base pitches, or a 4-string bass tuning read as
+    guitar can false-match a guitarist. A chart with no arrangements is not bass.
+    """
+    try:
+        arrs = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(arrs, list) or not arrs:
+        return False
+    return all(
+        isinstance(a, dict) and re.search(r"\bbass\b", str(a.get("name") or ""), re.I)
+        for a in arrs
+    )
+
 
 def _ensure_smart_names(arrangements: list[dict]) -> list[dict]:
     """Fill in missing ``smart_name`` fields and sort arrangements by smart order.
@@ -381,7 +479,18 @@ class MetadataDB:
                 tuning_offsets TEXT DEFAULT '',
                 genre TEXT DEFAULT '',
                 track_number INTEGER,
-                disc INTEGER
+                disc INTEGER,
+                bass_tuning_name TEXT,
+                bass_tuning_sort_key INTEGER,
+                bass_tuning_offsets TEXT,
+                bass_tuning_key TEXT,
+                bass_tuning_low_pitch INTEGER,
+                rhythm_tuning_name TEXT,
+                rhythm_tuning_sort_key INTEGER,
+                rhythm_tuning_offsets TEXT,
+                rhythm_tuning_key TEXT,
+                rhythm_tuning_low_pitch INTEGER,
+                tuning_low_pitch INTEGER
             )
         """)
         # Idempotent migrations for installs that predate each column.
@@ -408,6 +517,32 @@ class MetadataDB:
             # falls back to title order. Cache; repopulated on rescan.
             "ALTER TABLE songs ADD COLUMN track_number INTEGER",
             "ALTER TABLE songs ADD COLUMN disc INTEGER",
+            # Bass-arrangement tuning (the KwasimodoZAZA report): the song-level
+            # tuning columns above are guitar-first, so the library filter lied
+            # to bass players when the bass chart is tuned differently. Caches;
+            # repopulated on rescan. NULL (no literal default) is deliberate —
+            # it marks a pre-migration row the scanner must re-extract, while
+            # '' means "extracted, song has no bass arrangement" (see scan.py).
+            "ALTER TABLE songs ADD COLUMN bass_tuning_name TEXT",
+            "ALTER TABLE songs ADD COLUMN bass_tuning_sort_key INTEGER",
+            "ALTER TABLE songs ADD COLUMN bass_tuning_offsets TEXT",
+            # Canonical grouping key: the bass tuning's absolute open-string
+            # pitches. Keyed on PITCH, not the serialization-dependent offsets
+            # string, so one physical tuning is one facet entry however it was
+            # stored. See tunings.bass_tuning_key.
+            "ALTER TABLE songs ADD COLUMN bass_tuning_key TEXT",
+            # Lowest open-string MIDI pitch per perspective — the "playable
+            # without retuning" comparison (tunings.chart_is_playable_in).
+            "ALTER TABLE songs ADD COLUMN bass_tuning_low_pitch INTEGER",
+            "ALTER TABLE songs ADD COLUMN tuning_low_pitch INTEGER",
+            # The RHYTHM chart's own tuning: lead and rhythm arrangements can
+            # be tuned differently, which is the same bug a bassist hit,
+            # inside guitar. Same NULL-vs-'' contract as the bass family.
+            "ALTER TABLE songs ADD COLUMN rhythm_tuning_name TEXT",
+            "ALTER TABLE songs ADD COLUMN rhythm_tuning_sort_key INTEGER",
+            "ALTER TABLE songs ADD COLUMN rhythm_tuning_offsets TEXT",
+            "ALTER TABLE songs ADD COLUMN rhythm_tuning_key TEXT",
+            "ALTER TABLE songs ADD COLUMN rhythm_tuning_low_pitch INTEGER",
         ):
             try:
                 self.conn.execute(ddl)
@@ -667,6 +802,16 @@ class MetadataDB:
                 self.conn.execute(_ddl)
             except sqlite3.OperationalError:
                 pass
+        # Manual playlist ordering (tester ask): `position` orders the
+        # PLAYLISTS themselves (playlist_songs.position orders songs within
+        # one). NULL = unpositioned — those sort alphabetically AFTER the
+        # manually positioned ones, and system playlists stay pinned first
+        # regardless (see list_playlists). Additive, idempotent — same
+        # pattern as `rules`/`kind` above.
+        try:
+            self.conn.execute("ALTER TABLE playlists ADD COLUMN position INTEGER")
+        except sqlite3.OperationalError:
+            pass
         # Wishlist / "wanted" (feedBack#636 item 4): a persisted, actionable
         # list of songs the user does NOT own yet — the *arr "Wanted/Monitored"
         # analogue. Unlike playlists (which reference owned local songs by
@@ -2405,10 +2550,14 @@ class MetadataDB:
 
     def list_playlists(self) -> list[dict]:
         from urllib.parse import quote
+        # Order: system playlists pinned first, then manually positioned user
+        # playlists (position = drag order), then unpositioned ones
+        # alphabetically — so a manual order wins and a playlist created after
+        # a reorder still lands somewhere predictable (see reorder_playlists).
         rows = self.conn.execute(
             "SELECT id, name, system_key, created_at, updated_at, kind FROM playlists "
             "WHERE rules IS NULL "          # smart collections live in the source picker, not here
-            "ORDER BY (system_key IS NULL), name COLLATE NOCASE"
+            "ORDER BY (system_key IS NULL), (position IS NULL), position, name COLLATE NOCASE"
         ).fetchall()
         out = []
         for r in rows:
@@ -2566,7 +2715,9 @@ class MetadataDB:
         rows = self.conn.execute(
             f"""SELECT ps.filename, ps.position, s.title, s.artist, s.tuning_name,
                        ps.arrangement, ps.work_key, s.arrangements,
-                       (s.filename IS NULL) AS dead
+                       (s.filename IS NULL) AS dead, s.tuning_offsets,
+                       s.bass_tuning_name, s.bass_tuning_offsets,
+                       s.rhythm_tuning_name, s.rhythm_tuning_offsets
                FROM playlist_songs ps LEFT JOIN songs s ON s.filename = ps.filename
                WHERE ps.playlist_id = ? {dead_filter}
                ORDER BY ps.position, ps.filename""",
@@ -2578,6 +2729,17 @@ class MetadataDB:
             entry = {
                 "filename": r[0], "position": r[1],
                 "title": r[2] or r[0], "artist": r[3] or "", "tuning_name": r[4] or "",
+                # Offsets + the bass-only flag let the playlist tuning check score a
+                # row against the player's working tuning the same way the library
+                # grid's chips do: a NAME alone can't be scored (two "Custom Tuning"
+                # rows are different tunings), and coverage needs to know whether to
+                # measure against bass or guitar base pitches.
+                "tuning_offsets": r[9] or "",
+                "bass_tuning_name": r[10] or "",
+                "bass_tuning_offsets": r[11] or "",
+                "rhythm_tuning_name": r[12] or "",
+                "rhythm_tuning_offsets": r[13] or "",
+                "bass_only": _arrangements_all_bass(r[7]),
                 "art_url": f"/api/song/{quote(r[0])}/art",
             }
             if is_album:
@@ -2605,7 +2767,9 @@ class MetadataDB:
         if work_key:
             self._ensure_work_display()
             row = self.conn.execute(
-                "SELECT wd.filename, s.title, s.artist, s.tuning_name, s.arrangements "
+                "SELECT wd.filename, s.title, s.artist, s.tuning_name, s.arrangements, "
+                "s.tuning_offsets, s.bass_tuning_name, s.bass_tuning_offsets, "
+                "s.rhythm_tuning_name, s.rhythm_tuning_offsets "
                 "FROM work_display wd JOIN songs s ON s.filename = wd.filename "
                 "WHERE wd.effective_work_key = ? AND wd.is_group_representative = 1",
                 (work_key,)).fetchone()
@@ -2615,8 +2779,16 @@ class MetadataDB:
                     arrs = _ensure_smart_names(json.loads(row[4]) if row[4] else [])
                 except Exception:
                     arrs = []
+                # An orphan-resolved slot PLAYS a different chart, so it must report
+                # that chart's tuning to the check — not the dead pin's.
                 return {"resolved_filename": row[0], "title": row[1] or row[0],
                         "artist": row[2] or "", "tuning_name": row[3] or "",
+                        "tuning_offsets": row[5] or "",
+                        "bass_tuning_name": row[6] or "",
+                        "bass_tuning_offsets": row[7] or "",
+                        "rhythm_tuning_name": row[8] or "",
+                        "rhythm_tuning_offsets": row[9] or "",
+                        "bass_only": _arrangements_all_bass(row[4]),
                         "arrangements": arrs,
                         "art_url": f"/api/song/{quote(row[0])}/art",
                         "resolved_from_orphan": True}
@@ -2707,6 +2879,30 @@ class MetadataDB:
                     (pos, pid, fn),
                 )
             self.conn.execute("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", (pid,))
+            self.conn.commit()
+        return True
+
+    def reorder_playlists(self, ordered_ids: list[int]) -> bool:
+        """Persist a manual ordering of the playlists THEMSELVES: position =
+        index in `ordered_ids` (the songs-within sibling is reorder_playlist).
+        Caller (the route) validates the list is an exact permutation of the
+        current non-system playlist ids."""
+        with self._lock:
+            for pos, pid in enumerate(ordered_ids):
+                self.conn.execute(
+                    "UPDATE playlists SET position = ?, updated_at = datetime('now') WHERE id = ?",
+                    (pos, pid),
+                )
+            self.conn.commit()
+        return True
+
+    def clear_playlist_positions(self) -> bool:
+        """Drop every manual playlist position → back to alphabetical
+        (the "Sort A–Z" affordance)."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE playlists SET position = NULL, updated_at = datetime('now') "
+                "WHERE position IS NOT NULL")
             self.conn.commit()
         return True
 
@@ -2810,16 +3006,39 @@ class MetadataDB:
     def favorite_set(self) -> set[str]:
         return {r[0] for r in self.conn.execute("SELECT filename FROM favorites").fetchall()}
 
+    # Every per-perspective column, in one place, so the SELECT, the INSERT and
+    # the scanner's "was this ever extracted?" check can never drift apart.
+    # NULL is meaningful on `name`/`key`/`low_pitch`: it marks a row written
+    # before the column existed, which the scanner re-extracts (see
+    # scan._has_unextracted_columns). '' / 0 means "extracted, no such chart".
+    _PERSPECTIVE_COLS = tuple(
+        p.column(suffix)
+        for p in ROLE_PERSPECTIVES
+        for suffix in ("name", "sort_key", "offsets", "key", "low_pitch")
+    ) + ("tuning_low_pitch",)
+    # Columns whose NULL means "never extracted" rather than "no such chart".
+    #
+    # low_pitch is deliberately NOT a marker: a song with no chart in that role
+    # legitimately has NULL there (nothing to compute a pitch from), so keying
+    # re-extraction on it would re-scan those rows on every single pass and
+    # never converge. `name` and `key` carry the signal instead — they are ''
+    # when extracted-but-absent, NULL only when the column predates the row.
+    _EXTRACTION_MARKER_COLS = tuple(
+        p.column(suffix) for p in ROLE_PERSPECTIVES for suffix in ("name", "key")
+    )
+
     def get(self, filename: str, mtime: float, size: int) -> dict | None:
         cache_key = str(filename)
+        pcols = ", ".join(self._PERSPECTIVE_COLS)
         with self._lock:
             row = self.conn.execute(
                 "SELECT mtime, size, title, artist, album, year, duration, tuning, arrangements, has_lyrics, "
-                "format, stem_count, stem_ids, tuning_name, tuning_sort_key, tuning_offsets "
+                "format, stem_count, stem_ids, tuning_name, tuning_sort_key, tuning_offsets, "
+                f"{pcols} "
                 "FROM songs WHERE filename = ?", (cache_key,)
             ).fetchone()
         if row and row[0] == mtime and row[1] == size and row[2]:
-            return {
+            out = {
                 "title": row[2], "artist": row[3], "album": row[4],
                 "year": row[5], "duration": row[6], "tuning": row[7],
                 "arrangements": json.loads(row[8]) if row[8] else [],
@@ -2831,6 +3050,15 @@ class MetadataDB:
                 "tuning_sort_key": int(row[14] or 0),
                 "tuning_offsets": row[15] or "",
             }
+            for i, col in enumerate(self._PERSPECTIVE_COLS, start=16):
+                val = row[i]
+                if col in self._EXTRACTION_MARKER_COLS:
+                    out[col] = val          # NULL preserved — drives re-extraction
+                elif col.endswith("_sort_key"):
+                    out[col] = int(val or 0)
+                else:
+                    out[col] = val or ""
+            return out
         return None
 
     def put(self, filename: str, mtime: float, size: int, meta: dict):
@@ -2838,8 +3066,9 @@ class MetadataDB:
             self.conn.execute(
                 "INSERT OR REPLACE INTO songs "
                 "(filename, mtime, size, title, artist, album, year, duration, tuning, arrangements, "
-                "has_lyrics, format, stem_count, stem_ids, tuning_name, tuning_sort_key, tuning_offsets, genre, track_number, disc) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "has_lyrics, format, stem_count, stem_ids, tuning_name, tuning_sort_key, tuning_offsets, genre, track_number, disc, "
+                + ", ".join(self._PERSPECTIVE_COLS) + ") "
+                "VALUES (" + ", ".join(["?"] * (20 + len(self._PERSPECTIVE_COLS))) + ")",
                 (filename, mtime, size, meta.get("title", ""), meta.get("artist", ""),
                  meta.get("album", ""), meta.get("year", ""), meta.get("duration", 0),
                  meta.get("tuning", ""), json.dumps(meta.get("arrangements", [])),
@@ -2852,7 +3081,14 @@ class MetadataDB:
                  meta.get("tuning_offsets", "") or "",
                  meta.get("genre", "") or "",
                  meta.get("track_number"),
-                 meta.get("disc")),
+                 meta.get("disc"),
+                 # A put() row is by definition freshly extracted, so the
+                 # marker columns must never be written NULL — that state is
+                 # reserved for rows predating the column, which re-extract.
+                 # low_pitch is the exception: NULL there means "this tuning
+                 # has no computable pitch" (unusable offsets), and the
+                 # playable filter treats unknown as not-playable.
+                 *[_put_perspective_value(meta, col) for col in self._PERSPECTIVE_COLS]),
             )
             self.conn.commit()
             # A song's identity may have changed → the grouping read-model is stale.
@@ -3332,6 +3568,8 @@ class MetadataDB:
                      match_states: list[str] | None = None,
                      genre: list[str] | None = None,
                      naming_mode: str = "legacy",
+                     instrument: str = DEFAULT_PERSPECTIVE,
+                     playable_from_pitch: int | None = None,
                      include_intrinsic: bool = True) -> tuple[str, list]:
         """Shared WHERE-clause builder for query_page / query_artists /
         query_stats. Returns (where_sql, params). Leading 'WHERE' is
@@ -3438,7 +3676,8 @@ class MetadataDB:
                 "songs", format_filter=format_filter,
                 arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
                 stems_has=stems_has, stems_lacks=stems_lacks,
-                has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode)
+                has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode,
+                instrument=instrument, playable_from_pitch=playable_from_pitch)
             where += ifrag
             params += iparams
         return where, params
@@ -3450,7 +3689,9 @@ class MetadataDB:
                                stems_lacks: list[str] | None = None,
                                has_lyrics: int | None = None,
                                tunings: list[str] | None = None,
-                               naming_mode: str = "legacy") -> tuple[str, list]:
+                               naming_mode: str = "legacy",
+                               instrument: str = DEFAULT_PERSPECTIVE,
+                               playable_from_pitch: int | None = None) -> tuple[str, list]:
         """CHART-INTRINSIC predicates (format / arrangements / stems / lyrics /
         tuning) as ' AND …' fragments against an explicit table alias. Flat
         queries apply them to `songs` directly; grouped queries evaluate them
@@ -3593,10 +3834,32 @@ class MetadataDB:
                 placeholders = ",".join(["?"] * len(tn))
                 # Match the same grouping key tuning_names() returns so a single
                 # "Custom Tuning" pill selects exactly its offset set while named
-                # tunings still match by name.
-                where += (f" AND {_tuning_group_key_sql(alias)} "
+                # tunings still match by name. `instrument` swaps in the
+                # effective bass tuning key (guitar fallback) — the facet and
+                # this WHERE must use the same expression or they disagree.
+                where += (f" AND {_tuning_group_key_sql(alias, instrument)} "
                           f"COLLATE NOCASE IN ({placeholders})")
                 params += tn
+        if playable_from_pitch is not None:
+            # "Playable without retuning" — the mode the tester actually wants
+            # ("don't make me retune"), offered ALONGSIDE exact match, not
+            # instead of it. A chart needs no retune when its lowest required
+            # pitch is reachable, and every pitch above your lowest open string
+            # is reachable by fretting, so the comparison is:
+            #
+            #     your lowest open pitch <= the chart's lowest open pitch
+            #
+            # That is why a 5-string bass (low B) covers every 4-string
+            # standard AND every drop-D chart untouched.
+            #
+            # CONSERVATIVE BY CONSTRUCTION: a chart whose low pitch we could
+            # not compute (NULL) is EXCLUDED rather than assumed playable —
+            # wrongly claiming playability costs a mid-practice retune, which
+            # is the failure this whole feature exists to prevent. See
+            # tunings.chart_is_playable_in for the full reasoning + limits.
+            low_sql = _effective_low_pitch_sql(alias, instrument)
+            where += f" AND {low_sql} IS NOT NULL AND {low_sql} >= ?"
+            params.append(int(playable_from_pitch))
         return where, params
 
     # Under group=1, chart-intrinsic filters match if ANY member of the work
@@ -3864,7 +4127,9 @@ class MetadataDB:
                    genre: list[str] | None = None,
                    after: str | None = None,
                    group: bool = False,
-                   naming_mode: str = "legacy") -> tuple[list[dict], int]:
+                   naming_mode: str = "legacy",
+                   instrument: str = DEFAULT_PERSPECTIVE,
+                   playable_from_pitch: int | None = None) -> tuple[list[dict], int]:
         """Server-side paginated search. Returns (songs, total_count).
 
         `after` is an opaque keyset cursor (the last row of the previous page).
@@ -3893,7 +4158,9 @@ class MetadataDB:
             has_lyrics=has_lyrics, tunings=tunings, mastery=mastery,
             tags_has=tags_has, user_difficulty_in=user_difficulty_in,
             match_states=match_states, genre=genre,
-            naming_mode=naming_mode, include_intrinsic=not group,
+            naming_mode=naming_mode, instrument=instrument,
+            playable_from_pitch=playable_from_pitch,
+            include_intrinsic=not group,
         )
         ifrag, iparams = "", []
         if group:
@@ -3902,12 +4169,14 @@ class MetadataDB:
                 "m", format_filter=format_filter,
                 arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
                 stems_has=stems_has, stems_lacks=stems_lacks,
-                has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode)
+                has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode,
+                instrument=instrument, playable_from_pitch=playable_from_pitch)
             mfrag, mparams = self._grouped_member_match(ifrag, iparams)
             where += mfrag
             params += mparams
             where += self._GROUP_REP_PREDICATE
 
+        _eff_tuning_name, _, _eff_tuning_sort = _effective_tuning_cols_sql("songs", instrument)
         sort_map = {
             # Artist sorts order WITHIN an artist by title (the tree view's
             # artist -> album -> title feel) instead of raw filename — the
@@ -3941,11 +4210,15 @@ class MetadataDB:
             # behind, and a NULL `tuning_name` in `(tuning_name = '')`
             # evaluates to NULL itself (which sorts ahead of 0 in
             # ASC), defeating the push-to-bottom intent.
+            #
+            # Under `instrument=bass` the effective expressions swap in
+            # the bass arrangement's tuning (guitar fallback) so a bass
+            # player's tuning sort orders by the tuning they'd play.
             "tuning": (
-                "(COALESCE(tuning_name, '') = '') ASC, "
-                "ABS(COALESCE(tuning_sort_key, 0)), "
-                "COALESCE(tuning_sort_key, 0) ASC, "
-                "COALESCE(tuning_name, '') COLLATE NOCASE"
+                f"(COALESCE({_eff_tuning_name}, '') = '') ASC, "
+                f"ABS(COALESCE({_eff_tuning_sort}, 0)), "
+                f"COALESCE({_eff_tuning_sort}, 0) ASC, "
+                f"COALESCE({_eff_tuning_name}, '') COLLATE NOCASE"
             ),
             # Year sort (feedBack#128). Empty-year rows pushed to the
             # bottom for both directions; otherwise CAST so '2010' >
@@ -4038,7 +4311,9 @@ class MetadataDB:
 
             cols = ("SELECT filename, title, artist, album, year, duration, tuning, "
                     "arrangements, has_lyrics, mtime, format, stem_count, stem_ids, "
-                    "tuning_name, tuning_offsets FROM songs ")
+                    "tuning_name, tuning_offsets, bass_tuning_name, bass_tuning_offsets, "
+                    "rhythm_tuning_name, rhythm_tuning_offsets "
+                    "FROM songs ")
             cursor = _decode_cursor(after) if after else None
             eff_sort = _effective_keyset_sort(sort, direction)
             if cursor and eff_sort in _KEYSET_SORTS:
@@ -4071,8 +4346,30 @@ class MetadataDB:
                 "stem_ids": json.loads(r[12]) if r[12] else [],
                 "tuning_name": r[13] or "",
                 "tuning_offsets": r[14] or "",
+                # '' when the song has no bass arrangement (or the row predates
+                # '' when the song has no such chart (or the row predates the
+                # columns) — clients fall back to tuning_name.
+                "bass_tuning_name": r[15] or "",
+                "bass_tuning_offsets": r[16] or "",
+                "rhythm_tuning_name": r[17] or "",
+                "rhythm_tuning_offsets": r[18] or "",
                 "has_estd": r[0] in estd, "favorite": r[0] in favs,
             })
+        # PROVENANCE (non-default perspectives): a row shown to a bass or
+        # rhythm player either carries that chart's own tuning (native) or is
+        # borrowing the guitar-derived song tuning (inferred). The fallback is
+        # deliberate — a third of a real library has no bass chart and
+        # excluding it would be worse — but it must never be SILENT, or we
+        # reproduce the original bug in a new place. The client marks inferred
+        # rows; it can't infer this itself without duplicating the COALESCE.
+        #
+        # guitar-lead adds NOTHING here, so the default payload is unchanged.
+        _persp = _perspective(instrument)
+        if _persp.column_prefix:
+            _name_key = _persp.column("name")
+            for s in songs:
+                s["tuning_perspective"] = _persp.id
+                s["tuning_inferred"] = not s.get(_name_key)
         # Personal layer (difficulty + tags) rides along like `favorite`, so a
         # card can badge it without a second request. Notes stay OUT of the list
         # payload (they can be long) — fetch per-song via /user-meta. Batched to
@@ -4169,7 +4466,7 @@ class MetadataDB:
         rows = self.conn.execute(
             "SELECT mw.effective_work_key, m.filename, m.title, m.duration, m.tuning, "
             "m.arrangements, m.has_lyrics, m.mtime, m.format, m.stem_count, m.stem_ids, "
-            "m.tuning_name, m.tuning_offsets "
+            "m.tuning_name, m.tuning_offsets, m.bass_tuning_name, m.bass_tuning_offsets "
             "FROM songs m JOIN work_display mw ON mw.filename = m.filename "
             f"WHERE mw.effective_work_key IN ({ph}){intrinsic_frag} "
             "ORDER BY mw.is_group_representative DESC, m.mtime DESC, m.filename",
@@ -4190,6 +4487,7 @@ class MetadataDB:
                 "stem_count": int(m[9] or 0),
                 "stem_ids": json.loads(m[10]) if m[10] else [],
                 "tuning_name": m[11] or "", "tuning_offsets": m[12] or "",
+                "bass_tuning_name": m[13] or "", "bass_tuning_offsets": m[14] or "",
             }
 
     def query_artists(self, letter: str = "", q: str = "",
@@ -4204,7 +4502,9 @@ class MetadataDB:
                       stems_lacks: list[str] | None = None,
                       has_lyrics: int | None = None,
                       tunings: list[str] | None = None,
-                      naming_mode: str = "legacy") -> tuple[list[dict], int]:
+                      naming_mode: str = "legacy",
+                      instrument: str = DEFAULT_PERSPECTIVE,
+                      playable_from_pitch: int | None = None) -> tuple[list[dict], int]:
         """Get artists grouped by letter with their albums and songs. Returns (artists, total_artists)."""
         where, params = self._build_where(
             q=q, favorites_only=favorites_only, format_filter=format_filter,
@@ -4212,6 +4512,7 @@ class MetadataDB:
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
             has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode,
+            instrument=instrument, playable_from_pitch=playable_from_pitch,
         )
         # Canonicalize artists at display when aliases exist (P4): dedupe / group /
         # letter / order on the EFFECTIVE artist so "ACDC" + "AC/DC" list as one
@@ -4247,7 +4548,7 @@ class MetadataDB:
 
         rows = self.conn.execute(
             f"SELECT filename, title, ({art_expr}) as artist, album, year, duration, tuning, arrangements, has_lyrics, "
-            f"format, stem_count, stem_ids, tuning_name "
+            f"format, stem_count, stem_ids, tuning_name, bass_tuning_name "
             f"FROM songs {song_where} ORDER BY ({art_expr}) COLLATE NOCASE, album COLLATE NOCASE, title COLLATE NOCASE",
             song_params
         ).fetchall()
@@ -4280,6 +4581,7 @@ class MetadataDB:
                 "stem_count": int(r[10] or 0),
                 "stem_ids": json.loads(r[11]) if r[11] else [],
                 "tuning_name": r[12] or "",
+                "bass_tuning_name": r[13] or "",
                 "has_estd": r[0] in estd,
                 "favorite": r[0] in favs,
                 "user_difficulty": udm.get(r[0]),
@@ -4301,7 +4603,8 @@ class MetadataDB:
                      stems_has=None, stems_lacks=None,
                      has_lyrics=None, tunings=None, mastery=None,
                      match_states=None, genre=None,
-                     naming_mode="legacy", page=0, size=120):
+                     naming_mode="legacy", instrument=DEFAULT_PERSPECTIVE,
+                     playable_from_pitch=None, page=0, size=120):
         """Distinct (artist, album) groups with a track count + a representative
         cover song, for the album-condensed browse (paged by album). Rows with no
         album name are excluded -- they can't form an album card. Same filters as
@@ -4313,7 +4616,8 @@ class MetadataDB:
             stems_has=stems_has, stems_lacks=stems_lacks,
             has_lyrics=has_lyrics, tunings=tunings, mastery=mastery,
             match_states=match_states, genre=genre,
-            naming_mode=naming_mode,
+            naming_mode=naming_mode, instrument=instrument,
+            playable_from_pitch=playable_from_pitch,
         )
         awhere = where + " AND album IS NOT NULL AND album != ''"
         total = self.conn.execute(
@@ -4344,7 +4648,9 @@ class MetadataDB:
                     sort: str = "artist",
                     want_sort_letters: bool = False,
                     group: bool = False,
-                    naming_mode: str = "legacy") -> dict:
+                    naming_mode: str = "legacy",
+                    instrument: str = DEFAULT_PERSPECTIVE,
+                    playable_from_pitch: int | None = None) -> dict:
         """Aggregate stats for the letter bar. Accepts the same filter
         params as query_page so the letter counts stay synchronized
         with the grid when filters are active.
@@ -4371,7 +4677,8 @@ class MetadataDB:
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
             has_lyrics=has_lyrics, tunings=tunings, match_states=match_states,
-            naming_mode=naming_mode,
+            naming_mode=naming_mode, instrument=instrument,
+            playable_from_pitch=playable_from_pitch,
             include_intrinsic=not group,
         )
         if group:
@@ -4383,7 +4690,8 @@ class MetadataDB:
                 "m", format_filter=format_filter,
                 arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
                 stems_has=stems_has, stems_lacks=stems_lacks,
-                has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode)
+                has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode,
+                instrument=instrument, playable_from_pitch=playable_from_pitch)
             mfrag, mparams = self._grouped_member_match(ifrag, iparams)
             where += mfrag
             params += mparams

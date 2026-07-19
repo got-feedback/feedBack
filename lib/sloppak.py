@@ -1240,6 +1240,27 @@ def _tuning_for_meta(arrangements_manifest: list[dict]) -> list[int]:
     return [0] * 6
 
 
+def _role_tuning_for_meta(arrangements_manifest: list[dict], role: str) -> list[int] | None:
+    """Per-ROLE companion to _tuning_for_meta: the tuning of the arrangement
+    playing `role` ("bass" / "rhythm"), or None when the pack has no such
+    arrangement with a tuning — the index then leaves that perspective's
+    columns empty and the library falls back to the song (guitar-first)
+    tuning, marking the row inferred.
+
+    Exact name first, then a looser containment pass so an alt/bonus chart
+    ("Bass 2", "Alt Rhythm") still beats pretending the part is in the lead
+    guitar's tuning."""
+    for match_exact in (True, False):
+        for entry in arrangements_manifest:
+            name = str(entry.get("name", "")).lower()
+            tun = entry.get("tuning")
+            if not (tun and isinstance(tun, list)):
+                continue
+            if name == role if match_exact else role in name:
+                return list(tun)
+    return None
+
+
 def extract_meta(path: Path) -> dict:
     """Fast metadata for the library scanner. Reads only the manifest."""
     manifest = load_manifest(path)
@@ -1262,6 +1283,10 @@ def extract_meta(path: Path) -> dict:
 
     has_lyrics = bool(manifest.get("lyrics"))
     tuning_offsets = _tuning_for_meta(arr_list)
+    # Per-role tunings alongside the song-level one, so the library can answer
+    # for whichever arrangement the player actually plays.
+    role_tunings = {f"{role}_tuning_offsets": _role_tuning_for_meta(arr_list, role)
+                    for role in ("bass", "rhythm")}
 
     stems_list = manifest.get("stems", []) or []
     valid_stems: list[dict] = []
@@ -1300,6 +1325,8 @@ def extract_meta(path: Path) -> dict:
         "disc": (lambda v: int(v) if str(v if v is not None else "").strip().isdigit() else None)(manifest.get("disc")),
         "duration": float(manifest.get("duration", 0) or 0),
         "tuning_offsets": tuning_offsets,  # caller maps to a name via tunings.tuning_name
+        # None = the pack has no arrangement in that role.
+        **role_tunings,
         "arrangements": arrangements,
         "has_lyrics": has_lyrics,
         "stem_count": stem_count,

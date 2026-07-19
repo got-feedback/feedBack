@@ -302,3 +302,44 @@ def test_extract_meta_uses_lead_tuning_when_bass_sorts_first(tmp_path):
 
     meta = loosefolder.extract_meta(tmp_path)
     assert meta["tuning_offsets"] == [0, 0, 0, 0, 0, 0]
+    # …and the bass chart's OWN tuning is indexed alongside it, so a bass
+    # player's library filter isn't answered with the guitar tuning.
+    assert meta["bass_tuning_offsets"] == [-4, -4, -4, -4, 0, 0]
+
+
+def test_extract_meta_bass_tuning_absent_without_bass_arrangement(tmp_path):
+    """A folder with no bass chart leaves the bass tuning EMPTY (None) rather
+    than echoing the guitar tuning — the library then falls back explicitly,
+    and 'no bass part' stays distinguishable from 'bass part in E Standard'."""
+    (tmp_path / "audio.wem").write_bytes(b"\0")
+    (tmp_path / "lead.xml").write_text(_LEAD_STD_XML, encoding="utf-8")
+
+    meta = loosefolder.extract_meta(tmp_path)
+    assert meta["tuning_offsets"] == [0, 0, 0, 0, 0, 0]
+    assert meta["bass_tuning_offsets"] is None
+
+
+def test_extract_meta_bass_tuning_matches_guitar_is_still_indexed(tmp_path):
+    """The COMMON case: bass and guitar in the same tuning. The bass column
+    must still be populated — an empty one would be read as 'no bass chart'."""
+    (tmp_path / "audio.wem").write_bytes(b"\0")
+    _write_min_xml(tmp_path / "lead.xml", arrangement="Lead")
+    _write_min_xml(tmp_path / "bass.xml", arrangement="Bass")
+
+    meta = loosefolder.extract_meta(tmp_path)
+    assert meta["bass_tuning_offsets"] == [0, 0, 0, 0, 0, 0]
+
+
+def test_extract_meta_manifest_tuning_does_not_become_the_bass_tuning(tmp_path):
+    """A manifest `tuning_offsets` overrides the SONG tuning but says nothing
+    about which chart it describes, so it must never be mistaken for the bass
+    part's tuning — with no bass chart the bass column stays empty."""
+    (tmp_path / "audio.wem").write_bytes(b"\0")
+    (tmp_path / "lead.xml").write_text(_LEAD_STD_XML, encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "tuning_offsets": [-2, -2, -2, -2, -2, -2],
+    }), encoding="utf-8")
+
+    meta = loosefolder.extract_meta(tmp_path)
+    assert meta["tuning_offsets"] == [-2, -2, -2, -2, -2, -2]
+    assert meta["bass_tuning_offsets"] is None

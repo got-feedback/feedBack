@@ -25,8 +25,8 @@
         Object.freeze({
             id: 'player-audio',
             label: 'Player and Audio Runtime',
-            summary: 'Playback, renderer, mixer, monitoring, effects, and note-detection surfaces.',
-            domains: Object.freeze(['playback', 'visualization', 'audio-mix', 'audio-input', 'audio-monitoring', 'audio-effects', 'stems', 'note-detection']),
+            summary: 'Playback, renderer, chart-transform, mixer, monitoring, effects, and note-detection surfaces.',
+            domains: Object.freeze(['playback', 'visualization', 'chart-transform', 'audio-mix', 'audio-input', 'audio-monitoring', 'audio-effects', 'stems', 'note-detection']),
         }),
         Object.freeze({
             id: 'plugin-defined',
@@ -50,6 +50,7 @@
         'audio-monitoring': 'headphones',
         stems: 'sliders',
         'note-detection': 'activity',
+        'chart-transform': 'box',
         diagnostics: 'fileSearch',
         pipeline: 'activity',
         'ui.navigation': 'list',

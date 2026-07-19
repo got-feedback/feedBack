@@ -410,6 +410,51 @@ function _applyLibraryProviderToParams(params) {
     return params;
 }
 
+// ── Instrument-aware tuning (the bass-player tuning-filter report) ───────────
+// A song's bass chart is often tuned differently from its guitar chart, so the
+// tuning facet, the `tunings` filter, the tuning sort and the row's tuning
+// badge must all speak for the instrument the player actually plays. Read the
+// host's working-tuning capability (the live selection, seeded from
+// /api/settings at boot) rather than adding another settings fetch; hosts
+// without the capability keep the guitar behaviour.
+const _LIB_PERSPECTIVES = ['guitar-lead', 'guitar-rhythm', 'bass'];
+let _libSettingsProfile = '';
+
+export function _setLibraryProfile(profileId) {
+    _libSettingsProfile = _LIB_PERSPECTIVES.includes(profileId) ? profileId : '';
+}
+
+export function _libraryInstrument() {
+    // The PROFILE is the only three-valued source (lead / rhythm / bass); the
+    // working-tuning capability knows guitar-vs-bass but not lead-vs-rhythm,
+    // so it is only the fallback.
+    if (_libSettingsProfile) return _libSettingsProfile;
+    try {
+        const wt = window.feedBack?.workingTuning;
+        if (wt && typeof wt.get === 'function') {
+            const cur = wt.get();
+            if (cur?.instrument === 'bass') return 'bass';
+        }
+    } catch { /* capability absent/erroring — lead guitar is the safe default */ }
+    return 'guitar-lead';
+}
+
+export function _libraryInstrumentLabel() {
+    const p = _libraryInstrument();
+    return p === 'bass' ? 'bass' : p === 'guitar-rhythm' ? 'rhythm' : 'lead';
+}
+
+// The tuning a row should SHOW: the bass chart's for a bass player, falling
+// back to the song (guitar-derived) tuning when the song has no bass
+// arrangement — the common case, not an edge path.
+function _rowTuningRaw(song) {
+    const p = _libraryInstrument();
+    const field = p === 'bass' ? 'bass_tuning_name'
+        : p === 'guitar-rhythm' ? 'rhythm_tuning_name' : '';
+    if (field && song[field]) return song[field];
+    return song.tuning || song.tuning_name || '';
+}
+
 export function _resetLibraryProviderViewState() {
     L.libEpoch++;
     L.currentPage = 0;
@@ -768,6 +813,8 @@ export function _applyLibFiltersToParams(params) {
     if (_libFilters.stemsLacks.length) params.set('stems_lacks', _libFilters.stemsLacks.join(','));
     if (_libFilters.lyrics !== null) params.set('has_lyrics', String(_libFilters.lyrics));
     if (_libFilters.tunings.length) params.set('tunings', _libFilters.tunings.join(','));
+    // Which instrument's tuning the `tunings` filter + the tuning sort read.
+    if (_libraryInstrument() !== 'guitar-lead') params.set('instrument', _libraryInstrument());
     return params;
 }
 
@@ -851,6 +898,7 @@ async function _renderTuningList() {
         c.innerHTML = '<div class="text-xs text-gray-500 px-2">Loading...</div>';
         try {
             const params = _applyLibraryProviderToParams(new URLSearchParams());
+            params.set('instrument', _libraryInstrument());
             const resp = await fetch(`/api/library/tuning-names?${params}`);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
@@ -869,6 +917,11 @@ async function _renderTuningList() {
             fetchError = e.message || 'request failed';
         }
     }
+    // NAME the perspective: silent instrument-following is the original bug in
+    // a new place — the user must be able to see which instrument these
+    // tunings describe.
+    const labelEl = document.getElementById('filter-tunings-label');
+    if (labelEl) labelEl.textContent = `Tuning (${_libraryInstrumentLabel()})`;
     c.innerHTML = '';
     if (fetchError) {
         c.innerHTML = `<div class="text-xs text-red-400 px-2">Failed to load tunings (${esc(fetchError)}). Reopen the drawer to retry.</div>`;
@@ -894,10 +947,17 @@ async function _renderTuningList() {
         const checked = _libFilters.tunings.includes(val);
         const row = document.createElement('label');
         row.className = 'tuning-row';
+        // Be honest about the fallback: songs with no bass arrangement borrow
+        // the guitar chart's tuning, and that must be visible rather than
+        // presented as a measured bass tuning.
+        const inferred = t.inferred_count || 0;
+        if (inferred) {
+            row.title = `${inferred} of ${t.count} inferred from the guitar chart (no bass arrangement)`;
+        }
         row.innerHTML =
             `<input type="checkbox" ${checked ? 'checked' : ''} class="rounded border-gray-600 bg-dark-700 text-accent">` +
             `<span class="flex-1">${esc(label)}</span>` +
-            `<span class="tuning-count">${t.count}</span>`;
+            `<span class="tuning-count">${t.count}${inferred ? ` (${inferred}~)` : ''}</span>`;
         const cb = row.querySelector('input');
         cb.onchange = () => {
             const i = _libFilters.tunings.indexOf(val);
@@ -1244,6 +1304,10 @@ export function renderGridCards(songs, containerId = 'lib-grid', mode = 'replace
         const duration = song.duration ? formatTime(song.duration) : '';
         const tuningRaw = song.tuning || song.tuning_name || '';
         const tuning = displayTuningName(tuningRaw);
+        // The BADGE follows the player's instrument; `tuning` above stays the
+        // song's guitar-derived tuning because the retune action below rewrites
+        // the chart to E Standard and must not key on the bass part.
+        const tuningBadge = displayTuningName(_rowTuningRaw(song));
         const artUrl = _librarySongArtUrl(song, providerId);
         const isLocalProvider = _isLocalLibraryProvider(providerId);
         const isSloppak = song.format === 'sloppak';
@@ -1299,7 +1363,7 @@ export function renderGridCards(songs, containerId = 'lib-grid', mode = 'replace
                 </div>
                 <div class="flex items-center flex-wrap gap-1.5 mt-3 text-xs">
                     ${(() => { const _nm = _getArrangementNamingMode(); return (song.arrangements || []).map(a => _arrangementBadgeHtml(a, _nm)).join(''); })()}
-                    ${tuning ? `<span class="px-1.5 py-0.5 rounded ${tuning === 'E Standard' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'}">${esc(tuning)}</span>` : ''}
+                    ${tuningBadge ? `<span class="px-1.5 py-0.5 rounded ${tuningBadge === 'E Standard' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'}">${esc(tuningBadge)}</span>` : ''}
                     ${song.has_lyrics ? `<span class="px-1.5 py-0.5 bg-purple-900/30 rounded text-purple-300">Lyrics</span>` : ''}
                     ${song.user_difficulty != null ? `<span class="px-1.5 py-0.5 bg-blue-900/30 rounded text-blue-300" title="Your difficulty rating">◆${esc(song.user_difficulty)}</span>` : ''}
                     ${duration ? `<span class="text-gray-600">${duration}</span>` : ''}
@@ -1470,6 +1534,9 @@ export async function renderTreeInto(containerId, countId, stats, letter, q, fav
                 const duration = song.duration ? formatTime(song.duration) : '';
                 const tuningRaw = song.tuning || song.tuning_name || '';
                 const tuning = displayTuningName(tuningRaw);
+                // Badge follows the player's instrument; the retune action below
+                // keeps operating on the song's guitar-derived tuning.
+                const tuningBadge = displayTuningName(_rowTuningRaw(song));
                 const isLocalProvider = _isLocalLibraryProvider(providerId);
                 const isSloppak = song.format === 'sloppak';
                 const stdRetune = isLocalProvider && localFilename && !isSloppak && tuningRaw && !song.has_estd &&
@@ -1496,8 +1563,8 @@ export async function renderTreeInto(containerId, countId, stats, letter, q, fav
                 { const _nm = _getArrangementNamingMode();
                   for (const arrangement of (song.arrangements || []))
                       html += _arrangementBadgeHtml(arrangement, _nm); }
-                if (tuning)
-                    html += `<span class="px-1.5 py-0.5 rounded ${tuning === 'E Standard' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'}">${esc(tuning)}</span>`;
+                if (tuningBadge)
+                    html += `<span class="px-1.5 py-0.5 rounded ${tuningBadge === 'E Standard' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'}">${esc(tuningBadge)}</span>`;
                 if (song.has_lyrics)
                     html += `<span class="px-1.5 py-0.5 bg-purple-900/30 rounded text-purple-300">Lyrics</span>`;
                 if (song.user_difficulty != null)

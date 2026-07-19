@@ -133,6 +133,7 @@
     <!-- fee[dB]ack v0.3.0: ui.library-card-injection capability (plugin card actions). -->
     <script type="module" src="/static/capabilities/library-card-actions.js"></script>
     <script type="module" src="/static/capabilities/visualization.js"></script>
+    <script type="module" src="/static/capabilities/chart-transform.js"></script>
     <script type="module" src="/static/capabilities/note-detection.js"></script>
     <script type="module" src="/static/capabilities/midi-input.js"></script>
     <script type="module" src="/static/capabilities/interface-scale.js"></script>
@@ -326,7 +327,7 @@
                 <section>
                     <details>
                         <summary class="cursor-pointer flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
-                            <span>Tuning</span>
+                            <span id="filter-tunings-label">Tuning</span>
                             <span id="filter-tunings-summary" class="text-gray-600 normal-case font-normal text-xs">All tunings</span>
                         </summary>
                         <div id="filter-tunings" class="mt-3 space-y-1 max-h-64 overflow-y-auto pr-1"></div>

@@ -400,8 +400,9 @@ export function drawSustains(hwState, W, H) {
     // Same master-difficulty fallback as drawNotes/drawChords —
     // without this, sustain bars for filtered-out notes would
     // still render, leaving orphan rectangles where no note head
-    // is drawn.
-    const src = hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
+    // is drawn. An active chart transform substitutes its staged view.
+    const src = hwState._xfNotes !== null ? hwState._xfNotes
+        : hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
     for (const n of src) {
         if (n.sus <= 0.01) continue;
         const end = n.t + n.sus;
@@ -501,7 +502,9 @@ export function drawNotes(hwState, W, H) {
     // phrase-level ladder data, render from the mastery-filtered
     // array. _filteredNotes stays null for slider-disabled sources
     // so rendering falls through to the flat notes array unchanged.
-    const src = hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
+    // An active chart transform (_xfNotes) substitutes its staged view.
+    const src = hwState._xfNotes !== null ? hwState._xfNotes
+        : hwState._filteredNotes !== null ? hwState._filteredNotes : hwState.notes;
     // Binary search for visible range
     const tMin = hwState.currentTime - 0.25;
     const tMax = hwState.currentTime + VISIBLE_SECONDS;
@@ -649,7 +652,8 @@ export function drawUnisonBends(hwState, W, H, drawnNotes) {
 export function drawChords(hwState, W, H) {
     // See drawNotes — _filteredChords is null for slider-disabled
     // sources so we fall through to the flat chords array.
-    const src = hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords;
+    const src = hwState._xfChords !== null ? hwState._xfChords
+        : hwState._filteredChords !== null ? hwState._filteredChords : hwState.chords;
     _ensureChordRenderCache(hwState, src);
 
     const tMin = hwState.currentTime - 0.25;
@@ -674,7 +678,7 @@ export function drawChords(hwState, W, H) {
         const actualSpread = Math.max(spread, minSpread);
         const actualTotalH = actualSpread * Math.max(0, sorted.length - 1);
 
-        const { tmpl, getTemplateFret } = getChordTemplateInfo(ch.id, hwState.chordTemplates);
+        const { tmpl, getTemplateFret } = getChordTemplateInfo(ch.id, _effChordTemplates(hwState));
         const hasNonZero = nonZeroNotes.length >= 1;
 
         const frameLeftFret = baseFret;
@@ -1124,15 +1128,22 @@ export function getChordTemplateInfo(chordId, chordTemplates) {
     return { tmpl, tmplFrets, getTemplateFret, isOpen };
 }
 
+// Effective chord templates: an active chart transform substitutes its
+// re-indexed table (identity change also invalidates the render cache).
+export function _effChordTemplates(hwState) {
+    return hwState._xfChordTemplates !== null ? hwState._xfChordTemplates : hwState.chordTemplates;
+}
+
 // Build _chordRenderInfo for every chord in `src` if the cache is stale.
 // Two passes over the array: chain bounds, then base-fret resolution
 // (which can read previous chord's cached baseFret).
 export function _ensureChordRenderCache(hwState, src) {
-    const templatesChanged = hwState._chordRenderCacheTemplates !== hwState.chordTemplates;
+    const effTemplates = _effChordTemplates(hwState);
+    const templatesChanged = hwState._chordRenderCacheTemplates !== effTemplates;
     if (hwState._chordRenderCacheSrc === src && hwState._chordRenderCacheInverted === hwState._inverted && !templatesChanged) return;
     hwState._chordRenderCacheSrc = src;
     hwState._chordRenderCacheInverted = hwState._inverted;
-    hwState._chordRenderCacheTemplates = hwState.chordTemplates;
+    hwState._chordRenderCacheTemplates = effTemplates;
     // Templates feed isOpen() — when they land after `chords`,
     // _updateFretLinePreview's stashed open/non-open classification
     // for the currently-active chord is also stale. It only refreshes
@@ -1188,7 +1199,7 @@ export function _ensureChordRenderCache(hwState, src) {
     for (let i = 0; i < src.length; i++) {
         const ch = src[i];
         const info = hwState._chordRenderInfo.get(ch);
-        const { isOpen } = getChordTemplateInfo(ch.id, hwState.chordTemplates);
+        const { isOpen } = getChordTemplateInfo(ch.id, effTemplates);
         const sortedNotes = [...ch.notes].sort((a, b) => hwState._inverted ? b.s - a.s : a.s - b.s);
         const nonZero = sortedNotes.filter(cn => !isOpen(cn));
         const nonZeroFrets = nonZero.map(cn => cn.f);
@@ -1248,7 +1259,7 @@ export function _updateFretLinePreview(hwState, src, lo, hi) {
             ch.t > bestChordTime) {
             bestChordTime = ch.t;
             activeChord = ch;
-            const { isOpen } = getChordTemplateInfo(ch.id, hwState.chordTemplates);
+            const { isOpen } = getChordTemplateInfo(ch.id, _effChordTemplates(hwState));
             const nonZero = ch.notes.filter(cn => !isOpen(cn));
             activeNotesOnFret = nonZero.length >= 1 ? nonZero.map(cn => ({ s: cn.s, f: cn.f })) : [];
         }
@@ -1260,7 +1271,7 @@ export function _updateFretLinePreview(hwState, src, lo, hi) {
             const p = project(ch.t - hwState.currentTime);
             if (!p) continue;
             activeChord = ch;
-            const { isOpen } = getChordTemplateInfo(ch.id, hwState.chordTemplates);
+            const { isOpen } = getChordTemplateInfo(ch.id, _effChordTemplates(hwState));
             const nonZero = ch.notes.filter(cn => !isOpen(cn));
             activeNotesOnFret = nonZero.length >= 1 ? nonZero.map(cn => ({ s: cn.s, f: cn.f })) : [];
             break;

@@ -18,7 +18,7 @@
 // back-import would close a cycle. player-controls keeps reading it through the host seam, and
 // app.js — the root, which imports both — wires it. That is exactly what the seam is for.
 import { hwcInitSettingsUI } from './highway-colors.js';
-import { _getArrangementNamingMode } from './library.js';
+import { _getArrangementNamingMode, _setLibraryProfile } from './library.js';
 import {
     _applyMastery, _autoplayExitEnabled, _exitConfirmEnabled, _showUpNextEnabled,
 } from './player-controls.js';
@@ -111,6 +111,10 @@ export async function loadSettings() {
     if (dlcEl) dlcEl.value = data.dlc_dir || '';
     _defaultArrangement = data.default_arrangement || '';
     _syncDefaultArrangementSelect(_defaultArrangement);
+    // Feed the library its tuning PERSPECTIVE (lead / rhythm / bass) — the
+    // tuning facet, filter, sort and badges all answer for the profile the
+    // player actually plays.
+    _setLibraryProfile(data.active_instrument_profile);
     const pathwayEl = document.getElementById('setting-instrument-pathway');
     if (pathwayEl) pathwayEl.value = _normalizeInstrumentPathway(data.pathway);
     const demucsEl = document.getElementById('demucs-server-url');

@@ -416,27 +416,258 @@ def apply_flat_instrument_patch_to_profiles(cfg: dict, updates: dict) -> dict:
     })
     return out
 
-def tuning_name(offsets: list[int]) -> str:
-    # All three pattern checks below are gated on `len(offsets) == 6`. The
-    # naming conventions here are 6-string-specific — e.g. a 7-string all-zeros
-    # tuning has a low B, not an E, so labeling it "E Standard" would be wrong.
-    # 7+-string community content falls through to the numeric fallback. See #43.
+# ── Bass tuning normalization (library indexing) ─────────────────────────────
+#
+# Bass charts in the wild store SIX-element tuning arrays even when the chart is
+# a 4-string part: slots 4-5 are PADDING. Confirmed by inspecting the charts
+# themselves — across every pack whose bass and guitar tunings diverge, no bass
+# note ever references string index 4 or 5 (the deepest reach is index 3).
+#
+# The feedpak spec carries NO string-count field (manifest `arrangement.tuning`
+# is an untyped integer array, `minItems: 1`), and counting strings for real
+# would mean parsing the 600KB-1.2MB arrangement JSON of every song on the
+# manifest-only fast scan path — unacceptable for scan time. So we DEFAULT BASS
+# TO 4 STRINGS and truncate.
+#
+# KNOWN GAP (deliberate, documented): a genuine 5- or 6-string bass is
+# truncated to its low four. That is harmless for the overwhelmingly common
+# case — a 5-string in standard truncates to [0,0,0,0] and still names
+# "Standard" — and only misreads a tuning that DIFFERS at string 4 or above.
+# Revisit if the spec ever gains a string count.
+BASS_DEFAULT_STRING_COUNT = 4
 
-    # Standard tunings (all six strings same offset)
+# Bassists tune DOWN, essentially never up: a whole-instrument up-tune fights
+# string tension. Anything above +1 semitone across the board is data we do not
+# trust, not a tuning a human plays (the real-world example that motivated this
+# is a bass array of [5,5,5,5,4,4] — "all four strings up a perfect fourth" —
+# on a song whose guitar chart is dead standard and whose own note content is
+# consistent with standard tuning; the offsets were almost certainly computed
+# against a 6-string-bass reference with an uninitialised tail).
+#
+# Such a tuning MUST NOT be named: printing "A Standard" would send a player
+# off to retune to something nobody plays. It degrades to the custom path,
+# where it stays visible and distinct but makes no pitch claim.
+BASS_MAX_PLAUSIBLE_OFFSET = 1
+
+
+# ── Tuning PERSPECTIVES ──────────────────────────────────────────────────────
+#
+# The library's tuning facet/filter/sort always answers for ONE arrangement
+# role. There are three, matching `active_instrument_profile`:
+#
+#   guitar-lead    the song-level (guitar-first) tuning — the historical
+#                  default. Its columns are the original unprefixed
+#                  `tuning_*` family, so today's behaviour is byte-identical.
+#   guitar-rhythm  the RHYTHM chart's own tuning. Lead and rhythm charts can
+#                  disagree (the same bug a bassist hit, inside guitar).
+#   bass           the BASS chart's own tuning.
+#
+# One table drives extraction, the derived columns, the SQL, and the labels —
+# rather than three near-identical column families maintained in parallel.
+class TuningPerspective:
+    __slots__ = ("id", "role", "instrument", "string_count", "column_prefix",
+                 "truncate", "guard_up_tuning", "label")
+
+    def __init__(self, id, role, instrument, string_count, column_prefix,
+                 truncate, guard_up_tuning, label):
+        self.id = id
+        self.role = role                    # arrangement name to look for ('' = song-level)
+        self.instrument = instrument
+        self.string_count = string_count
+        self.column_prefix = column_prefix  # '' | 'rhythm_' | 'bass_'
+        self.truncate = truncate
+        self.guard_up_tuning = guard_up_tuning
+        self.label = label
+
+    @property
+    def instrument_key(self) -> str:
+        return instrument_key(self.instrument, self.string_count)
+
+    def column(self, suffix: str) -> str:
+        return f"{self.column_prefix}tuning_{suffix}"
+
+
+PERSPECTIVES: dict[str, TuningPerspective] = {
+    "guitar-lead": TuningPerspective(
+        "guitar-lead", "", "guitar", 6, "", False, False, "lead"),
+    "guitar-rhythm": TuningPerspective(
+        "guitar-rhythm", "rhythm", "guitar", 6, "rhythm_", False, False, "rhythm"),
+    # Bass alone truncates (padded arrays) and guards against up-tuned data —
+    # both are bass-specific findings, see the block above.
+    "bass": TuningPerspective(
+        "bass", "bass", "bass", BASS_DEFAULT_STRING_COUNT, "bass_", True, True, "bass"),
+}
+
+DEFAULT_PERSPECTIVE = "guitar-lead"
+
+# Perspectives that carry their OWN indexed columns (guitar-lead reads the
+# song-level ones, which the scanner has always written).
+ROLE_PERSPECTIVES = tuple(p for p in PERSPECTIVES.values() if p.column_prefix)
+
+
+def perspective(perspective_id) -> TuningPerspective:
+    """Resolve a perspective id, tolerating the legacy two-valued vocabulary
+    ('guitar' -> guitar-lead) and anything unknown (-> the default). An
+    unrecognised value must never change filter semantics."""
+    if perspective_id in PERSPECTIVES:
+        return PERSPECTIVES[perspective_id]
+    if perspective_id == "guitar":
+        return PERSPECTIVES[DEFAULT_PERSPECTIVE]
+    return PERSPECTIVES[DEFAULT_PERSPECTIVE]
+
+
+def normalize_offsets(offsets, persp: TuningPerspective) -> list[int] | None:
+    """Coerce a stored tuning array to the strings the perspective's
+    instrument actually has. Returns None for anything unusable (empty /
+    non-integer / too short), so callers leave the index empty rather than
+    record a guess."""
+    if not isinstance(offsets, list) or not offsets:
+        return None
+    if any(isinstance(o, bool) for o in offsets):
+        return None
+    try:
+        vals = [int(o) for o in offsets]
+    except (TypeError, ValueError):
+        return None
+    if len(vals) < persp.string_count:
+        return None
+    # Only bass truncates: its arrays are padded (see above). A guitar array
+    # longer than 6 is a genuine 7/8-string chart, and cutting it to 6 would
+    # invent a tuning the chart does not have.
+    if persp.truncate:
+        return vals[:persp.string_count]
+    return vals
+
+
+def offsets_are_plausible(offsets: list[int], persp: TuningPerspective) -> bool:
+    """False for data the perspective refuses to trust — currently only the
+    bass up-tuning guard (see BASS_MAX_PLAUSIBLE_OFFSET)."""
+    if not persp.guard_up_tuning:
+        return True
+    return all(o <= BASS_MAX_PLAUSIBLE_OFFSET for o in offsets)
+
+
+def perspective_tuning_name(offsets: list[int], persp: TuningPerspective) -> str:
+    """Name a NORMALIZED tuning for this perspective, refusing to name data the
+    perspective distrusts — that becomes "Custom Tuning", which stays distinct
+    by its canonical pitches without asserting a tuning anyone plays."""
+    if not offsets_are_plausible(offsets, persp):
+        return "Custom Tuning"
+    return tuning_name(offsets)
+
+
+def perspective_tuning_key(offsets: list[int], persp: TuningPerspective) -> str:
+    """CANONICAL grouping key: the tuning's absolute open-string pitches, so
+    the same physical tuning groups as ONE facet entry no matter how it was
+    serialized. Keyed on pitch rather than the raw offsets string, which is
+    serialization-dependent and fragments.
+
+    Joined with ':' and NOT ',' — this key travels back as a `tunings` filter
+    selector, and that query param is a COMMA-separated list, so a comma here
+    would be split into meaningless fragments and match nothing.
+    """
+    midis = tuning_midis_from_offsets(persp.instrument_key, offsets)
+    if not midis:
+        return ""
+    return persp.id + ":" + ":".join(str(m) for m in midis)
+
+
+def perspective_low_pitch(offsets: list[int], persp: TuningPerspective) -> int | None:
+    """Absolute MIDI pitch of the tuning's LOWEST open string — the value the
+    "playable without retuning" comparison is built on (see
+    `chart_is_playable_in`)."""
+    midis = tuning_midis_from_offsets(persp.instrument_key, offsets)
+    if not midis:
+        return None
+    return min(midis)
+
+
+# ── "Playable without retuning" ──────────────────────────────────────────────
+#
+# What the player actually wants is "don't make me retune", not "match this
+# label". A chart is playable as-is when every pitch it needs is reachable on
+# the instrument as currently tuned.
+#
+# WHAT WE CAN HONESTLY COMPUTE. We index open-string TUNINGS, not the notes a
+# chart plays — note data lives in the 600KB-1.2MB arrangement JSON, and the
+# library scan is deliberately manifest-only, so we do not read it (indexing a
+# per-song lowest note would mean opening every chart on every scan).
+#
+# So the comparison is on OPEN-STRING PITCH, with a conservative assumption:
+# a chart may require its own lowest open string. That gives
+#
+#     playable  <=>  your lowest open pitch  <=  the chart's lowest open pitch
+#
+# On a fretted instrument every pitch ABOVE your lowest open string is
+# reachable by fretting (strings sit within an octave of each other and the
+# neck gives ~2 octaves), so the low end is the binding constraint. This is
+# exactly the dominant real case: a 5-string bass (low B) plays every 4-string
+# standard chart AND every drop-D chart untouched, because the low D is just
+# fretted on the B string.
+#
+# DELIBERATE LIMITATIONS, both erring toward NOT claiming playability:
+#   * A chart that never actually touches its lowest open string is excluded
+#     anyway. Conservative: excluding a playable chart costs a scroll;
+#     including an unplayable one costs a mid-practice retune, which is the
+#     failure this feature exists to prevent.
+#   * The UPPER bound is not checked — a chart tuned far above you could in
+#     principle exceed your neck. Checking it needs the note range we do not
+#     have. It is the rare direction (and the guard above already refuses
+#     up-tuned bass data), but it is a real gap, not an oversight.
+def chart_is_playable_in(chart_low_pitch, your_low_pitch) -> bool:
+    """True when a chart whose lowest open string is `chart_low_pitch` needs no
+    retune for a player tuned to `your_low_pitch`. Unknown chart pitch => False
+    (never claim playability we cannot support)."""
+    if chart_low_pitch is None or your_low_pitch is None:
+        return False
+    return int(your_low_pitch) <= int(chart_low_pitch)
+
+
+# Back-compat wrappers over the generic helpers — bass was the first
+# perspective and reads better spelled out at bass-specific call sites.
+def normalize_bass_offsets(offsets) -> list[int] | None:
+    return normalize_offsets(offsets, PERSPECTIVES["bass"])
+
+
+def bass_offsets_are_plausible(offsets: list[int]) -> bool:
+    return offsets_are_plausible(offsets, PERSPECTIVES["bass"])
+
+
+def bass_tuning_name(offsets: list[int]) -> str:
+    return perspective_tuning_name(offsets, PERSPECTIVES["bass"])
+
+
+def bass_tuning_key(offsets: list[int]) -> str:
+    return perspective_tuning_key(offsets, PERSPECTIVES["bass"])
+
+
+def tuning_name(offsets: list[int]) -> str:
+    # The pattern checks below are gated on `len(offsets)` being 6 or 4. The
+    # naming conventions are E-standard-rooted — e.g. a 7-string all-zeros
+    # tuning has a low B, not an E, so labeling it "E Standard" would be wrong.
+    # 7+-string community content falls through to the numeric fallback (#43).
+    #
+    # Length 4 is accepted because a bass's open strings (EADG) are the low
+    # four of the guitar, so the same standard/drop names apply at the same
+    # offsets. Bass callers must normalize FIRST (`normalize_bass_offsets`):
+    # stored bass arrays are commonly six elements with a padded tail, and the
+    # padding must never reach this namer. See the block above.
+
+    # Standard tunings (all strings same offset)
     standard = {
         0: "E Standard", -1: "Eb Standard", -2: "D Standard",
         -3: "C# Standard", -4: "C Standard", -5: "B Standard",
         -6: "Bb Standard", -7: "A Standard",
         1: "F Standard", 2: "F# Standard",
     }
-    if len(offsets) == 6 and all(o == offsets[0] for o in offsets):
+    if len(offsets) in (4, 6) and all(o == offsets[0] for o in offsets):
         name = standard.get(offsets[0])
         if name:
             return name
 
     # Drop tunings (low string 2 semitones below the rest)
     # Named after the low string's note: e.g. offsets[-2,0,0,0,0,0] = Drop D (low E dropped to D)
-    if len(offsets) == 6 and offsets[0] == offsets[1] - 2 and all(o == offsets[1] for o in offsets[1:]):
+    if len(offsets) in (4, 6) and offsets[0] == offsets[1] - 2 and all(o == offsets[1] for o in offsets[1:]):
         note_names = ["E", "F", "F#", "G", "Ab", "A", "Bb", "B", "C", "C#", "D", "Eb"]
         low_note = note_names[offsets[0] % 12]
         return f"Drop {low_note}"

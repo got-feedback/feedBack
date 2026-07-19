@@ -58,7 +58,6 @@
     var connectedIndices = {};   // gamepad.index -> true, tracks which slots we've announced
 
     function fireKey(spec) {
-        console.log('[gamepad] firing key', spec.code);
         // Dispatch on the focused element (falling back to document when nothing
         // is focused), not document itself. document.activeElement is always an
         // ancestor-inclusive descendant of document, so this still bubbles up
@@ -161,7 +160,6 @@
 
     window.addEventListener('gamepadconnected', function (e) {
         var idx = e.gamepad && e.gamepad.index;
-        console.log('[gamepad] connected', idx, e.gamepad && e.gamepad.id, 'mapping:', e.gamepad && e.gamepad.mapping);
         // Non-standard slots (raw HID mirrors, or anything this module can't
         // safely act on) are never tracked/toasted/polled for — only ever
         // treat a standard-mapped pad as "a controller connected". Keeping a
@@ -188,7 +186,6 @@
 
     window.addEventListener('gamepaddisconnected', function (e) {
         var idx = e.gamepad && e.gamepad.index;
-        console.log('[gamepad] disconnected', idx, e.gamepad && e.gamepad.id);
         delete connectedIndices[idx];
         if (!anyLiveStandardPad()) {
             polling = false;

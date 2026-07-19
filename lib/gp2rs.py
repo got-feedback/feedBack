@@ -2080,7 +2080,7 @@ def convert_file(
         safe_name = track.name.strip().replace(" ", "_").replace("/", "_")
         filename = f"{safe_name}_{arr_name or 'arr'}.xml"
         filepath = out / filename
-        filepath.write_text(xml_str)
+        filepath.write_text(xml_str, encoding="utf-8")
         output_files.append(str(filepath))
 
     return output_files

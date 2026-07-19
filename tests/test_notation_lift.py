@@ -34,7 +34,7 @@ def test_decode_wire_notes_unpacks_midi_and_sorts():
     arr = {"notes": [_wire(1.0, 67, 0.5), _wire(0.0, 60)]}
     out = nl.decode_wire_notes(arr)
     assert [n["midi"] for n in out] == [60, 67]
-    assert out[0] == {"t": 0.0, "midi": 60, "sus": 0.0}
+    assert out[0] == {"t": 0.0, "midi": 60, "sus": 0.0, "hand": None}
     assert out[1]["sus"] == 0.5
 
 
@@ -103,6 +103,57 @@ def test_split_hands_middle_c_split_falls_back_when_it_makes_unplayable_hand():
     hands = nl.split_hands(notes)
     assert [n["midi"] for n in hands["lh"]] == [40]
     assert sorted(n["midi"] for n in hands["rh"]) == [59, 62, 67]
+
+
+def test_split_hands_authored_hand_always_wins():
+    # An authored 'lh' melody note ABOVE middle C (a crossing-hands texture):
+    # the heuristic alone would call midi 65 rh; the authored hand wins.
+    notes = [{"t": 0.0, "midi": 65, "sus": 0, "hand": "lh"}]
+    hands = nl.split_hands(notes)
+    assert [n["midi"] for n in hands["lh"]] == [65]
+    assert "rh" not in hands
+
+
+def test_split_hands_explicit_notes_leave_the_group_before_heuristic_math():
+    # Group [C3(authored rh!), C4, E4]: without removal, C3=48 drags the mean
+    # to (48+60+64)/3 ≈ 57.3 < 60 → the WHOLE group would flip lh. With the
+    # authored note removed first, the remaining [C4, E4] mean 62 ≥ 60 → rh.
+    notes = [
+        {"t": 0.0, "midi": 48, "sus": 0, "hand": "rh"},
+        {"t": 0.0, "midi": 60, "sus": 0},
+        {"t": 0.0, "midi": 64, "sus": 0},
+    ]
+    hands = nl.split_hands(notes)
+    assert sorted(n["midi"] for n in hands["rh"]) == [48, 60, 64]
+    assert "lh" not in hands
+
+
+def test_split_hands_all_explicit_group_skips_heuristic_entirely():
+    notes = [
+        {"t": 0.0, "midi": 40, "sus": 0, "hand": "rh"},   # deliberately "wrong"
+        {"t": 0.0, "midi": 72, "sus": 0, "hand": "lh"},   # crossing hands
+    ]
+    hands = nl.split_hands(notes)
+    assert [n["midi"] for n in hands["rh"]] == [40]
+    assert [n["midi"] for n in hands["lh"]] == [72]
+
+
+def test_split_hands_junk_hand_values_fall_to_the_heuristic():
+    for junk in ("LH", "left", "", True, 3, None):
+        hands = nl.split_hands([{"t": 0.0, "midi": 72, "sus": 0, "hand": junk}])
+        assert [n["midi"] for n in hands.get("rh", [])] == [72], repr(junk)
+
+
+def test_decode_wire_notes_carries_hand_with_strict_enum():
+    arr = {"notes": [
+        {"t": 0.0, "s": 2, "f": 0, "sus": 0.5, "hand": "lh"},
+        {"t": 0.5, "s": 2, "f": 12, "sus": 0.5, "hand": "LH"},   # junk case
+        {"t": 1.0, "s": 2, "f": 14, "sus": 0.5},
+    ], "chords": [
+        {"t": 1.5, "notes": [{"s": 3, "f": 0, "sus": 0.5, "hand": "rh"}]},
+    ]}
+    decoded = nl.decode_wire_notes(arr)
+    assert [n["hand"] for n in decoded] == ["lh", None, None, "rh"]
 
 
 # ── Timing ───────────────────────────────────────────────────────────────────

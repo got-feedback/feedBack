@@ -54,15 +54,20 @@ MIDDLE_C = 60
 
 def decode_wire_notes(arr_data: dict) -> list[dict]:
     """Decode an arrangement JSON's notes + chord notes to
-    ``[{"t": float, "midi": int, "sus": float}, ...]`` sorted by time.
+    ``[{"t": float, "midi": int, "sus": float, "hand": str|None}, ...]``
+    sorted by time.
 
     Keys content packs absolute MIDI as ``midi = s*24 + f`` (sloppak-spec
     §5.3 legacy fallback). Sustain is the ``sus`` field (``l`` accepted as a
-    legacy alias). Entries with malformed fields are skipped.
+    legacy alias). ``hand`` is the authored per-note hand assignment
+    (``'lh'``/``'rh'`` — e.g. from a MusicXML grand-staff import via the
+    editor); a strict enum decode, anything else reads as ``None``
+    (unassigned) so junk can never steer the hand split. Entries with
+    malformed fields are skipped.
     """
     out: list[dict] = []
 
-    def _push(t, s, f, sus):
+    def _push(t, s, f, sus, hand):
         try:
             t = float(t)
             midi = int(s) * 24 + int(f)
@@ -70,11 +75,15 @@ def decode_wire_notes(arr_data: dict) -> list[dict]:
         except (TypeError, ValueError):
             return
         if 0 <= midi <= 127:
-            out.append({"t": t, "midi": midi, "sus": max(0.0, sus)})
+            out.append({
+                "t": t, "midi": midi, "sus": max(0.0, sus),
+                "hand": hand if hand in ("lh", "rh") else None,
+            })
 
     for n in arr_data.get("notes") or []:
         if isinstance(n, dict):
-            _push(n.get("t"), n.get("s"), n.get("f"), n.get("sus", n.get("l")))
+            _push(n.get("t"), n.get("s"), n.get("f"), n.get("sus", n.get("l")),
+                  n.get("hand"))
     for ch in arr_data.get("chords") or []:
         if not isinstance(ch, dict):
             continue
@@ -83,7 +92,7 @@ def decode_wire_notes(arr_data: dict) -> list[dict]:
             if isinstance(cn, dict):
                 # Chord notes carry no own time — they sound at the chord's t.
                 _push(cn.get("t", ch_t), cn.get("s"), cn.get("f"),
-                      cn.get("sus", cn.get("l")))
+                      cn.get("sus", cn.get("l")), cn.get("hand"))
 
     out.sort(key=lambda n: (n["t"], n["midi"]))
     return out
@@ -103,14 +112,31 @@ def group_simultaneous(notes: list[dict]) -> list[list[dict]]:
 
 
 def split_hands(notes: list[dict]) -> dict[str, list[dict]]:
-    """Assign every note to ``rh`` or ``lh`` per the heuristic.
+    """Assign every note to ``rh`` or ``lh``.
 
-    Per simultaneous group: a span > 12 semitones splits at the largest
-    internal interval gap (low side → lh); otherwise the whole group goes by
-    mean pitch vs middle C (≥ 60 → rh).
+    An AUTHORED per-note ``hand`` ('lh'/'rh' — a MusicXML grand-staff import
+    or a hand edit in the editor) always wins: those notes go straight to
+    their hand and are REMOVED from the group before any heuristic math runs,
+    so one explicit assignment can never skew its chordmates' guesses (e.g.
+    an authored LH melody note above middle C must not drag the group mean
+    down and flip the remaining notes).
+
+    The remaining unassigned notes take the heuristic, per simultaneous
+    group: a span > 12 semitones splits at the largest internal interval gap
+    (low side → lh); otherwise the whole group goes by mean pitch vs middle C
+    (≥ 60 → rh).
     """
     hands: dict[str, list[dict]] = {"rh": [], "lh": []}
-    for group in group_simultaneous(notes):
+    for full_group in group_simultaneous(notes):
+        # Authored hands first — explicit notes leave the group entirely.
+        group = []
+        for n in full_group:
+            if n.get("hand") in ("lh", "rh"):
+                hands[n["hand"]].append(n)
+            else:
+                group.append(n)
+        if not group:
+            continue
         pitches = sorted(n["midi"] for n in group)
         span = pitches[-1] - pitches[0]
         if len(pitches) > 1 and span > HAND_SPLIT_SPAN_SEMITONES:

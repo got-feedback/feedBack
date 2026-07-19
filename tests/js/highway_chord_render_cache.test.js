@@ -51,8 +51,10 @@ test('_ensureChordRenderCache keys off src, _inverted, AND chordTemplates', () =
     );
     assert.match(src, eqEither('hwState\\._chordRenderCacheSrc', 'src'), 'cache must key on src');
     assert.match(src, eqEither('hwState\\._chordRenderCacheInverted', 'hwState\\._inverted'), 'cache must key on _inverted');
-    assert.match(src, neqEither('hwState\\._chordRenderCacheTemplates', 'hwState\\.chordTemplates'),
-        'cache must key on chordTemplates (detected via !== for change-flag)');
+    assert.match(src, neqEither('hwState\\._chordRenderCacheTemplates', 'effTemplates'),
+        'cache must key on the effective chordTemplates (detected via !== for change-flag)');
+    assert.match(src, /_effChordTemplates\(hwState\)\s*\{\s*\n?\s*return hwState\._xfChordTemplates !== null \? hwState\._xfChordTemplates : hwState\.chordTemplates;/,
+        'effective templates must derive from hwState.chordTemplates');
 });
 
 test('chordTemplates change resets fretline preview and frame-mismatch warner', () => {

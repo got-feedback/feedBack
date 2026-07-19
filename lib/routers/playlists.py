@@ -70,6 +70,37 @@ def api_create_playlist(data: dict):
     return appstate.meta_db.create_playlist(name, kind=kind)
 
 
+@router.post("/api/playlists/reorder")
+def api_reorder_playlists(data: dict):
+    """Manual ordering of the playlists themselves (position = index in
+    `order`); the songs-within sibling is /api/playlists/{pid}/reorder.
+    System playlists stay pinned first and are not part of the order."""
+    order = data.get("order")
+    if not isinstance(order, list) or not all(
+            isinstance(i, int) and not isinstance(i, bool) for i in order):
+        return JSONResponse({"error": "order must be a list of playlist ids"}, status_code=400)
+    # Require an exact permutation of the current non-system playlist ids: a
+    # list with duplicates, omissions, extras, unknown ids, or a system id
+    # would otherwise produce duplicate positions / a partial reorder while
+    # still returning 200 (mirrors the songs-within validation).
+    current = [p["id"] for p in appstate.meta_db.list_playlists() if not p["system_key"]]
+    if len(order) != len(current) or sorted(order) != sorted(current):
+        return JSONResponse(
+            {"error": "order must be a permutation of your playlists' ids"},
+            status_code=400,
+        )
+    appstate.meta_db.reorder_playlists(order)
+    return api_list_playlists()
+
+
+@router.post("/api/playlists/sort-alpha")
+def api_sort_playlists_alpha():
+    """Clear every manual playlist position → back to the alphabetical
+    default (system playlists were pinned first either way)."""
+    appstate.meta_db.clear_playlist_positions()
+    return api_list_playlists()
+
+
 @router.get("/api/playlists/{pid}")
 def api_get_playlist(pid: int):
     pl = appstate.meta_db.get_playlist(pid)

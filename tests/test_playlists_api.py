@@ -175,3 +175,185 @@ def test_deleting_playlist_removes_custom_cover(client, server):
     assert _playlist_cover_path(pid).exists()
     client.delete(f"/api/playlists/{pid}")
     assert not _playlist_cover_path(pid).exists()
+
+
+# ── Reordering the playlists THEMSELVES (not songs-within) ───────────────────
+
+def _mk(client, name):
+    return client.post("/api/playlists", json={"name": name}).json()["id"]
+
+
+def _ids(client):
+    return [p["id"] for p in client.get("/api/playlists").json()]
+
+
+def test_playlists_default_order_is_alphabetical(client):
+    b = _mk(client, "Bravo")
+    a = _mk(client, "alpha")      # NOCASE: lowercase still sorts by letter
+    z = _mk(client, "Zulu")
+    assert _ids(client) == [a, b, z]
+
+
+def test_playlist_manual_reorder_persists(client):
+    a = _mk(client, "Alpha")
+    b = _mk(client, "Bravo")
+    c = _mk(client, "Charlie")
+    r = client.post("/api/playlists/reorder", json={"order": [c, a, b]})
+    assert r.status_code == 200
+    assert [p["id"] for p in r.json()] == [c, a, b]
+    # persists across independent list calls
+    assert _ids(client) == [c, a, b]
+    assert _ids(client) == [c, a, b]
+
+
+def test_playlist_reorder_excludes_system_and_keeps_it_pinned(client):
+    # First toggle creates the "Saved for Later" system playlist.
+    client.post("/api/saved/toggle", json={"filename": "x.archive"})
+    a = _mk(client, "Alpha")
+    b = _mk(client, "Bravo")
+    saved = next(p["id"] for p in client.get("/api/playlists").json() if p["system_key"])
+    # A system id in the order is rejected — it isn't reorderable.
+    assert client.post("/api/playlists/reorder", json={"order": [saved, b, a]}).status_code == 400
+    # User playlists reorder; the system playlist stays pinned first.
+    assert client.post("/api/playlists/reorder", json={"order": [b, a]}).status_code == 200
+    listing = client.get("/api/playlists").json()
+    assert listing[0]["system_key"] == "saved_for_later"
+    assert [p["id"] for p in listing[1:]] == [b, a]
+
+
+def test_playlist_reorder_rejects_bad_orders(client):
+    a = _mk(client, "Alpha")
+    b = _mk(client, "Bravo")
+    for bad in (
+        [a],                # missing an id (partial order)
+        [a, b, 999999],     # extra unknown id
+        [a, a],             # duplicate (drops b)
+        [a, 999999],        # unknown id in place of b
+        "nope",             # not a list
+        [a, str(b)],        # non-int entry
+        [True, False],      # bools are ints to Python — must still be rejected
+        None,               # {"order": null}
+    ):
+        assert client.post("/api/playlists/reorder", json={"order": bad}).status_code == 400, bad
+    assert client.post("/api/playlists/reorder", json={}).status_code == 400
+    # Nothing was persisted by any rejected request.
+    assert _ids(client) == [a, b]
+
+
+def test_sort_alpha_clears_manual_order(client):
+    a = _mk(client, "Alpha")
+    b = _mk(client, "Bravo")
+    z = _mk(client, "Zulu")
+    client.post("/api/playlists/reorder", json={"order": [z, b, a]})
+    assert _ids(client) == [z, b, a]
+    r = client.post("/api/playlists/sort-alpha")
+    assert r.status_code == 200
+    assert [p["id"] for p in r.json()] == [a, b, z]
+    assert _ids(client) == [a, b, z]
+
+
+def test_new_playlist_after_manual_reorder_sorts_alphabetically_after_positioned(client):
+    a = _mk(client, "Alpha")
+    b = _mk(client, "Bravo")
+    client.post("/api/playlists/reorder", json={"order": [b, a]})
+    # New playlists are unpositioned → they follow the manually positioned
+    # ones, alphabetically among themselves, and never disturb the manual
+    # order ("Aardvark" would be first alphabetically).
+    z = _mk(client, "Zebra")
+    aa = _mk(client, "Aardvark")
+    assert _ids(client) == [b, a, aa, z]
+    # A subsequent full reorder must include the newcomers (exact permutation).
+    assert client.post("/api/playlists/reorder", json={"order": [b, a]}).status_code == 400
+    assert client.post("/api/playlists/reorder", json={"order": [z, aa, b, a]}).status_code == 200
+    assert _ids(client) == [z, aa, b, a]
+
+
+# ── Tuning-check payload (per-song data the playlist tuning check scores) ────
+# A playlist grouped BY TUNING is a run you can practise without retuning, so
+# the detail view flags rows your instrument can't reach. Scoring needs more
+# than the tuning NAME: two "Custom Tuning" rows are different tunings, and a
+# bass-only chart has to be measured against bass base pitches.
+
+def test_playlist_songs_carry_tuning_offsets_for_the_check(client, server):
+    db = server.meta_db
+    db.put("drop.archive", 0, 0, {"title": "Drop", "tuning_name": "Drop D",
+                                  "tuning_offsets": "-2 0 0 0 0 0"})
+    pid = client.post("/api/playlists", json={"name": "T"}).json()["id"]
+    client.post(f"/api/playlists/{pid}/songs", json={"filename": "drop.archive"})
+    song = client.get(f"/api/playlists/{pid}").json()["songs"][0]
+    assert song["tuning_offsets"] == "-2 0 0 0 0 0"
+    assert song["tuning_name"] == "Drop D"
+
+
+def test_playlist_songs_carry_role_specific_tunings(client, server):
+    db = server.meta_db
+    db.put("roles.archive", 0, 0, {
+        "title": "Roles",
+        "tuning_name": "E Standard",
+        "tuning_offsets": "0 0 0 0 0 0",
+        "bass_tuning_name": "A Standard",
+        "bass_tuning_offsets": "-2 -2 -2 -2 -2 -2",
+        "rhythm_tuning_name": "Drop D",
+        "rhythm_tuning_offsets": "-2 0 0 0 0 0",
+    })
+    pid = client.post("/api/playlists", json={"name": "Roles"}).json()["id"]
+    client.post(f"/api/playlists/{pid}/songs", json={"filename": "roles.archive"})
+    song = client.get(f"/api/playlists/{pid}").json()["songs"][0]
+    assert song["bass_tuning_name"] == "A Standard"
+    assert song["bass_tuning_offsets"] == "-2 -2 -2 -2 -2 -2"
+    assert song["rhythm_tuning_name"] == "Drop D"
+    assert song["rhythm_tuning_offsets"] == "-2 0 0 0 0 0"
+
+
+def test_playlist_songs_flag_bass_only_charts(client, server):
+    # Every arrangement a bass part → bass_only, so coverage scores the row
+    # against bass strings. A chart that ALSO has a guitar part must not be
+    # flagged, or a guitarist's row gets measured on the wrong instrument.
+    db = server.meta_db
+    db.put("bassonly.archive", 0, 0, {"title": "Bass Only", "arrangements": [
+        {"name": "Bass"}, {"name": "Alt. Bass"}]})
+    db.put("mixed.archive", 0, 0, {"title": "Mixed", "arrangements": [
+        {"name": "Lead"}, {"name": "Bass"}]})
+    db.put("noarr.archive", 0, 0, {"title": "No Arrangements"})
+    pid = client.post("/api/playlists", json={"name": "B"}).json()["id"]
+    for fn in ("bassonly.archive", "mixed.archive", "noarr.archive"):
+        client.post(f"/api/playlists/{pid}/songs", json={"filename": fn})
+    got = {s["filename"]: s["bass_only"] for s in client.get(f"/api/playlists/{pid}").json()["songs"]}
+    assert got == {"bassonly.archive": True, "mixed.archive": False, "noarr.archive": False}
+
+
+def test_bass_only_flag_survives_adversarial_arrangement_data(client, server):
+    # Corrupt/odd `arrangements` must not 500 the playlist, and must not claim
+    # bass — an unscoreable row is left for the client to report as "unknown".
+    db = server.meta_db
+    cases = {
+        "empty.archive": [],
+        "unnamed.archive": [{"name": ""}],
+        "nullname.archive": [{"name": None}],
+        "substring.archive": [{"name": "Bassoon"}],       # not a bass part
+        "cased.archive": [{"name": "BASS"}],              # is one
+    }
+    for fn, arrs in cases.items():
+        db.put(fn, 0, 0, {"title": fn, "arrangements": arrs})
+    pid = client.post("/api/playlists", json={"name": "Adv"}).json()["id"]
+    for fn in cases:
+        client.post(f"/api/playlists/{pid}/songs", json={"filename": fn})
+    r = client.get(f"/api/playlists/{pid}")
+    assert r.status_code == 200
+    got = {s["filename"]: s["bass_only"] for s in r.json()["songs"]}
+    assert got == {"empty.archive": False, "unnamed.archive": False,
+                   "nullname.archive": False, "substring.archive": False,
+                   "cased.archive": True}
+
+
+def test_playlist_song_with_no_tuning_data_reports_empty_not_missing(client, server):
+    # The key must always be present: the client distinguishes "no tuning data"
+    # (unknown — say nothing) from "wrong tuning" (flag it), and a missing key
+    # would make every row unscoreable by accident rather than by fact.
+    db = server.meta_db
+    db.put("bare.archive", 0, 0, {"title": "Bare"})
+    pid = client.post("/api/playlists", json={"name": "Bare"}).json()["id"]
+    client.post(f"/api/playlists/{pid}/songs", json={"filename": "bare.archive"})
+    song = client.get(f"/api/playlists/{pid}").json()["songs"][0]
+    assert song["tuning_offsets"] == ""
+    assert song["bass_only"] is False

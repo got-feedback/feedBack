@@ -67,9 +67,25 @@ test('v3 songs.js uses display helpers for album-art tuning badge', () => {
     const src = fs.readFileSync(SONGS_JS, 'utf8');
     // The card renderer's row variable was renamed song → shown when grouped
     // cards landed (the badge reads the representative chart); accept either.
-    assert.match(src, /displayTuningName\((?:song|shown)\.tuning_name \|\| (?:song|shown)\.tuning\)/);
+    // The raw read then moved behind shownTuningName() so the badge can answer
+    // for the active tuning perspective — accept that indirection too, and pin
+    // the fallback inside the helper below so this stays a real guard.
+    assert.match(
+        src,
+        /displayTuningName\((?:(?:song|shown)\.tuning_name \|\| (?:song|shown)\.tuning|shownTuning)\)/,
+    );
     assert.match(src, /displayTuningTargets/);
     assert.match(src, /parseRawTuningOffsets/);
+});
+
+test('the tuning-perspective helper still falls back to tuning_name || tuning', () => {
+    // shownTuningName() is what the badge now reads. With no perspective field
+    // set (guitar-lead, the default) it must resolve exactly what the badge
+    // used to read inline, or guitar players silently lose their tuning label.
+    const src = fs.readFileSync(SONGS_JS, 'utf8');
+    const body = src.match(/function shownTuningName\(song\)\s*\{[\s\S]*?\n {4}\}/);
+    assert.ok(body, 'shownTuningName() not found — the badge read moved again');
+    assert.match(body[0], /return song\.tuning_name \|\| song\.tuning;/);
 });
 
 test('raw offset tuning_name does not appear in rendered card HTML', () => {

@@ -127,6 +127,10 @@ function load({ store: initialStore } = {}) {
     const sandbox = {
         console,
         BG_STYLE_IDS,
+        // Module-scope in screen.js; the _pc* block reads it to resolve the
+        // effective style under the Venue override. Tests flip it via
+        // sandbox._venueSceneOverride and fire the 'venueScene' bus key.
+        _venueSceneOverride: false,
         _bgReadSetting: (_panelKey, key) => store[key],
         _bgSubscribe: (fn) => listeners.add(fn),
         _bgUnsubscribe: (fn) => listeners.delete(fn),
@@ -197,6 +201,29 @@ test('multiple renderer instances share a single control', () => {
     api._pcRelease();
     assert.equal(dom.slot.children.length, 0, 'last release must unmount');
     assert.equal(api.el, null);
+});
+
+test('binds the screen hook on a retry when the bus was not ready at acquire', () => {
+    const ctl = load();
+    // Cold load: on a fresh page the renderer can init before the event bus is
+    // wired AND before the rail popover exists. Simulate both being absent.
+    const savedOn = ctl.sandbox.window.feedBack.on;
+    const savedUi = ctl.sandbox.window.feedBack.ui;
+    delete ctl.sandbox.window.feedBack.on;
+    ctl.sandbox.window.feedBack.ui = {};   // no playerControlSlot -> mount fails
+
+    ctl.api._pcAcquire();
+    assert.equal(ctl.screenHooks(), 0, 'nothing to bind to yet');
+    assert.equal(ctl.api.el, null, 'no slot yet, so nothing mounted');
+
+    // Bus + slot come online; the retry tick must bind the hook, not only mount.
+    ctl.sandbox.window.feedBack.on = savedOn;
+    ctl.sandbox.window.feedBack.ui = savedUi;
+    ctl.timers.shift()();   // run one retry tick
+
+    assert.equal(ctl.screenHooks(), 1, 'the retry tick failed to bind the screen hook');
+    assert.ok(ctl.api.el, 'and it should have mounted too');
+    ctl.api._pcRelease();
 });
 
 test('the last release unbinds the screen:changed hook', () => {
@@ -309,6 +336,38 @@ test('greys out exactly the controls each style ignores', () => {
         assert.equal(!api.intens.disabled, want.intensity, `${style}: intensity enabled-ness`);
         assert.equal(!api.react.disabled, want.reactive, `${style}: reactive enabled-ness`);
     }
+});
+
+test('the Venue override greys the whole Background group', () => {
+    const ctl = load({ store: { style: 'particles' } });   // a style that uses both
+    ctl.api._pcAcquire();
+    assert.equal(ctl.api.intens.disabled, false, 'precondition: both enabled off-venue');
+    assert.equal(ctl.api.react.disabled, false);
+
+    // Venue turns on: the effective style is now 'venue', which uses neither.
+    // The transition arrives on the settings bus as the 'venueScene' key.
+    ctl.sandbox._venueSceneOverride = true;
+    ctl.emit('venueScene');
+    assert.equal(ctl.api.intens.disabled, true, 'intensity should grey under Venue');
+    assert.equal(ctl.api.react.disabled, true, 'reactive should grey under Venue');
+    assert.equal(ctl.api.sel.disabled, true, 'the dropdown should be inert under Venue too');
+    assert.match(ctl.api.intens.title, /venue/i, 'reason should mention Venue');
+
+    // The dropdown still shows the stored style (venue has no option), but
+    // selecting must not write while it's inert.
+    assert.equal(ctl.api.sel.value, 'particles');
+    const before = ctl.writes.length;
+    ctl.api.sel.value = 'lights';
+    ctl.api.sel.fire('change');
+    assert.equal(ctl.writes.length, before, 'a disabled dropdown must not write');
+
+    // Venue off: controls come back per the stored style.
+    ctl.sandbox._venueSceneOverride = false;
+    ctl.emit('venueScene');
+    assert.equal(ctl.api.intens.disabled, false, 'intensity re-enables when Venue exits');
+    assert.equal(ctl.api.react.disabled, false);
+    assert.equal(ctl.api.sel.disabled, false, 'the dropdown re-enables when Venue exits');
+    ctl.api._pcRelease();
 });
 
 test('an unknown style enables both controls (fails open)', () => {

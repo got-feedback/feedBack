@@ -4063,6 +4063,10 @@
         image:       { intensity: true,  reactive: false, why: 'This background does not react to audio' },
         video:       { intensity: false, reactive: false, why: 'The video plays as-is - nothing to adjust here' },
         butterchurn: { intensity: false, reactive: false, why: 'Butterchurn reacts to audio itself - tune it in Settings > 3D Highway, or its Visualizer panel' },
+        // Not in BG_STYLE_IDS, so it never appears in the dropdown - reached
+        // only via the viz-picker Venue flow (h3dVenueSceneSetActive). While
+        // active it is the EFFECTIVE style, so both knobs drive nothing.
+        venue:       { intensity: false, reactive: false, why: 'Venue visualization is active - pick a background from the visualization picker' },
     };
     let _pcRefs = 0, _pcEl = null, _pcSel = null, _pcReactive = null, _pcIntensity = null;
     // Non-disabled wrappers around the two greyable controls. A native-disabled
@@ -4151,6 +4155,18 @@
     // whenever the settings bus reports one of our keys changed, so editing
     // from the Settings page updates this control and vice-versa.
     function _pcSync() {
+        // The active style is the EFFECTIVE one, not the stored one: while the
+        // Venue scene override is on it is what's mounted, and it ignores the
+        // whole Background group - picking a style writes `style` but
+        // _bgMountStyle resolves back to venue, so the dropdown would look
+        // broken. So under Venue the ENTIRE group goes inert (dropdown too),
+        // and the user exits Venue from the visualization picker where they
+        // entered it. An unknown id enables everything rather than disabling
+        // it, so a style added without a _PC_USES row is merely unhelpful.
+        const venue = !!_venueSceneOverride;
+        const effectiveStyle = venue ? 'venue' : _bgReadSetting(null, 'style');
+        const uses = _PC_USES[effectiveStyle] || { intensity: true, reactive: true };
+        const why = uses.why || 'This background style ignores this setting';
         if (_pcSel) {
             // The custom slots stay unselectable until something is uploaded -
             // same rule settings.html applies.
@@ -4159,12 +4175,14 @@
             if (img) img.disabled = !_bgReadSetting(null, 'customImageDataUrl');
             if (vid) vid.disabled = !_bgReadSetting(null, 'customVideoName');
             _pcSel.value = _bgReadSetting(null, 'style');
+            // The dropdown still SHOWS the stored style (venue has no option),
+            // but it's inert while Venue owns the scene.
+            _pcSel.disabled = venue;
+            _pcSel.setAttribute('aria-disabled', venue ? 'true' : 'false');
+            _pcSel.style.opacity = venue ? '.45' : '1';
+            _pcSel.style.cursor = venue ? 'not-allowed' : '';
+            _pcSel.title = venue ? why : '';
         }
-        // Grey out whichever controls the ACTIVE style ignores (see _PC_USES).
-        // An unknown id enables both rather than disabling both, so a style
-        // added without a table row is merely unhelpful, never inert.
-        const uses = _PC_USES[_bgReadSetting(null, 'style')] || { intensity: true, reactive: true };
-        const why = uses.why || 'This background style ignores this setting';
         if (_pcReactive) {
             _pcPaint(_pcReactive, !!_bgReadSetting(null, 'reactive'), !uses.reactive,
                 uses.reactive ? 'React to the audio' : why);
@@ -4244,6 +4262,7 @@
             _pcSel.appendChild(o);
         }
         _pcSel.addEventListener('change', () => {
+            if (_pcSel.disabled) return;   // inert under the Venue override
             try { window.h3dBgSetStyle(_pcSel.value); }
             catch (e) { console.error('[3D-Hwy] bg style set failed', e); }
         });
@@ -4288,7 +4307,11 @@
         _pcSync();
         _pcListener = (key) => {
             if (key === 'style' || key === 'reactive' || key === 'intensity'
-                || key === 'customImageDataUrl' || key === 'customVideoName') {
+                || key === 'customImageDataUrl' || key === 'customVideoName'
+                || key === 'venueScene') {
+                // 'venueScene' has no dropdown/settings widget of its own, but
+                // toggling Venue changes the EFFECTIVE style, so the greying
+                // must re-evaluate (see _pcSync's effectiveStyle).
                 _pcSync();
                 _pcSyncSettingsPanel();
             }
@@ -4313,6 +4336,12 @@
         const tick = () => {
             _pcRetryTimer = 0;
             if (_pcRefs <= 0) return;          // renderer went away mid-retry
+            // Re-attempt the bus subscription too, not just the mount. On a cold
+            // load the renderer can init before window.feedBack.on exists; the
+            // first _pcBindScreenHook() then no-ops and, without this, the hook
+            // never binds and the control goes permanently deaf to screen
+            // changes. Idempotent via the _pcScreenHook guard.
+            _pcBindScreenHook();
             if (_pcMount()) return;
             if (++_pcRetry > 12) return;       // ~3s at 250ms
             _pcRetryTimer = setTimeout(tick, 250);

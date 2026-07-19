@@ -53,12 +53,192 @@
         return (m && m.index != null) ? m.index : null;
     }
 
+    // ── Playlist tuning check ────────────────────────────────────────────────
+    // Playlists are commonly grouped BY TUNING so a practice run needs no
+    // retune mid-session (retuning a bass is minutes of settling, and detuning
+    // far on standard gauges goes floppy). A playlist built before the tuning
+    // filter knew about your instrument can hold songs you can't actually play
+    // without stopping. This flags them. It is READ-ONLY: nothing here edits a
+    // playlist — removal is a separate, explicit, itemised action.
+
+    // Pick the indexed perspective that matches the player's live instrument.
+    // #1003 supplies bass-specific columns; when a song has no bass chart we
+    // deliberately fall back to the historical song-level guitar tuning.
+    function rowTuningForCheck(s) {
+        let wantsBass = false;
+        try {
+            const wt = window.feedBack && window.feedBack.workingTuning;
+            const cur = wt && typeof wt.get === 'function' ? wt.get() : null;
+            wantsBass = !!cur && cur.instrument === 'bass';
+        } catch (_) { /* capability errors degrade to the song-level tuning */ }
+        const hasBassTuning = wantsBass && !!s.bass_tuning_offsets;
+        return {
+            offsets: hasBassTuning
+                ? s.bass_tuning_offsets : (s.tuning_offsets || s.tuning_name),
+            // The selected bass perspective uses bass base pitches. A bass-only
+            // fallback row does too; every other fallback is the lead chart.
+            isBass: hasBassTuning || !!s.bass_only,
+        };
+    }
+    // A coverage report says "not covered" BOTH for a real mismatch and for
+    // "I couldn't work it out" (missing settings/tuner data → an all-empty
+    // report). Only a report carrying an actual reason — named string changes,
+    // a reference-pitch gap, or too few strings — is a mismatch. An unexplained
+    // not-covered is UNKNOWN. A false "wrong tuning" on a hand-curated playlist
+    // costs more trust than saying nothing.
+    function tuningStateFromReport(rep) {
+        if (!rep) return 'unknown';
+        if (rep.covered) return 'match';
+        if (rep.cantCover || rep.reference
+            || (Array.isArray(rep.retune) && rep.retune.length)) return 'mismatch';
+        return 'unknown';
+    }
+
+    // Score every row. Returns null when the host exposes no tuning perspective
+    // at all (no working-tuning capability / no tuner coverage) — the caller
+    // then renders the playlist exactly as before rather than claiming anything.
+    async function checkPlaylistTuning(songs) {
+        const cov = window._tunerAutoOpen && window._tunerAutoOpen.coverageReport;
+        const hasWT = window.feedBack && window.feedBack.workingTuning
+            && typeof window.feedBack.workingTuning.get === 'function';
+        if (typeof cov !== 'function' || !hasWT) return null;
+        const parse = window.parseRawTuningOffsets;
+        const out = [];
+        for (const s of songs || []) {
+            const t = rowTuningForCheck(s);
+            const offs = (typeof parse === 'function') ? parse(t.offsets) : null;
+            if (!offs || !offs.length || offs.some((n) => !isFinite(n))) {
+                out.push({ song: s, state: 'unknown' });
+                continue;
+            }
+            let rep = null;
+            try {
+                rep = await cov({
+                    tuning: offs, stringCount: offs.length,
+                    arrangement: t.isBass ? 'Bass' : 'Lead',
+                });
+            } catch (_) { rep = null; }
+            out.push({ song: s, state: tuningStateFromReport(rep) });
+        }
+        return out;
+    }
+
+    // Colour + a TEXT marker per state — unknown is deliberately neutral-and-
+    // dimmed rather than amber, because "I couldn't check this" is a different
+    // claim from "this is the wrong tuning" and must not read as the latter.
+    function paintTuningChip(chip, state) {
+        if (!chip) return;
+        if (chip.dataset.baseTitle == null) chip.dataset.baseTitle = chip.getAttribute('title') || '';
+        chip.classList.remove('bg-fb-mid', 'bg-emerald-500', 'bg-amber-400', 'opacity-60');
+        chip.classList.add(state === 'match' ? 'bg-emerald-500'
+            : state === 'mismatch' ? 'bg-amber-400' : 'bg-fb-mid');
+        if (state === 'unknown') chip.classList.add('opacity-60');
+        chip.setAttribute('title', chip.dataset.baseTitle + (state === 'match'
+            ? ' — matches your tuning'
+            : state === 'mismatch' ? ' — needs a retune'
+                : ' — no tuning data, not checked'));
+        // Never signal by colour alone.
+        const mark = state === 'mismatch' ? ' ⚠' : state === 'unknown' ? ' ?' : '';
+        let m = chip.querySelector('[data-tuning-mark]');
+        if (!m) {
+            m = document.createElement('span');
+            m.setAttribute('data-tuning-mark', '');
+            chip.appendChild(m);
+        }
+        m.textContent = mark;
+    }
+
+    function tuningSummaryHtml(results) {
+        const total = results.length;
+        if (!total) return '';
+        const mism = results.filter((r) => r.state === 'mismatch').length;
+        const unk = results.filter((r) => r.state === 'unknown').length;
+        // Plain gap-3 rather than gap-x-3/gap-y-2: the axis-specific pair isn't
+        // in the committed tailwind.min.css, and regenerating it is not
+        // reproducible outside CI (autoprefixer/caniuse drift changes unrelated
+        // bytes), so the summary bar stays within the shipped class set.
+        const box = 'mb-4 rounded-lg border px-3 py-2 text-sm flex flex-wrap items-center gap-3 ';
+        if (!mism) {
+            return '<div class="' + box + 'border-fb-good/40 bg-fb-good/30 text-fb-good">' +
+                '<span>✓ All ' + total + ' songs are in your tuning.</span>' +
+                (unk ? '<span class="text-fb-textDim text-xs">' + unk + ' couldn\'t be checked (no tuning data).</span>' : '') +
+                '</div>';
+        }
+        return '<div class="' + box + 'border-amber-400/40 bg-amber-400/10 text-fb-text">' +
+            '<span><strong>' + mism + '</strong> of ' + total + ' songs aren\'t in your tuning.</span>' +
+            (unk ? '<span class="text-fb-textDim text-xs">' + unk + ' couldn\'t be checked (no tuning data) — left alone.</span>' : '') +
+            '<span class="flex-1"></span>' +
+            '<button id="v3-pl-tune-only" class="text-xs px-2 py-1 rounded border border-fb-border text-fb-textDim hover:text-fb-text" aria-pressed="false">Show only these</button>' +
+            '<button id="v3-pl-tune-remove" class="text-xs px-2 py-1 rounded border border-amber-400/40 text-fb-text hover:bg-fb-card">Remove them…</button>' +
+            '</div>';
+    }
+
+    // Run the check and wire its affordances. Read-only: the only mutation is
+    // the explicit, itemised, confirmed removal below.
+    async function applyTuningCheck(root, pl, pid, rerender) {
+        const host = root.querySelector('#v3-pl-tuning');
+        const listEl = root.querySelector('#v3-pl-songs');
+        if (!host || !listEl) return;
+        const results = await checkPlaylistTuning(pl.songs);
+        if (!results) return;                      // no perspective → say nothing
+        const rows = listEl.querySelectorAll('li[data-fn]');
+        results.forEach((r, i) => {
+            const li = rows[i];
+            if (!li) return;
+            li.setAttribute('data-tuning-state', r.state);
+            paintTuningChip(li.querySelector('[data-tuning-chip]'), r.state);
+        });
+        host.innerHTML = tuningSummaryHtml(results);
+
+        const onlyBtn = host.querySelector('#v3-pl-tune-only');
+        onlyBtn?.addEventListener('click', () => {
+            const on = onlyBtn.getAttribute('aria-pressed') !== 'true';
+            onlyBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            onlyBtn.textContent = on ? 'Show all' : 'Show only these';
+            rows.forEach((li) => {
+                li.classList.toggle('hidden', on && li.getAttribute('data-tuning-state') !== 'mismatch');
+            });
+        });
+
+        host.querySelector('#v3-pl-tune-remove')?.addEventListener('click', async () => {
+            // Name every song BEFORE removing anything — a curated playlist is
+            // user data, so the confirm has to be a list, not a count.
+            const doomed = results.filter((r) => r.state === 'mismatch').map((r) => r.song);
+            if (!doomed.length) return;
+            const names = doomed.map((s) => '<div>• ' + esc(s.title || s.filename) + '</div>').join('');
+            const msg = 'Remove these ' + doomed.length + ' song' + (doomed.length === 1 ? '' : 's')
+                + ' from "' + esc(pl.name) + '"?'
+                // Bulleted with a literal •, and sized with max-h-32, so the
+                // confirm needs no Tailwind class the committed CSS lacks —
+                // regenerating tailwind.min.css is not reproducible off CI.
+                + '<div class="mt-2 text-xs max-h-32 overflow-y-auto">' + names + '</div>'
+                + '<p class="text-xs text-fb-textDim mt-2">They stay in your library — only this playlist changes, and you can add them back.</p>';
+            const ok = (typeof window.uiConfirm === 'function')
+                ? await window.uiConfirm({
+                    title: 'Remove mismatched songs?', html: msg,
+                    confirmText: 'Remove ' + doomed.length, cancelText: 'Cancel', danger: true,
+                })
+                : window.confirm('Remove ' + doomed.length + ' song(s) from "' + pl.name + '"?\n\n'
+                    + doomed.map((s) => '• ' + (s.title || s.filename)).join('\n')
+                    + '\n\nThey stay in your library.');
+            if (!ok) return;
+            for (const s of doomed) {
+                await fetch('/api/playlists/' + pid + '/songs/' + encodeURIComponent(s.filename),
+                    { method: 'DELETE' });
+            }
+            rerender();
+        });
+    }
+
     function songRow(s, opts) {
         opts = opts || {};
         const handle = opts.draggable
             ? '<span class="cursor-grab text-fb-textDim/60 px-1" title="Drag to reorder">⠿</span>' : '';
+        // The chip carries its own tuning so the post-paint check can colour it
+        // in place (green = play it now, amber = needs a retune, dimmed ? =
+        // couldn't tell) without re-rendering the list.
         const tuning = s.tuning_name
-            ? '<span class="ml-2 text-[0.625rem] bg-fb-mid text-black font-bold px-1.5 py-0.5 rounded-sm">' + esc(s.tuning_name) + '</span>' : '';
+            ? '<span data-tuning-chip class="ml-2 text-[0.625rem] bg-fb-mid text-black font-bold px-1.5 py-0.5 rounded-sm" title="' + esc(s.tuning_name) + '">' + esc(s.tuning_name) + '</span>' : '';
         // ── Curated-album slot extras (P6) — mixes/saved emit none of this ──
         // A slot plays its RESOLVED chart (data-play-fn: the pinned file, or
         // the work's current keeper when the pinned file is gone) with its
@@ -272,6 +452,9 @@
             '</div>' +
             '</div>' +
             meter +
+            // Filled in after paint by applyTuningCheck (async, feature-detected)
+            // — stays empty when the host exposes no tuning perspective.
+            (pl.songs.length ? '<div id="v3-pl-tuning"></div>' : '') +
             (pl.songs.length
                 ? '<ul id="v3-pl-songs" class="space-y-1">' + pl.songs.map((s) => songRow(s, { draggable: !isSystem, album: isAlbum, acc: isAlbum ? slotAcc(s) : undefined })).join('') + '</ul>'
                 : '<p class="text-fb-textDim">Empty — add songs from the library' + (isAlbum ? ' (the ⋮ menu or the batch bar\'s "Add to playlist")' : '') + '.</p>') +
@@ -321,6 +504,9 @@
         });
         const listEl = root.querySelector('#v3-pl-songs');
         if (listEl) wireSongRows(listEl, pid, () => renderPlaylistDetail(pid));
+        // Post-paint so the list is interactive immediately; a per-song coverage
+        // call can await the tuner plugin's settings fetch.
+        if (listEl) applyTuningCheck(root, pl, pid, () => renderPlaylistDetail(pid));
         // Album slot editor (▾ per row): pick the slot's chart + arrangement.
         if (listEl && isAlbum) {
             listEl.querySelectorAll('li[data-fn]').forEach((li) => {

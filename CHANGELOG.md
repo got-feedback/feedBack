@@ -79,7 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   style ignores are greyed out with a reason on hover (Custom video and
   Butterchurn use neither; Custom image uses Intensity but not Reactive), so
   a knob is never present-but-inert. The control disappears when a non-3D
-  renderer is selected.
+  renderer is selected. The whole group also greys out while the Venue scene
+  override is active, since none of the three controls reach a mounted style
+  in that mode.
 
 ### Changed
 - **`GET /api/song/{f}?stems=1`** (new, opt-in) — returns the pack's playable stem

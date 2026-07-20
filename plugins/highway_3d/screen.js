@@ -4219,7 +4219,10 @@
             _pcSel.setAttribute('aria-disabled', venue ? 'true' : 'false');
             _pcSel.style.opacity = venue ? '.45' : '1';
             _pcSel.style.cursor = venue ? 'not-allowed' : '';
-            _pcSel.title = venue ? why : '';
+            // Restore the base tooltip when Venue exits — blanking it would
+            // permanently drop the mount-time 'Background style' hint. Matches
+            // how the intensity slider and Reactive pill restore theirs.
+            _pcSel.title = venue ? why : 'Background style';
         }
         if (_pcReactive) {
             _pcPaint(_pcReactive, !!_bgReadGlobal('reactive'), !uses.reactive,

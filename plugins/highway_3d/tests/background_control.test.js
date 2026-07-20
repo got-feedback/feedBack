@@ -479,6 +479,7 @@ test('the Venue override greys the whole Background group', () => {
     assert.equal(ctl.api.intens.disabled, false, 'intensity re-enables when Venue exits');
     assert.equal(ctl.api.react.disabled, false);
     assert.equal(ctl.api.sel.disabled, false, 'the dropdown re-enables when Venue exits');
+    assert.equal(ctl.api.sel.title, 'Background style', 'the base tooltip must come back, not blank');
     assert.equal(ctl.api.sel['aria-describedby'], undefined, 'select drops the reason off-Venue');
     assert.equal(ctl.api.intens['aria-describedby'], undefined, 'intensity drops the reason off-Venue');
     ctl.api._pcRelease();

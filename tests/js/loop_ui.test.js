@@ -10,7 +10,9 @@ const ROOT = path.join(__dirname, '..', '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'static', 'v3', 'index.html'), 'utf8');
 const SECTION = fs.readFileSync(path.join(ROOT, 'static', 'js', 'section-practice.js'), 'utf8');
 const LOOPS = fs.readFileSync(path.join(ROOT, 'static', 'js', 'loops.js'), 'utf8');
+const JUCE_AUDIO = fs.readFileSync(path.join(ROOT, 'static', 'js', 'juce-audio.js'), 'utf8');
 const APP = fs.readFileSync(path.join(ROOT, 'static', 'app.js'), 'utf8');
+const STYLE_CSS = fs.readFileSync(path.join(ROOT, 'static', 'style.css'), 'utf8');
 const V3_CSS = fs.readFileSync(path.join(ROOT, 'static', 'v3', 'v3.css'), 'utf8');
 
 function practiceMarkup() {
@@ -121,6 +123,29 @@ test('returning to A gives the loop indicator one restrained pulse', () => {
     assert.match(pulse, /classList\.add\('is-returning'\)/);
     assert.match(V3_CSS, /\.v3-loop-indicator\.is-returning\s*\{[\s\S]*?v3-loop-return-pulse/);
     assert.match(V3_CSS, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+});
+
+test('selected Section Practice remains visible without replacing loop lifecycle styling', () => {
+    assert.match(SECTION, /classList\.toggle\('section-practice-pill--section-selected',\s*_sectionPracticeMode\)/);
+    assert.match(STYLE_CSS, /\.section-practice-pill\.section-practice-pill--section-selected\s*\{/);
+    assert.match(V3_CSS, /\.section-practice-pill\.section-practice-pill--section-selected/);
+    assert.match(V3_CSS, /\.section-practice-pill\.section-practice-pill--active/);
+    assert.match(V3_CSS, /\.section-practice-pill\.section-practice-pill--armed/);
+});
+
+test('JUCE pause-and-seek restarts an outside loop only when playback follows', () => {
+    const start = JUCE_AUDIO.indexOf('function flushJuceShimBatchNow(');
+    const end = JUCE_AUDIO.indexOf('function scheduleJuceShimBatchFlush(', start);
+    assert.notEqual(start, -1);
+    assert.notEqual(end, -1);
+    const flush = JUCE_AUDIO.slice(start, end);
+    const pauseAndSeekStart = flush.indexOf('if (wantsPause && seekTime !== undefined)');
+    const pauseAndSeekEnd = flush.indexOf('if (wantsPause) {', pauseAndSeekStart);
+    assert.notEqual(pauseAndSeekStart, -1);
+    assert.notEqual(pauseAndSeekEnd, -1);
+    const pauseAndSeek = flush.slice(pauseAndSeekStart, pauseAndSeekEnd);
+    assert.match(pauseAndSeek, /restartActiveLoopWhilePlaying:\s*forUpcomingPlay/);
+    assert.doesNotMatch(pauseAndSeek, /restartActiveLoopWhilePlaying:\s*true/);
 });
 
 test('timeline seeks stay free while paused and restart active loops while playing', () => {

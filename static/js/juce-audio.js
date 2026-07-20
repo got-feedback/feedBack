@@ -900,7 +900,7 @@ export let _resetJuceAudioShimChain = function () {};
         if (wantsPause && seekTime !== undefined) {
             enqueue(async (gen) => {
                 const r = await _audioSeek(seekTime, 'audio-element-shim', {
-                    restartActiveLoopWhilePlaying: true,
+                    restartActiveLoopWhilePlaying: forUpcomingPlay,
                 });
                 if (!r.completed) return; // seek cancelled by teardown
                 if (gen !== _juceShimGen) return;

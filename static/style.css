@@ -77,6 +77,10 @@ html { scroll-behavior: smooth; }
     border-color: rgba(64, 128, 224, 0.5);
     color: #bfdbfe;
 }
+.section-practice-pill.section-practice-pill--section-selected {
+    border-color: #4080e0;
+    color: #93c5fd;
+}
 .section-practice-pill.section-practice-pill--active {
     border-color: #4080e0;
     color: #93c5fd;

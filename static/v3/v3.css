@@ -630,6 +630,7 @@ html[data-scoreboard="off"] #v3-live-performance-hud { display: none !important;
     border-color: rgba(203, 213, 225, .85);
 }
 #v3-player-rail .section-practice-control--v3 .section-practice-pill[aria-expanded="true"],
+#v3-player-rail .section-practice-control--v3 .section-practice-pill.section-practice-pill--section-selected,
 #v3-player-rail .section-practice-control--v3 .section-practice-pill.section-practice-pill--active,
 #v3-player-rail .section-practice-control--v3 .section-practice-pill.section-practice-pill--armed {
     color: #e2e8f0;
@@ -637,6 +638,7 @@ html[data-scoreboard="off"] #v3-live-performance-hud { display: none !important;
     box-shadow: none;
 }
 #v3-player-rail .section-practice-control--v3 .section-practice-pill[aria-expanded="true"] .v3-rail-border,
+#v3-player-rail .section-practice-control--v3 .section-practice-pill.section-practice-pill--section-selected .v3-rail-border,
 #v3-player-rail .section-practice-control--v3 .section-practice-pill.section-practice-pill--active .v3-rail-border,
 #v3-player-rail .section-practice-control--v3 .section-practice-pill.section-practice-pill--armed .v3-rail-border {
     border-color: #22d3ee;
@@ -824,14 +826,14 @@ html[data-scoreboard="off"] #v3-live-performance-hud { display: none !important;
     width: .85rem;
     height: .85rem;
     fill: none;
-    stroke: currentColor;
+    stroke: currentcolor;
     stroke-width: 1.8;
     stroke-linecap: round;
     stroke-linejoin: round;
     opacity: .9;
 }
 .v3-loop-indicator-label {
-    color: currentColor;
+    color: currentcolor;
     font-weight: 750;
     letter-spacing: .08em;
     text-transform: uppercase;

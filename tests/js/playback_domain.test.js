@@ -177,10 +177,11 @@ test('a loop restart promotes an armed observer snapshot without a second loop-s
         loopB: 7,
         currentTime: 3,
     });
-    const loop = diagnosticsSnapshot(window).state.loop;
-    assert.equal(loop.state, 'active');
-    assert.equal(loop.enabled, true);
-    assert.ok(loop.lastRestartAt);
+    const state = diagnosticsSnapshot(window).state;
+    assert.equal(state.loop.state, 'active');
+    assert.equal(state.loop.enabled, true);
+    assert.ok(state.loop.lastRestartAt);
+    assert.equal(state.media.loop.lastRestartAt, state.loop.lastRestartAt);
     assert.equal(loopSetEvents.length, 1);
 });
 

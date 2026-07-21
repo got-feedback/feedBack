@@ -50,10 +50,6 @@ function createFolderSurface(cfg) {
     let _sortDir          = _store('sortDir') || 'asc';
     let _toolbarDone      = false;
     let _hoveredFolder    = null;             // { wrap, hdr, btnGroup } — only innermost folder is active
-    let _previewHover     = _store('previewHover') !== 'false';  // default on; preview a song's audio on hover
-    let _previewTimer     = null;
-    let _previewAudio     = null;   // dedicated element — never touches the main player's <audio>
-    let _previewSeq       = 0;      // invalidates in-flight loads when the hover moves or stops
 
     // ── Core arrangement order (pinned to top of filter panel) ──────────
     const _CORE_ARRANGEMENTS = ['Lead', 'Rhythm', 'Bass', 'Combo'];
@@ -735,119 +731,15 @@ function createFolderSurface(cfg) {
     function _prompt(msg, def) { return _showModal(msg, true,  def || ''); }
 
     // ── Song card (grid view) ───────────────────────────────────────────
-    // ── Preview on hover (opt-in; toggled from the toolbar) ─────────────
-    // Streams the song's own audio into a dedicated <audio> element after the
-    // pointer dwells briefly (so skimming doesn't blast audio), stopping on
-    // leave. Shows an equalizer "now playing" indicator over the art. Never
-    // calls playSong or touches the main player's <audio> element.
-    var _HOVER_PREVIEW_DELAY_MS = 800;   // dwell before preview — long enough that a click/drag doesn't trigger it
-    var _previewIndHost = null;             // art element currently showing the indicator
-
-    // Delegate to the song_preview plugin (the canonical preview subsystem): it
-    // resolves the clip from the pack's manifest `preview:` key (falling back to
-    // the default stem), serves it with Range support, and backfills a missing
-    // preview.ogg. If song_preview isn't installed the endpoint 404s and the
-    // audio's onerror clears the indicator — preview no-ops, nothing breaks.
-    function _previewUrl(song) {
-        if (!song || !song.filename) return null;
-        return '/api/plugins/song_preview/audio?file=' + encodeURIComponent(song.filename);
-    }
-
-    function _ensurePreviewStyle() {
-        if (document.getElementById('fl-preview-style')) return;
-        var st = document.createElement('style');
-        st.id = 'fl-preview-style';
-        st.textContent =
-            '.fl-preview-ind{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:4;pointer-events:none;animation:fl-in .28s ease both;}' +
-            '.fl-wf{display:flex;align-items:center;gap:2px;height:55%;max-height:22px;opacity:.55;transition:opacity .2s ease;}' +
-            '.fl-preview-ind.playing .fl-wf{opacity:1;}' +
-            '.fl-wf i{display:block;width:2px;height:100%;background:#60a5fa;border-radius:2px;transform:scaleY(.4);transform-origin:center;}' +
-            '.fl-preview-ind.playing .fl-wf i{animation-name:fl-wf;animation-duration:1s;animation-timing-function:ease-in-out;animation-iteration-count:infinite;will-change:transform;}' +
-            '.fl-wf i:nth-child(odd){animation-delay:-.2s}.fl-wf i:nth-child(3n){animation-delay:-.4s}.fl-wf i:nth-child(4n){animation-delay:-.1s}' +
-            '@keyframes fl-wf{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}' +
-            '@keyframes fl-in{from{opacity:0}to{opacity:1}}';
-        document.head.appendChild(st);
-    }
-    function _showIndicator(host) {
-        _clearIndicator();
-        if (!host) return;
-        _ensurePreviewStyle();
-        var ind = document.createElement('div');
-        ind.className = 'fl-preview-ind';
-        ind.innerHTML = '<span class="fl-wf"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>';
-        host.appendChild(ind);
-        _previewIndHost = host;
-    }
-    function _markIndicatorPlaying() {
-        var ind = _previewIndHost && _previewIndHost.querySelector('.fl-preview-ind');
-        if (ind) ind.classList.add('playing');
-    }
-    function _clearIndicator() {
-        if (!_previewIndHost) return;
-        var ind = _previewIndHost.querySelector('.fl-preview-ind');
-        if (ind) ind.remove();
-        _previewIndHost = null;
-    }
-
-    function _previewEl() {
-        if (_previewAudio) return _previewAudio;
-        var a = document.createElement('audio');
-        a.preload = 'none';
-        a.volume  = 0.7;
-        _previewAudio = a;
-        return a;
-    }
-    function _stopPreview() {
-        _previewSeq++;                       // any pending load/error/playing handler is now stale
-        _clearIndicator();
-        if (_previewAudio) {
-            _previewAudio.onerror = _previewAudio.onloadedmetadata = _previewAudio.onplaying = null;
-            try { _previewAudio.pause(); } catch (_) {}
-            _previewAudio.removeAttribute('src');
-            try { _previewAudio.load(); } catch (_) {}
-        }
-    }
-    function _startPreview(song, host) {
-        // Only packs the backend flagged with a baked preview are requested at
-        // all — so hover never hits song_preview's 404 for a preview-less pack
-        // (which would log a console error). Play from 0; the clip is short.
-        if (!song || !song.has_preview) return;
-        var url = _previewUrl(song);
-        if (!url) return;
-        var a   = _previewEl();
-        var seq = ++_previewSeq;
-        _showIndicator(host);
-        a.onerror          = function () { if (seq === _previewSeq) _clearIndicator(); };
-        a.onloadedmetadata = function () { if (seq === _previewSeq) a.play().catch(function () {}); };
-        a.onplaying        = function () { if (seq === _previewSeq) _markIndicatorPlaying(); };
-        a.src = url;
-        a.load();
-    }
-    function _armHoverPreview(el, song, host) {
-        el.addEventListener('mouseenter', function () {
-            if (!_previewHover || _dragState) return;   // don't preview while dragging a song
-            clearTimeout(_previewTimer);
-            _previewTimer = setTimeout(function () {
-                if (_previewHover && !_dragState) _startPreview(song, host);
-            }, _HOVER_PREVIEW_DELAY_MS);
-        });
-        el.addEventListener('mouseleave', function () {
-            clearTimeout(_previewTimer);
-            _stopPreview();
-        });
-        // A click or drag-start cancels a pending preview AND stops one that's
-        // already playing, so it never runs mid-interaction.
-        el.addEventListener('mousedown', function () { clearTimeout(_previewTimer); _stopPreview(); });
-    }
-
     function _songCard(song, folderName) {
         var card = document.createElement('div');
         card.className = 'flex flex-col rounded-lg overflow-hidden cursor-pointer group transition-transform duration-100 hover:scale-105';
         card.style.background = '#1a1d2e';
-        card.dataset.filename  = song.filename;
+        card.dataset.fn = song.filename;   // data-fn (raw): song_preview's hover loop finds cards by this
 
         var artWrap = document.createElement('div');
         artWrap.style.cssText = 'position:relative; width:100%; padding-bottom:100%; background:#111827; overflow:hidden;';
+        artWrap.setAttribute('data-v3-play', '');   // the playable surface song_preview overlays its indicator on
         var img = document.createElement('img');
         img.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover;';
         img.alt = ''; img.loading = 'lazy';
@@ -906,7 +798,6 @@ function createFolderSurface(cfg) {
             if (typeof window.playSong === 'function') window.playSong(song.filename);
         });
         _makeDraggable(card, song, folderName);
-        _armHoverPreview(card, song, artWrap);
         return card;
     }
 
@@ -914,10 +805,11 @@ function createFolderSurface(cfg) {
     function _songRow(song, folderName) {
         var row = document.createElement('div');
         row.className = 'flex items-center gap-3 px-3 py-2 rounded cursor-pointer hover:bg-dark-500 group transition-colors duration-100';
-        row.dataset.filename = song.filename;
+        row.dataset.fn = song.filename;   // data-fn (raw): song_preview's hover loop finds rows by this
 
         var thumb = document.createElement('div');
         thumb.style.cssText = 'width:36px; height:36px; border-radius:4px; overflow:hidden; background:#111827; flex-shrink:0; position:relative;';
+        thumb.setAttribute('data-v3-play', '');   // marks the row previewable for song_preview
         var tImg = document.createElement('img');
         tImg.loading = 'lazy';
         tImg.src = '/api/song/' + song.filename.split('/').map(encodeURIComponent).join('/') + '/art';
@@ -977,7 +869,6 @@ function createFolderSurface(cfg) {
             if (typeof window.playSong === 'function') window.playSong(song.filename);
         });
         _makeDraggable(row, song, folderName);
-        _armHoverPreview(row, song, thumb);
         return row;
     }
 
@@ -1695,30 +1586,10 @@ function createFolderSurface(cfg) {
         );
         colBtn.addEventListener('click', _collapseAll);
 
-        // Preview-on-hover toggle (persisted per surface via cfg.storePrefix)
-        var previewBtn = document.createElement('button');
-        previewBtn.style.cssText = 'display:flex; align-items:center; gap:6px; padding:7px 12px; border:1px solid #374151; border-radius:10px; cursor:pointer; font-size:13px; white-space:nowrap; transition:color 0.1s, background 0.1s, border-color 0.1s;';
-        previewBtn.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path d="M6 4l10 6-10 6V4z"/></svg>';
-        function _applyPreviewBtn() {
-            previewBtn.style.background  = _previewHover ? '#1d4ed8' : '#171a22';
-            previewBtn.style.color       = _previewHover ? '#ffffff' : '#565f6d';
-            previewBtn.style.borderColor = _previewHover ? '#3b82f6' : '#2a303b';
-            previewBtn.style.opacity     = _previewHover ? '1' : '0.5';
-            previewBtn.title = 'Preview song on hover: ' + (_previewHover ? 'on' : 'off');
-        }
-        _applyPreviewBtn();
-        previewBtn.addEventListener('click', function () {
-            _previewHover = !_previewHover;
-            _store('previewHover', _previewHover ? 'true' : 'false');
-            if (!_previewHover) { clearTimeout(_previewTimer); _stopPreview(); }
-            _applyPreviewBtn();
-        });
-
         ctrl.appendChild(viewGroup);
         ctrl.appendChild(newBtn);
         ctrl.appendChild(expBtn);
         ctrl.appendChild(colBtn);
-        ctrl.appendChild(previewBtn);
 
         _toolbarDone = true;
     }
@@ -1735,7 +1606,6 @@ function createFolderSurface(cfg) {
     // ── Unload (lib surface) ────────────────────────────────────────────
     function _unload() {
         _clearVirtualLists();   // don't leave scroll listeners behind on teardown
-        _stopPreview();         // silence any in-progress hover preview
         if (!cfg.searchInputId) return;
         var el = _el(cfg.searchInputId);
         if (el) el.style.maxWidth = '';
@@ -1839,8 +1709,16 @@ function createFolderSurface(cfg) {
         init: _init,
         onScreenChanged: _onScreenChanged,
         render: _render,
-        // Pure helpers, exposed for tests (no DOM needed).
-        __test: { visibleWindow: _visibleWindow, VIRTUAL_MIN: VIRTUAL_MIN, VIRTUAL_BUFFER: VIRTUAL_BUFFER, previewUrl: _previewUrl },
+        // Helpers exposed for tests. visibleWindow is pure; songCard/songRow
+        // need a DOM (the tests supply a minimal element mock) and pin the
+        // song_preview integration markup (data-fn + a data-v3-play surface).
+        __test: {
+            visibleWindow: _visibleWindow,
+            VIRTUAL_MIN: VIRTUAL_MIN,
+            VIRTUAL_BUFFER: VIRTUAL_BUFFER,
+            songCard: _songCard,
+            songRow: _songRow,
+        },
     };
 }
 

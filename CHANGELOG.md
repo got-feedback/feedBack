@@ -82,13 +82,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renderer is selected. The whole group also greys out while the Venue scene
   override is active, since none of the three controls reach a mounted style
   in that mode.
-- **Folder Library — preview song on hover.** The Folders library view gains a
-  toolbar toggle (on by default): hovering a song ~0.8s previews its audio in
-  place, with a waveform indicator over the artwork, and stops on leave. Uses a
-  dedicated `<audio>` element (never the main player) and delegates preview
-  resolution/serving to the `song_preview` plugin (manifest `preview:` key,
-  backfill, Range) rather than resolving pack audio itself. The preference
-  persists per surface in `localStorage`.
 
 ### Changed
 - **`GET /api/song/{f}?stems=1`** (new, opt-in) — returns the pack's playable stem
@@ -144,6 +137,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     spec shape (moves `original/full.ogg` → `stems/full.ogg`, adds the `full` stem
     at `default: off`, drops the key); the fallback and the aliases are removed once
     they are migrated (#945).
+- **Folder Library previews on hover, like the grid and list views.** The Folders
+  view's cards and rows now carry the standard `data-fn` / `data-v3-play` markup,
+  so the existing **Song Preview** plugin previews them on hover exactly like the
+  other views (same audio, same behaviour) — Folder Library ships no preview code
+  of its own.
 
 ### Added
 - **Genres fall back to MusicBrainz enrichment** — the effective genre now

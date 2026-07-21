@@ -153,15 +153,14 @@ Each song object (built by `_meta()`):
   "added": 1748132400.0,
   "arrangements": ["Lead", "Rhythm", "Bass"],
   "stems": ["Drums", "Bass", "Vocals"],
-  "lyrics": true,
-  "has_preview": true
+  "lyrics": true
 }
 ```
 
 - `filename` is the full relative path from the DLC root — pass it directly to `window.playSong()`.
 - `added` is a Unix timestamp (float, seconds) from `stat().st_mtime` — convert with `new Date(added * 1000)`. Always recomputed fresh (it changes when a file moves), even on a metadata-cache hit.
 - `arrangements` / `stems` are flat lists of **strings**, even though `extract_meta()` returns them as objects.
-- `has_preview` is set from the pack's manifest `preview:` key (via core `load_manifest`) — `true` iff `song_preview` will actually serve a preview. The frontend previews **only** `has_preview` songs, so hover never requests (and 404-logs) a preview-less pack. Hover-preview audio itself is **not** resolved here — it comes from the `song_preview` endpoint (see Preview on Hover).
+- Hover-preview isn't resolved here at all — the cards just carry `data-fn`/`data-v3-play` markup and the `song_preview` plugin handles it (see Preview on Hover).
 
 ### extract_meta returns arrangements/stems as objects, not strings
 
@@ -333,17 +332,16 @@ Drag-and-drop uses **pointer events** (mousedown/mousemove/mouseup), not the HTM
 
 ## Preview on Hover
 
-Hovering a song for `_HOVER_PREVIEW_DELAY_MS` (800 ms) plays a short audio preview in place — no navigation to the player. Toggled by a play-icon toolbar button (`_injectToolbar`); **on by default** (`_previewHover`, persisted per surface under `<cfg.storePrefix>previewHover` — only an explicit stored `'false'` disables it).
+The Folder Library does **not** implement hover-preview itself — the `song_preview` plugin does, for the whole app. Its hover loop finds song elements by the selector `#v3-songs [data-fn]` (with a `[data-v3-play]` playable surface) and its `MutationObserver` watches the `#v3-songs` subtree — and the folder view (`#lib-folder-tree`) renders **inside** `#v3-songs`. So all folder_library has to do is give each card/row the standard markup:
 
-- **Audio** — a dedicated `_previewAudio` `<audio>` element (never the main player's), played **from 0**. `_startPreview` runs **only when `song.has_preview`** (a backend flag from the manifest `preview:` key), so a preview-less pack is never requested — that's what keeps hover from logging 404s (a HEAD/`<audio>` request to `song_preview`'s 404 shows in the console even via `fetch`, because a plugin wraps `window.fetch`). The URL (`_previewUrl`) points at the **`song_preview` plugin** — `/api/plugins/song_preview/audio?file=<filename>` — the same endpoint the grid/list previews use. `song_preview` serves the clip **strictly** from the manifest `preview:` key (short baked clip, Range); there is **no stem fallback by design** (a full-length stem isn't a preview), so packs without a baked preview — hand-authored, most tutorials — don't preview until `song_preview`'s backfill generates one. Don't seek by `song.duration` — the clip is short, so a full-song offset lands past its end and nothing plays.
-- **Sequence guard** — `_previewSeq` is bumped on every start/stop, so a slow load that resolves after the pointer has moved on is ignored.
-- **Drag / click safety** — `mouseenter` skips arming while a drag is in progress (`_dragState` non-null); `mousedown` clears the pending dwell timer **and** `_stopPreview()`s any already-playing one, so grabbing a song to drag (or clicking to play) never leaves a preview running.
-- **Indicator** — a waveform overlay (`.fl-wf`, 9 bars) over the art, drawn via a one-time injected `<style>` (`_ensurePreviewStyle`). It **fades in** (`fl-in`) to avoid an abrupt pop, and the bars animate only once audio actually fires (the `.playing` class, set on the `playing` event). Perf: bars animate with `transform: scaleY` + `will-change: transform` (GPU-composited, no per-frame JS), only while playing. `_showIndicator` / `_markIndicatorPlaying` / `_clearIndicator` manage it against `_previewIndHost`.
-- **CSS gotcha** — set the bar animation with **longhand** `animation-name`/`-duration`/… , not the `animation` shorthand: the shorthand resets `animation-delay` to 0 and (being higher-specificity) overrode the per-bar `nth-child` delays, making every bar move in sync.
+- **`_songCard`** — `card.dataset.fn = song.filename` (raw filename) + `data-v3-play` on the art wrap (the surface `song_preview` overlays its indicator on).
+- **`_songRow`** — `row.dataset.fn = song.filename` + `data-v3-play` on the thumb.
+
+`song_preview` then previews folder view exactly like the grid/list — same audio (its `/audio` endpoint), same availability/404 handling, same indicator — with **zero preview code here**. If you change the card/row structure, keep `data-fn` (raw, not URL-encoded) and a `[data-v3-play]` descendant, or `song_preview` will stop recognising the cards.
 
 ## Roadmap
 
-Implemented since the original release: **nested subfolders** (recursive tree + create-inside-folder), drag-and-drop, sort, advanced filtering, server-side tree filtering synced to the host library, the warm metadata cache, and **preview-on-hover** (see above).
+Implemented since the original release: **nested subfolders** (recursive tree + create-inside-folder), drag-and-drop, sort, advanced filtering, server-side tree filtering synced to the host library, and the warm metadata cache. Hover-preview is provided by the `song_preview` plugin via the `data-fn` markup above (not implemented here).
 
 Not yet implemented, in rough priority order:
 

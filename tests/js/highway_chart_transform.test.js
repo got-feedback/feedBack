@@ -316,7 +316,7 @@ test('anchor zoom helpers read the staged anchors first', () => {
 test('init and reconnect clear the stage but keep the provider', () => {
     const src = fs.readFileSync(highwayJs, 'utf8');
     const initBody = extractBlock(src, 'init(canvasEl, container)');
-    const reconnectBody = extractBlock(src, 'reconnect(filename, arrangement)');
+    const reconnectBody = extractBlock(src, 'reconnect(filename, arrangement, drumPart)');
     assert.match(initBody, /_clearChartTransformStage\(\);/, 'init clears the stage');
     assert.match(reconnectBody, /_clearChartTransformStage\(\);/, 'reconnect clears the stage');
     assert.ok(!/init\([\s\S]{0,2000}_xfProvider = null/.test(src.slice(src.indexOf('const api = {'))),

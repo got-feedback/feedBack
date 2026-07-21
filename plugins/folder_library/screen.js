@@ -50,7 +50,7 @@ function createFolderSurface(cfg) {
     let _sortDir          = _store('sortDir') || 'asc';
     let _toolbarDone      = false;
     let _hoveredFolder    = null;             // { wrap, hdr, btnGroup } — only innermost folder is active
-    let _previewHover     = _store('previewHover') === 'true';  // opt-in: preview a song's audio on hover
+    let _previewHover     = _store('previewHover') !== 'false';  // default on; preview a song's audio on hover
     let _previewTimer     = null;
     let _previewAudio     = null;   // dedicated element — never touches the main player's <audio>
     let _previewSeq       = 0;      // invalidates in-flight loads when the hover moves or stops
@@ -740,7 +740,7 @@ function createFolderSurface(cfg) {
     // pointer dwells briefly (so skimming doesn't blast audio), stopping on
     // leave. Shows an equalizer "now playing" indicator over the art. Never
     // calls playSong or touches the main player's <audio> element.
-    var _HOVER_PREVIEW_DELAY_MS = 500;
+    var _HOVER_PREVIEW_DELAY_MS = 800;   // dwell before preview — long enough that a click/drag doesn't trigger it
     var _previewIndHost = null;             // art element currently showing the indicator
 
     // The backend resolves the correct in-pack audio member (song.audio_member),
@@ -757,13 +757,14 @@ function createFolderSurface(cfg) {
         var st = document.createElement('style');
         st.id = 'fl-preview-style';
         st.textContent =
-            '.fl-preview-ind{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:4;pointer-events:none;}' +
-            '.fl-eq{display:flex;align-items:flex-end;gap:2px;height:45%;max-height:22px;opacity:.55;}' +
-            '.fl-preview-ind.playing .fl-eq{opacity:1;}' +
-            '.fl-eq i{display:block;width:3px;height:25%;background:#60a5fa;border-radius:1px;}' +
-            '.fl-preview-ind.playing .fl-eq i{animation:fl-eq-b .8s ease-in-out infinite;}' +
-            '.fl-eq i:nth-child(2){animation-delay:.15s;}.fl-eq i:nth-child(3){animation-delay:.3s;}.fl-eq i:nth-child(4){animation-delay:.45s;}' +
-            '@keyframes fl-eq-b{0%,100%{height:25%}50%{height:100%}}';
+            '.fl-preview-ind{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:4;pointer-events:none;animation:fl-in .28s ease both;}' +
+            '.fl-wf{display:flex;align-items:center;gap:2px;height:55%;max-height:22px;opacity:.55;transition:opacity .2s ease;}' +
+            '.fl-preview-ind.playing .fl-wf{opacity:1;}' +
+            '.fl-wf i{display:block;width:2px;height:100%;background:#60a5fa;border-radius:2px;transform:scaleY(.4);transform-origin:center;}' +
+            '.fl-preview-ind.playing .fl-wf i{animation-name:fl-wf;animation-duration:1s;animation-timing-function:ease-in-out;animation-iteration-count:infinite;will-change:transform;}' +
+            '.fl-wf i:nth-child(odd){animation-delay:-.2s}.fl-wf i:nth-child(3n){animation-delay:-.4s}.fl-wf i:nth-child(4n){animation-delay:-.1s}' +
+            '@keyframes fl-wf{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}' +
+            '@keyframes fl-in{from{opacity:0}to{opacity:1}}';
         document.head.appendChild(st);
     }
     function _showIndicator(host) {
@@ -772,7 +773,7 @@ function createFolderSurface(cfg) {
         _ensurePreviewStyle();
         var ind = document.createElement('div');
         ind.className = 'fl-preview-ind';
-        ind.innerHTML = '<span class="fl-eq"><i></i><i></i><i></i><i></i></span>';
+        ind.innerHTML = '<span class="fl-wf"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>';
         host.appendChild(ind);
         _previewIndHost = host;
     }
@@ -823,16 +824,19 @@ function createFolderSurface(cfg) {
     }
     function _armHoverPreview(el, song, host) {
         el.addEventListener('mouseenter', function () {
-            if (!_previewHover) return;
+            if (!_previewHover || _dragState) return;   // don't preview while dragging a song
             clearTimeout(_previewTimer);
             _previewTimer = setTimeout(function () {
-                if (_previewHover) _startPreview(song, host);
+                if (_previewHover && !_dragState) _startPreview(song, host);
             }, _HOVER_PREVIEW_DELAY_MS);
         });
         el.addEventListener('mouseleave', function () {
             clearTimeout(_previewTimer);
             _stopPreview();
         });
+        // A click or drag-start cancels a pending preview AND stops one that's
+        // already playing, so it never runs mid-interaction.
+        el.addEventListener('mousedown', function () { clearTimeout(_previewTimer); _stopPreview(); });
     }
 
     function _songCard(song, folderName) {
@@ -1695,10 +1699,11 @@ function createFolderSurface(cfg) {
         previewBtn.style.cssText = 'display:flex; align-items:center; gap:6px; padding:7px 12px; border:1px solid #374151; border-radius:10px; cursor:pointer; font-size:13px; white-space:nowrap; transition:color 0.1s, background 0.1s, border-color 0.1s;';
         previewBtn.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path d="M6 4l10 6-10 6V4z"/></svg>';
         function _applyPreviewBtn() {
-            previewBtn.style.background  = _previewHover ? '#1d4ed8' : '#1f2937';
-            previewBtn.style.color       = _previewHover ? '#ffffff' : '#9ca3af';
-            previewBtn.style.borderColor = _previewHover ? '#3b82f6' : '#374151';
-            previewBtn.title = 'Preview on hover: ' + (_previewHover ? 'on' : 'off');
+            previewBtn.style.background  = _previewHover ? '#1d4ed8' : '#171a22';
+            previewBtn.style.color       = _previewHover ? '#ffffff' : '#565f6d';
+            previewBtn.style.borderColor = _previewHover ? '#3b82f6' : '#2a303b';
+            previewBtn.style.opacity     = _previewHover ? '1' : '0.5';
+            previewBtn.title = 'Preview song on hover: ' + (_previewHover ? 'on' : 'off');
         }
         _applyPreviewBtn();
         previewBtn.addEventListener('click', function () {

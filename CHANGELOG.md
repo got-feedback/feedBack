@@ -8,12 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Folder Library — preview on hover.** The Folders library view gains an
-  optional ▶ toolbar toggle (off by default): hovering a song ~0.5s previews
-  its audio in place, with an equalizer indicator over the artwork, and stops
-  on leave. Uses a dedicated `<audio>` element (never the main player) and
-  falls back across the pack's audio members so every song previews. The
-  preference persists per surface in `localStorage`.
 - **`chart-transform` capability domain (#952)** — plugins can now remap the
   chart before rendering and scoring through a core-owned provider
   coordinator. Synchronous transforms run after difficulty filtering; host
@@ -88,6 +82,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renderer is selected. The whole group also greys out while the Venue scene
   override is active, since none of the three controls reach a mounted style
   in that mode.
+- **Folder Library — preview song on hover.** The Folders library view gains a
+  toolbar toggle (on by default): hovering a song ~0.8s previews its audio in
+  place, with a waveform indicator over the artwork, and stops on leave. Uses a
+  dedicated `<audio>` element (never the main player) and the backend resolves
+  each pack's audio member so every song previews in one request. The
+  preference persists per surface in `localStorage`.
 
 ### Changed
 - **`GET /api/song/{f}?stems=1`** (new, opt-in) — returns the pack's playable stem

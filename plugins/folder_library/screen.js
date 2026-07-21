@@ -743,11 +743,13 @@ function createFolderSurface(cfg) {
     var _HOVER_PREVIEW_DELAY_MS = 500;
     var _previewIndHost = null;             // art element currently showing the indicator
 
-    // Pack audio layout varies: a dedicated preview.ogg (most songs), a single
-    // stems/full.ogg mix, or tutorials' stems/audio.mp3 — try in that order.
-    function _previewCandidates(song) {
-        var base = '/api/sloppak/' + song.filename.split('/').map(encodeURIComponent).join('/') + '/file/';
-        return [base + 'preview.ogg', base + 'stems/full.ogg', base + 'stems/audio.mp3'];
+    // The backend resolves the correct in-pack audio member (song.audio_member),
+    // so we preview with a single request — no probing / 404s. Null = no audio.
+    function _previewUrl(song) {
+        if (!song || !song.audio_member) return null;
+        var enc = song.filename.split('/').map(encodeURIComponent).join('/');
+        var mem = song.audio_member.split('/').map(encodeURIComponent).join('/');
+        return '/api/sloppak/' + enc + '/file/' + mem;
     }
 
     function _ensurePreviewStyle() {
@@ -808,24 +810,16 @@ function createFolderSurface(cfg) {
         // full-track fallbacks are fine from the start. (Seeking by a fraction
         // of song.duration broke playback whenever the offset landed past the
         // end of a short preview clip.)
-        var urls = _previewCandidates(song);
-        var a    = _previewEl();
-        var seq  = ++_previewSeq;
-        var idx  = 0;
+        var url = _previewUrl(song);
+        if (!url) return;                    // pack carries no previewable audio
+        var a   = _previewEl();
+        var seq = ++_previewSeq;
         _showIndicator(host);
-        function _tryNext() {
-            if (seq !== _previewSeq) return;
-            if (idx >= urls.length) { _clearIndicator(); return; }  // no playable member
-            a.src = urls[idx++];
-            a.load();
-        }
-        a.onerror = function () { if (seq === _previewSeq) _tryNext(); };   // candidate 404/decode → next
-        a.onloadedmetadata = function () {
-            if (seq !== _previewSeq) return;
-            a.play().catch(function () {});
-        };
-        a.onplaying = function () { if (seq === _previewSeq) _markIndicatorPlaying(); };
-        _tryNext();
+        a.onerror         = function () { if (seq === _previewSeq) _clearIndicator(); };
+        a.onloadedmetadata = function () { if (seq === _previewSeq) a.play().catch(function () {}); };
+        a.onplaying       = function () { if (seq === _previewSeq) _markIndicatorPlaying(); };
+        a.src = url;
+        a.load();
     }
     function _armHoverPreview(el, song, host) {
         el.addEventListener('mouseenter', function () {

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 import shutil
 import re
+import zipfile
 
 
 # ── Pure, testable helpers ─────────────────────────────────────────────────
@@ -114,6 +115,37 @@ def setup(app, context):
         sloppak = dlc / "sloppak"
         return sloppak if sloppak.exists() else dlc
 
+    def _audio_member(p: Path):
+        """Best in-pack audio file for hover-preview, as a pack-relative path.
+
+        Prefers a dedicated preview clip, then a full mix, then any stem — so the
+        frontend can preview with a single request instead of probing (and 404ing)
+        a hardcoded path. Returns None when the pack carries no audio.
+        """
+        prefer = ("preview.ogg", "stems/full.ogg", "stems/audio.mp3",
+                  "stems/audio.ogg", "audio.mp3", "audio.ogg", "full.ogg")
+        audio_ext = (".ogg", ".mp3", ".opus", ".m4a", ".oga")
+        try:
+            if p.is_dir():
+                names = ["/".join(f.relative_to(p).parts) for f in p.rglob("*") if f.is_file()]
+            else:
+                with zipfile.ZipFile(p) as z:
+                    names = z.namelist()
+        except Exception:
+            return None
+        nameset = set(names)
+        for m in prefer:
+            if m in nameset:
+                return m
+        for n in names:                    # any stem audio
+            low = n.lower()
+            if low.startswith("stems/") and low.endswith(audio_ext):
+                return n
+        for n in names:                    # any audio at all
+            if n.lower().endswith(audio_ext):
+                return n
+        return None
+
     def _meta(p: Path, dlc: Path) -> dict:
         # filename and added are always computed fresh — they change when files move.
         try:
@@ -136,7 +168,8 @@ def setup(app, context):
 
         # Cache miss — run the expensive extract.
         m = {"title": None, "artist": None, "album": None, "duration": None,
-             "year": None, "tuning": None, "arrangements": [], "stems": [], "lyrics": False}
+             "year": None, "tuning": None, "arrangements": [], "stems": [], "lyrics": False,
+             "audio_member": _audio_member(p)}
         try:
             raw = context["extract_meta"](p)
             if raw:

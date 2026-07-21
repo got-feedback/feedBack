@@ -83,8 +83,23 @@ def test_download_without_published_pack_404s(client):
 
 def test_download_locked_venue_403s(client, monkeypatch):
     club = career_routes._venue("club")
-    monkeypatch.setitem(club, "pack", {"url": "http://x/pack.zip", "sha256": "0" * 64})
+    monkeypatch.setitem(club, "pack", {"url": "http://x/pack.zip", "sha256": "0" * 64, "bytes": 123})
     assert client.post("/api/plugins/career/packs/club/download").status_code == 403
+
+
+def test_placeholder_pack_is_not_offered_until_published(client, monkeypatch):
+    # A committed manifest carries a 0-byte placeholder until its release is
+    # published. Such a pack must not be offered (has_pack False) and its
+    # download must 404 — else the UI shows a button that can only fail.
+    monkeypatch.setattr(career_routes, "_bundled", lambda vid: False)
+    club = career_routes._venue("club")
+    monkeypatch.setitem(club, "pack",
+                        {"url": "http://x/c.zip", "sha256": "0" * 64, "bytes": 0})
+    by_id = {v["id"]: v for v in client.get("/api/plugins/career/state").json()["venues"]}
+    assert by_id["club"]["has_pack"] is False          # placeholder → not offered
+    assert by_id["arena"]["has_pack"] is True          # arena ships real bytes
+    # Even forced, an unpublished pack won't start a download.
+    assert client.post("/api/plugins/career/packs/club/download").status_code == 404
 
 
 def test_bundled_bar_pack_is_installed_and_served(client):
@@ -196,7 +211,7 @@ def test_content_packs_build_roundtrips_through_download(client, tmp_path):
 
 def test_double_download_409s(client, monkeypatch):
     bar = career_routes._venue("bar")
-    monkeypatch.setitem(bar, "pack", {"url": "http://x/pack.zip", "sha256": "0" * 64})
+    monkeypatch.setitem(bar, "pack", {"url": "http://x/pack.zip", "sha256": "0" * 64, "bytes": 123})
     # Pretend one is already running.
     career_routes._state["downloads"]["bar"] = {"status": "running"}
     assert client.post("/api/plugins/career/packs/bar/download").status_code == 409

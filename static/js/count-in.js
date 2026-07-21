@@ -1,4 +1,4 @@
-// Count-in — the 1-2-3-4 click before playback, plus the song-credits overlay that
+// Count-in — the one-bar click before playback, plus the song-credits overlay that
 // shares its lifecycle and timers.
 //
 // The third slice out of app.js's strongly-connected core, and the first that had to
@@ -38,6 +38,75 @@ export function playClick(high = false) {
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.08);
     osc.start(_audioCtx.currentTime);
     osc.stop(_audioCtx.currentTime + 0.08);
+}
+
+// ── How many clicks lead into `startT` ──────────────────────────────────
+// One bar, derived from the song_timeline beats: `window.highway.getBeats()`
+// is the only meter data the frontend holds (the `time_signatures` map is
+// streamed to plugins, not stored here). Beats carry `measure >= 0` on
+// downbeats, so the gap between consecutive downbeats IS the bar length —
+// which is why a 3/4 song no longer gets four clicks.
+//
+// A first bar shorter than that is a pickup (anacrusis), and the count is
+// shortened by its length so the music enters on its real beat: a 1-beat
+// pickup in 4/4 counts "1 2 3" and the pickup lands on 4. Counting a full
+// four there puts the pickup where the downbeat belongs, and the player comes
+// in a beat late for the whole song.
+export function countInBeats(startT) {
+    const DEFAULT = 4;   // pre-chart, synthetic highway (minigames), or no beats
+    let beats = null;
+    try {
+        if (window.highway && typeof window.highway.getBeats === 'function') {
+            beats = window.highway.getBeats();
+        }
+    } catch (_) { /* fall through to the default */ }
+    if (!Array.isArray(beats) || beats.length < 2) return DEFAULT;
+
+    const downbeats = [];
+    for (let i = 0; i < beats.length; i++) {
+        if (beats[i] && beats[i].measure >= 0) downbeats.push(i);
+    }
+    if (downbeats.length < 2) return DEFAULT;
+
+    // Bar length = the most common gap between downbeats. The mode rather than
+    // the first gap: it ignores a short pickup bar and a short final bar, and
+    // survives an isolated meter change mid-song. The beats trailing the last
+    // downbeat count as a candidate too — otherwise a song of pickup + one bar
+    // offers only the pickup's own gap and the count collapses to it.
+    const gapCounts = new Map();
+    const addGap = (gap) => gapCounts.set(gap, (gapCounts.get(gap) || 0) + 1);
+    for (let k = 1; k < downbeats.length; k++) {
+        addGap(downbeats[k] - downbeats[k - 1]);
+    }
+    addGap(beats.length - downbeats[downbeats.length - 1]);
+    let barLen = DEFAULT;
+    let bestCount = 0;
+    for (const [gap, n] of gapCounts) {
+        // Tie → the longer bar: a pickup's short gap must not outvote the
+        // real meter when the song is too short to repeat it.
+        if (n > bestCount || (n === bestCount && gap > barLen)) {
+            barLen = gap;
+            bestCount = n;
+        }
+    }
+
+    // The beat playback resumes on. The 50 ms tolerance matches the seek
+    // precision the loop-wrap path already assumes.
+    const startIdx = beats.findIndex(b => b && b.time >= startT - 0.05);
+    if (startIdx === -1) return barLen;                  // past the last beat
+    if (!(beats[startIdx].measure >= 0)) return barLen;  // resuming mid-bar
+
+    const nextDownbeat = downbeats.find(d => d > startIdx);
+    if (nextDownbeat === undefined) return barLen;       // the last downbeat
+    const thisBar = nextDownbeat - startIdx;
+    if (thisBar <= 0) return barLen;
+
+    // Only the song's FIRST bar can be a pickup. A short bar anywhere else is
+    // a meter change (or a truncated final bar), and counting it as a pickup
+    // would leave almost no count-in at all — so elsewhere we simply count
+    // that bar's own length, which is also what a mid-song meter change wants.
+    if (startIdx === downbeats[0] && thisBar < barLen) return barLen - thisBar;
+    return thisBar;
 }
 
 let _countingIn = false;
@@ -273,12 +342,15 @@ export async function startCountIn(opts = {}) {
     function beginCount() {
         const bpm = window.highway.getBPM(loopA);
         const beatInterval = 60 / bpm;
+        // One bar of the meter at loop A (a short bar there is counted short,
+        // same as the song-start pickup).
+        const clicks = countInBeats(loopA);
         let count = 0;
 
         function tick() {
             if (gen !== _countInGen) return; // teardown mid-count
             count++;
-            if (count > 4) {
+            if (count > clicks) {
                 hideCountOverlay();
                 _countingIn = false;
                 if (window._juceMode) {
@@ -320,7 +392,7 @@ export async function startCountIn(opts = {}) {
     }
 }
 
-// Start-of-song count-in: a 4-beat click before playback begins, gated by the
+// Start-of-song count-in: a one-bar click before playback begins, gated by the
 // "Countdown before song" setting (Gameplay tab). Mirrors the loop count-in's
 // overlay + click + gen-token cancellation, but counts from the song's current
 // position (0 at song start) with no loop A/B rewind. startCountIn() is loop-
@@ -340,14 +412,15 @@ export async function startSongCountIn() {
     if (gen !== _countInGen) return; // teardown during pause
     const startT = S.lastAudioTime || 0;
     let bpm = window.highway.getBPM(startT);
-    // Pre-chart / malformed-tempo fallback: 4 beats at 120 BPM (500 ms each).
+    // Pre-chart / malformed-tempo fallback: 120 BPM (500 ms per beat).
     if (!Number.isFinite(bpm) || bpm <= 0) bpm = 120;
     const beatInterval = 60 / bpm;
+    const clicks = countInBeats(startT);
     let count = 0;
     function tick() {
         if (gen !== _countInGen) return; // teardown mid-count
         count++;
-        if (count > 4) {
+        if (count > clicks) {
             hideCountOverlay();
             _countingIn = false;
             // Hand off to the normal play path — togglePlay() flips isPlaying,

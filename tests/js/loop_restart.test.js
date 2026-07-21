@@ -88,6 +88,10 @@ function buildSandbox() {
         playClick: () => {},
         showCountOverlay: () => {},
         hideCountOverlay: () => {},
+        // beginCount sizes the count to the bar at loop A; the wrap-path
+        // assertions below don't depend on how many clicks it decides on.
+        // Covered directly in count_in_beats.test.js.
+        countInBeats: () => 4,
 
         // Stubbed DOM access. Anything querying for a button just gets a
         // permissive object that ignores writes.

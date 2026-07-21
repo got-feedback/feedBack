@@ -275,6 +275,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine (`app.js`, `highway.js`, `playSong`, `showScreen`, the capability registry).
 
 ### Fixed
+- **Count-in follows the song's meter and its pickup measure.** The count-in
+  (loop wrap, section practice, and the "Countdown before song" setting) always
+  clicked exactly four beats, so a 3/4 song was counted in 4/4, and a song
+  opening with a pickup (anacrusis) had the pickup enter where the downbeat
+  belonged — putting the player a beat ahead for the whole song. The bar length
+  now comes from the `song_timeline` beats already on the highway
+  (`measure >= 0` marks downbeats; no new plumbing, since the `time_signatures`
+  map is streamed to plugins rather than stored in the frontend), and a first
+  bar shorter than that meter shortens the count by its length: a 1-beat pickup
+  in 4/4 counts "1 2 3" and the music enters on 4. Songs without beats — pre-chart,
+  minigames, synthetic highways — still get four.
 - **GP8 asset resolution honours the directory the registry named.**
   `<EmbeddedFilePath>` is matched on filename stem so a format variant of the
   same recording can win (an `.ogg` beside the declared `.mp3` is copied out

@@ -54,12 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loaded as fretted arrangements — the loader's file/notation gate keeps a drum
   part out of the fretted pipeline (and out of note-detection grading), pinned
   by test. Legacy single-drum packs read exactly as before, as a one-part list.
-- **Folder Library — preview on hover.** The Folders library view gains an
-  optional ▶ toolbar toggle (off by default): hovering a song ~0.5s previews
-  its audio in place, with an equalizer indicator over the artwork, and stops
-  on leave. Uses a dedicated `<audio>` element (never the main player) and
-  falls back across the pack's audio members so every song previews. The
-  preference persists per surface in `localStorage`.
 - **`chart-transform` capability domain (#952)** — plugins can now remap the
   chart before rendering and scoring through a core-owned provider
   coordinator. Synchronous transforms run after difficulty filtering; host
@@ -189,6 +183,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     spec shape (moves `original/full.ogg` → `stems/full.ogg`, adds the `full` stem
     at `default: off`, drops the key); the fallback and the aliases are removed once
     they are migrated (#945).
+- **Folder Library previews on hover, like the grid and list views.** The Folders
+  view's cards and rows now carry the standard `data-fn` / `data-v3-play` markup,
+  so the existing **Song Preview** plugin previews them on hover exactly like the
+  other views (same audio, same behaviour) — Folder Library ships no preview code
+  of its own.
 
 ### Added
 - **Genres fall back to MusicBrainz enrichment** — the effective genre now

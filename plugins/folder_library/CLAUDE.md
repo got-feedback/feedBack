@@ -153,13 +153,15 @@ Each song object (built by `_meta()`):
   "added": 1748132400.0,
   "arrangements": ["Lead", "Rhythm", "Bass"],
   "stems": ["Drums", "Bass", "Vocals"],
-  "lyrics": true
+  "lyrics": true,
+  "audio_member": "preview.ogg"
 }
 ```
 
 - `filename` is the full relative path from the DLC root — pass it directly to `window.playSong()`.
 - `added` is a Unix timestamp (float, seconds) from `stat().st_mtime` — convert with `new Date(added * 1000)`. Always recomputed fresh (it changes when a file moves), even on a metadata-cache hit.
 - `arrangements` / `stems` are flat lists of **strings**, even though `extract_meta()` returns them as objects.
+- `audio_member` is the best in-pack audio file for **hover-preview**, resolved by `_audio_member()` (`preview.ogg` → `stems/full.ogg` → `stems/audio.mp3` → any stem; `null` if the pack has no audio). Fetch it as `/api/sloppak/<filename>/file/<audio_member>` (both path-encoded per segment). Resolving it server-side means the frontend previews with **one** request instead of probing (and 404ing) a hardcoded path. Cached with the rest of the meta.
 
 ### extract_meta returns arrangements/stems as objects, not strings
 
@@ -329,13 +331,24 @@ Drag-and-drop uses **pointer events** (mousedown/mousemove/mouseup), not the HTM
 - **Esc cancels** — resolves with `null`, same as Cancel (applies to rename, delete, create folder/subfolder, move song)
 - **Enter confirms** — submits, equivalent to OK
 
+## Preview on Hover
+
+Hovering a song for `_HOVER_PREVIEW_DELAY_MS` (800 ms) plays a short audio preview in place — no navigation to the player. Toggled by a play-icon toolbar button (`_injectToolbar`); **on by default** (`_previewHover`, persisted per surface under `<cfg.storePrefix>previewHover` — only an explicit stored `'false'` disables it).
+
+- **Audio** — a dedicated `_previewAudio` `<audio>` element (never the main player's). Source is `song.audio_member` (backend-resolved; see Song Metadata) fetched from `/api/sloppak/<file>/file/<member>`, played **from 0**. Don't seek by `song.duration` — the member is usually a short `preview.ogg` clip, so a full-song offset lands past its end and nothing plays.
+- **Sequence guard** — `_previewSeq` is bumped on every start/stop, so a slow load that resolves after the pointer has moved on is ignored.
+- **Drag / click safety** — `mouseenter` skips arming while a drag is in progress (`_dragState` non-null); `mousedown` clears the pending dwell timer **and** `_stopPreview()`s any already-playing one, so grabbing a song to drag (or clicking to play) never leaves a preview running.
+- **Indicator** — a waveform overlay (`.fl-wf`, 9 bars) over the art, drawn via a one-time injected `<style>` (`_ensurePreviewStyle`). It **fades in** (`fl-in`) to avoid an abrupt pop, and the bars animate only once audio actually fires (the `.playing` class, set on the `playing` event). Perf: bars animate with `transform: scaleY` + `will-change: transform` (GPU-composited, no per-frame JS), only while playing. `_showIndicator` / `_markIndicatorPlaying` / `_clearIndicator` manage it against `_previewIndHost`.
+- **CSS gotcha** — set the bar animation with **longhand** `animation-name`/`-duration`/… , not the `animation` shorthand: the shorthand resets `animation-delay` to 0 and (being higher-specificity) overrode the per-bar `nth-child` delays, making every bar move in sync.
+
+Changing `screen.js` needs a re-fetch: the host loads it as `screen.js?v=<plugin.json version>`, so **bump `plugin.json` `version`** to ship a change to users (or hard-refresh while developing).
+
 ## Roadmap
 
-Implemented since the original release: **nested subfolders** (recursive tree + create-inside-folder), drag-and-drop, sort, advanced filtering, server-side tree filtering synced to the host library, and the warm metadata cache.
+Implemented since the original release: **nested subfolders** (recursive tree + create-inside-folder), drag-and-drop, sort, advanced filtering, server-side tree filtering synced to the host library, the warm metadata cache, and **preview-on-hover** (see above).
 
 Not yet implemented, in rough priority order:
 
-- **Auto-play on hover** — with an on/off toggle saved to localStorage.
 - **Bulk move** — multi-select songs and move them all at once.
 - **Thumbnail performance** — faster loading and smoother scrolling with large libraries.
 - **Adjustable thumbnail/row sizes** — user-resizable song cards and list rows.

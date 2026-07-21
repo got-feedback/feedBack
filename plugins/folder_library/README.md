@@ -30,7 +30,7 @@ A FeedBack (fee[dB]ack) plugin that organizes your `.sloppak` / `.feedpak` DLC s
 - **List & Grid views** — toggle between a compact list with thumbnails or a full album art card grid
 - **Album art** — pulls art automatically for every song in both views
 - **One-click playback** — click any song to start playing immediately
-- **Preview on hover** — optional: hover a song briefly to preview its audio in place; toggle on/off from the toolbar (off by default)
+- **Preview song on hover** — hover a song briefly to preview its audio in place, with a waveform indicator over the art; toggle from the toolbar (on by default)
 - **Sort options** — sort songs by title, artist, duration, year, tuning, or recently added with an asc/desc toggle
 - **Advanced filters** — filter by arrangements, stems, lyrics, and tuning with include and exclude support
 - **Folder management** — create, rename, and delete folders without leaving the plugin
@@ -55,7 +55,7 @@ Folder Library ships bundled with FeedBack as a core plugin (`"bundled": true`),
 | Switch to grid view | Click the grid icon in the toolbar |
 | Switch to list view | Click the list icon in the toolbar |
 | Play a song | Click any song row or card |
-| Preview on hover | Click the ▶ toolbar button to toggle; when on, hovering a song ~0.5s previews its audio |
+| Preview song on hover | On by default; click the toolbar button to toggle. When on, hovering a song ~0.8s previews its audio |
 | Sort songs | Use the sort dropdown in the toolbar |
 | Toggle sort direction | Click the arrow button next to the sort dropdown |
 | Open filters | Click the filter icon in the toolbar |

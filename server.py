@@ -49,7 +49,7 @@ import demo_mode
 import scan
 import tailwind_rebuild
 # Extracted route modules. They import `appstate`, never `server` — one-way graph.
-from routers import audio_effects, artist_aliases, loops, playlists, ws_highway, chart, wanted, library_extras, shop, progression, profile, stats, version, diagnostics
+from routers import audio_effects, artist_aliases, loops, playlists, ws_highway, ws_sync, chart, wanted, library_extras, shop, progression, profile, stats, version, diagnostics
 from routers import tunings as tunings_router
 import enrichment
 from routers import art as art_router
@@ -1616,6 +1616,12 @@ app.include_router(media_router.router)
 # Mounted here, where the handler used to be defined (registration order).
 # Implementation in lib/routers/ws_highway.py.
 app.include_router(ws_highway.router)
+
+
+# ── Session-sync relay WebSocket (feedBack#1030) ─────────────────────────────
+# Dumb JSON fan-out rooms for cross-device followers (splitscreen LAN mode).
+# Implementation in lib/routers/ws_sync.py.
+app.include_router(ws_sync.router)
 
 
 # ── Audio serving ─────────────────────────────────────────────────────────────

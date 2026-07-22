@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Session-sync relay WebSocket — `/ws/sync/{session_id}` (#1030).** A
+  deliberately dumb JSON fan-out room: a text frame received from one client is
+  forwarded verbatim to every other client on the same session id; the server
+  interprets nothing (message schemas are owned by consumers). Rooms are created
+  on first join and garbage-collected when the last socket leaves — no history,
+  no replay, no persistence, so a host that crashes and rejoins the same id
+  resumes publishing to reconnecting subscribers with no server-side
+  coordination. Session ids are client-generated (`[A-Za-z0-9_-]{4,64}`); DoS
+  hygiene for a LAN-exposed port via frame-size (16 KB), per-room (16 sockets),
+  total-room (32), and per-socket rate (120 msg/s sustained, 240 burst) caps —
+  over-limit sockets are closed with a policy code and the room carries on, and
+  a peer that dies mid-fan-out is dropped without disturbing delivery to the
+  rest. First consumer: splitscreen's "pop out to LAN" follower mode
+  (feedBack-plugin-splitscreen#21), which relays playhead/playstate/song-change
+  frames from a host window to view-only followers on other LAN devices.
+  Implementation in `lib/routers/ws_sync.py`; tests in `tests/test_ws_sync.py`.
 - **Drum-part picker (feedpak 1.17.0 "drums as arrangements").** When a song
   carries several drum charts, a **Drum part** selector appears beside the
   arrangement switcher (advanced settings) so a player can choose which drummer

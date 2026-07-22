@@ -774,20 +774,29 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
         # (Arrangement.tones, populated by the converter), so read it straight
         # off `arr` rather than walking for XML that doesn't exist.
         if is_slop:
-            # `sloppak_tone_changes` builds the (base, sorted changes) pair
-            # from `Arrangement.tones`, skipping non-string names and
-            # non-finite/non-numeric times — unit-tested in test_tones.py.
+            # `sloppak_tone_changes` builds the (base, base_rig, sorted
+            # changes) triple from `Arrangement.tones`, skipping non-string
+            # names, non-finite/non-numeric times, and unusable rig ids —
+            # unit-tested in test_tones.py.
             from tones import sloppak_tone_changes
-            base_name, tone_changes = sloppak_tone_changes(getattr(arr, "tones", None))
+            base_name, base_rig, tone_changes = sloppak_tone_changes(
+                getattr(arr, "tones", None)
+            )
             # Send when there's a base tone OR timed changes — a single-tone
             # arrangement has a base but no switches, and the highway should
             # still be able to show the initial tone.
             if tone_changes or base_name:
-                await websocket.send_json({
+                payload = {
                     "type": "tone_changes",
                     "base": base_name,
                     "data": tone_changes,
-                })
+                }
+                # `base_rig` is additive (feedpak-spec §6.9) — omitted entirely
+                # when the chart binds no rig, so consumers that predate the rig
+                # model see the exact payload they always did.
+                if base_rig:
+                    payload["base_rig"] = base_rig
+                await websocket.send_json(payload)
         else:
             xml_paths = sorted(_xml_walk("*.xml"))
 

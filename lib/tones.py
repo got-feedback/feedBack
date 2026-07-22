@@ -32,20 +32,29 @@ def tokens(s: str) -> set[str]:
     return {t for t in re.split(r"[^a-z0-9]+", (s or "").lower()) if t}
 
 
-def sloppak_tone_changes(arr_tones) -> tuple[str, list[dict]]:
+def sloppak_tone_changes(arr_tones) -> tuple[str, str, list[dict]]:
     """Build the highway tone-change payload from an arrangement's tone block.
 
     Given ``Arrangement.tones`` (the dict embedded in the sloppak, or ``None``),
-    returns ``(base, changes)`` where ``base`` is the initial tone name and
-    ``changes`` is a time-sorted ``[{"t", "name"}]`` list. Non-string names,
-    non-dict entries, and non-numeric / non-finite times are skipped — a
-    hand-edited or third-party sloppak must not crash the highway WebSocket
-    or emit NaN/inf (which the client's ``JSON.parse`` rejects).
+    returns ``(base, base_rig, changes)`` where ``base`` is the initial tone
+    name, ``base_rig`` is the ``rigs.json`` rig id bound to it (feedpak-spec
+    §6.9; ``""`` when absent), and ``changes`` is a time-sorted
+    ``[{"t", "name", "rig"?}]`` list. Non-string names, non-dict entries, and
+    non-numeric / non-finite times are skipped — a hand-edited or third-party
+    sloppak must not crash the highway WebSocket or emit NaN/inf (which the
+    client's ``JSON.parse`` rejects).
+
+    ``rig`` / ``base_rig`` are carried through but NOT resolved against
+    ``rigs.json`` here: this builder only preserves the binding the chart
+    declared. Realization selection and the ``intent.gm`` fallback (§7.9) belong
+    to the consumer that actually voices the part.
     """
     if not isinstance(arr_tones, dict):
-        return "", []
+        return "", "", []
     base_val = arr_tones.get("base", "")
     base = base_val.strip() if isinstance(base_val, str) else ""
+    base_rig_val = arr_tones.get("base_rig", "")
+    base_rig = base_rig_val.strip() if isinstance(base_rig_val, str) else ""
 
     changes: list[dict] = []
     raw_changes = arr_tones.get("changes")
@@ -65,6 +74,13 @@ def sloppak_tone_changes(arr_tones) -> tuple[str, list[dict]]:
             continue
         if not math.isfinite(t):
             continue
-        changes.append({"t": round(t, 3), "name": name})
+        change = {"t": round(t, 3), "name": name}
+        # ponytail: `rig` only when it's a usable id — a non-string or blank
+        # value is dropped rather than forwarded, so a consumer can treat
+        # presence of the key as "this change binds a rig".
+        rig = c.get("rig")
+        if isinstance(rig, str) and rig.strip():
+            change["rig"] = rig.strip()
+        changes.append(change)
     changes.sort(key=lambda x: x["t"])
-    return base, changes
+    return base, base_rig, changes

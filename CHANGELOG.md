@@ -43,6 +43,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Score attribution fix** — scores now record the server-resolved arrangement
   index (from `song:ready`) instead of defaulting to 0 when clicking the main
   card (not an arrangement chip).
+- **Vocals instrument plugin** — a new `kind: "vocal"` instrument with pitch
+  detection. Placeholder for future vocal chart support; no instrument-specific
+  controls in the selector. Includes a CC0 microphone SVG icon.
+- **Fret count selector** — stringed instruments (guitar, bass) now declare
+  `fret_counts` and `default_fret_count` in their plugin manifests. The
+  instrument selector popover shows a **Frets** pill row alongside Strings,
+  and Settings > Instruments lets users add custom fret counts per instrument.
+- **Bass pick/fingered styles** — the bass instrument's arrangement name
+  patterns now include `"Pick Bass"`, `"Fingered Bass"`, `"Finger Bass"`, and
+  `"Picked Bass"` so GP-imported arrangements with those names match the bass
+  role (previously only exact `"Bass"` matched via the registry path).
+- **Instrument plugin documentation** — `docs/instrument-plugins.md` covers the
+  complete interface schema, role mapping mechanics, skeleton templates for
+  stringed and non-stringed instruments, and recommends CC0-licensed SVGs from
+  [SVGrepo's music instrument collection](https://www.svgrepo.com/collection/music-instrument).
 - **Drum-part picker (feedpak 1.17.0 "drums as arrangements").** When a song
   carries several drum charts, a **Drum part** selector appears beside the
   arrangement switcher (advanced settings) so a player can choose which drummer
@@ -161,6 +176,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Icons** — instrument selector card shows per-instrument icons instead of
   a single hardcoded guitar SVG.
 - **Pathway removed** from the instrument selector (unused feature).
+- **Tuning chip** fades out on card hover so save/favorite action buttons are
+  not obscured. Now flush to the top-left corner with a bottom-right radius
+  matching the card.
+- **Instrument chip logic** reads from the instrument registry rather than
+  hardcoding bass/lead detection. Offset truncation uses the instrument's
+  `string_count` from the registry, supporting any future pitched instrument.
 - **`GET /api/song/{f}?stems=1`** (new, opt-in) — returns the pack's playable stem
   list (`[{id, url, default}]` + `full_mix_url`), the same list the highway's WS
   `ready` sends. The stems plugin could only learn it from that WS message, which
@@ -336,6 +357,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty (double-AND).
 - **Default arrangement dropdown** removed from Settings > Gameplay (moved to
   the instrument selector role pills).
+- **Tuning chip matching** — the offset-detection chain was reordered to use
+  the song-level `tuning_offsets` field first and fall back through perspective-aware
+  sources, fixing native guitar cards that lacked `data-tuning-offsets`. Bass chips
+  now correctly truncate inferred 6-element offsets to 4 for the coverage checker.
+- **Bass instrument selector** — switching to bass no longer leaves the
+  tuning chips permanently amber. The chip-is-bass detection was too restrictive,
+  requiring a native bass chart when an inferred one was already showing.
+- **Double reload on instrument switch** — changing instruments briefly triggered
+  both `instrument:changed` and `working-tuning-changed` reloads, racing state
+  mutations. The instrument-change handler now sets `_lastRenderInstrument` early
+  so the tuning-changed path skips its reload and only re-decorates.
+- **Arrangement name pattern encoding** — the Instruments settings panel showed
+  mojibake (`ΓåÆ` and `ΓöÇ`) instead of `→` and box-drawing characters due to
+  a wrong-encoding save. All five corrupted sequences were restored.
+- **`renderDrawerIfOpen`** was missing after the songs.js port, causing a
+  `ReferenceError` when the instrument auto-filter ran. The helper was restored.
 - **GP8 asset resolution honours the directory the registry named.**
   `<EmbeddedFilePath>` is matched on filename stem so a format variant of the
   same recording can win (an `.ogg` beside the declared `.mp3` is copied out

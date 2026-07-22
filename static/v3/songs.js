@@ -1060,8 +1060,13 @@
             const chipIsBass = (libInstrument() === 'bass' && !!shown.bass_tuning_name)
                 || (chipArrs.length > 0
                     && chipArrs.every((a) => /\bbass\b/i.test((a && a.name) || '')));
-            const matchAttr = (rawOffsets && rawOffsets.length)
-                ? ' data-tuning-chip data-tuning-offsets="' + esc(rawOffsets.join(',')) + '"'
+            // Truncate inferred bass offsets: 6-element guitar offsets copied
+            // to a bass chip must be 4 elements or the coverage checker
+            // compares 6-string guitar against 4-string bass → mismatch.
+            let chipOffsets = rawOffsets;
+            if (chipIsBass && chipOffsets && chipOffsets.length === 6) chipOffsets = chipOffsets.slice(0, 4);
+            const matchAttr = (chipOffsets && chipOffsets.length)
+                ? ' data-tuning-chip data-tuning-offsets="' + esc(chipOffsets.join(',')) + '"'
                     + (chipIsBass ? ' data-tuning-bass="1"' : '') : '';
             if (targetNotes) {
                 tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.5625rem] font-bold px-1.5 py-0.5 rounded-sm leading-tight max-w-[5.5rem] text-center opacity-100 group-hover:opacity-0 transition"' + matchAttr + ' title="' + esc(badgeTitle) + '">'
@@ -3116,6 +3121,10 @@
         const mark = st === 'has' ? '✓ ' : st === 'lacks' ? '✕ ' : '';
         const tip = title ? ' title="' + esc(title) + '"' : '';
         return '<button data-tri="' + group + '" data-val="' + esc(value) + '" class="px-2 py-1 rounded-md text-xs border ' + cls + '"' + tip + '>' + mark + esc(label) + '</button>';
+    }
+    function renderDrawerIfOpen() {
+        const d = document.getElementById('v3-songs-drawer');
+        if (d && !d.classList.contains('hidden') && d.innerHTML.trim()) renderDrawer();
     }
     function renderDrawer() {
         const d = document.getElementById('v3-songs-drawer');

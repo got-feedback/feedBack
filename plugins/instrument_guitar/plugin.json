@@ -4,7 +4,6 @@
   "version": "1.0.0",
   "type": "instrument",
   "bundled": true,
-  "_comment": "Find CC0-licensed instrument SVGs at https://www.svgrepo.com/collection/music-instrument",
   "icon": "assets/icon.svg",
   "instrument": {
     "id": "guitar",

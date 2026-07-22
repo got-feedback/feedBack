@@ -201,6 +201,12 @@ def main(argv=None) -> int:
                     help="slice one rig VST root (src[0]) into per-platform "
                          "vst-<plat>-v<N> packs; manifest keyed by platform "
                          "(the shape rig_builder's data/vst_packs.json wants)")
+    ap.add_argument("--repo", default=REPO,
+                    help=f"GitHub repo to publish releases to AND reference in the "
+                         f"emitted manifest URLs (default {REPO}). The upload "
+                         f"target and the URL always use this same repo — a pack "
+                         f"is downloaded from whatever the manifest says, so they "
+                         f"must not diverge.")
     ap.add_argument("--manifest", type=Path,
                     help="write the {id: {url,sha256,bytes}} map here (default: stdout)")
     ap.add_argument("--selfcheck", action="store_true", help="run the round-trip demo and exit")
@@ -219,10 +225,13 @@ def main(argv=None) -> int:
             zip_path = out_dir / vst_asset(plat, args.version)
             build_vst_pack(vst_root, zip_path, plat)
             if args.publish:
+                # --repo MUST reach both, or the manifest advertises a repo the
+                # asset was never uploaded to (every client download 404s).
                 _publish_release(vst_tag(plat, args.version), zip_path,
                                  f"Rig VST pack ({plat}) v{args.version}",
-                                 "Opt-in per-platform rig VST pack. Not a code release.")
-                url = vst_url(plat, args.version)
+                                 "Opt-in per-platform rig VST pack. Not a code release.",
+                                 args.repo)
+                url = vst_url(plat, args.version, args.repo)
             else:
                 url = (out_dir.resolve() / zip_path.name).as_uri()
             manifest[plat] = manifest_entry(zip_path, url)
@@ -232,8 +241,8 @@ def main(argv=None) -> int:
             zip_path = out_dir / pack_asset(pid, args.version)
             build_pack(src, zip_path)
             if args.publish:
-                publish(pid, args.version, zip_path)
-                url = pack_url(pid, args.version)
+                publish(pid, args.version, zip_path, args.repo)
+                url = pack_url(pid, args.version, args.repo)
             else:
                 url = (out_dir.resolve() / zip_path.name).as_uri()
             manifest[pid] = manifest_entry(zip_path, url)

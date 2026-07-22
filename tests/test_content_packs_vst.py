@@ -89,3 +89,30 @@ def test_unknown_platform_rejected(tmp_path):
         assert "unknown platform" in str(e)
     else:
         raise AssertionError("build_vst_pack accepted an unknown platform")
+
+
+def test_repo_flag_reaches_both_publish_target_and_manifest_url(tmp_path, monkeypatch):
+    # Load-bearing invariant: --repo must reach BOTH the upload target and the URL
+    # written into the manifest. If it reaches only one, a pack is downloaded from
+    # a repo it was never uploaded to → every client 404s. Capture the publish
+    # repo and assert the emitted manifest URL points at the same one.
+    import json
+
+    root = tmp_path / "vst"
+    _fake_vst_tree(root)
+    published_to = []
+    monkeypatch.setattr(
+        content_packs, "_publish_release",
+        lambda tag, zip_path, title, notes, repo=content_packs.REPO: published_to.append(repo))
+
+    manifest_path = tmp_path / "manifest.json"
+    rc = content_packs.main([str(root), "--vst", "--publish",
+                             "--repo", "acme/widgets", "--manifest", str(manifest_path)])
+    assert rc == 0
+    manifest = json.loads(manifest_path.read_text())
+
+    # Uploaded to acme/widgets for every platform...
+    assert set(published_to) == {"acme/widgets"}, published_to
+    # ...and every manifest URL points at that same repo (not the default core).
+    for plat, entry in manifest.items():
+        assert "/acme/widgets/releases/download/" in entry["url"], (plat, entry["url"])

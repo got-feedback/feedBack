@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Opt-in career venue packs (#122)** — higher-tier venue crowd media
+  (`club`, `arena`) is no longer bundled; the app downloads each pack on demand
+  from its release when you reach the venue (sha256-verified), keeping the
+  starter `bar` venue bundled for offline play. Trims ~678 MB from the desktop
+  download; an unpublished pack shows "coming soon" and plays on the standard
+  stage until its release lands.
 - **`chart-transform` capability domain (#952)** — plugins can now remap the
   chart before rendering and scoring through a core-owned provider
   coordinator. Synchronous transforms run after difficulty filtering; host

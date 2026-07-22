@@ -29,8 +29,19 @@
     const PP_LABELS = { guitar: 'Guitar', bass: 'Bass', keys: 'Keys', drums: 'Drums' };
     const PP_BROCHURE_ART = ['🎸', '🎷', '🎹', '🥁', '🎺', '🎻', '🎤', '🪕'];
 
-    // First-visit welcome + career achievements (contributed to the achievements
-    // plugin via its cross-plugin API — career is a source, competency only).
+    // Career achievements — DESIGN INTENT (for other contributors):
+    // These reward *real musician learning*, not game busywork. The whole point
+    // of the slim/opt-in content model is that the player grows into it, and the
+    // achievements mark the milestones of that growth on the real-world path:
+    //   - starting a career (committing to the practice loop),
+    //   - later (rig_builder, PR 3) deciding to learn simulated amps/effects and
+    //     dialing in a tone,
+    //   - and graduating to running a *real* rig alongside the game.
+    // If you add achievements here or in a sibling plugin, keep to that spirit:
+    // celebrate a skill or decision a working musician would recognize, so
+    // playing the game rewards learning the craft. Contributed to the
+    // achievements plugin via its cross-plugin API (career is a source,
+    // competency only).
     const WELCOME_KEY = 'feedBack-career-welcomed';
     const CAREER_ACHIEVEMENTS = [
         { id: 'career_started', title: 'Hit the Road',

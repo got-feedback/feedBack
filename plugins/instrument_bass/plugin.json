@@ -5,7 +5,6 @@
   "type": "instrument",
   "bundled": true,
   "icon": "assets/icon.svg",
-  "icon": "assets/icon.svg",
   "instrument": {
     "id": "bass",
     "label": "Bass",

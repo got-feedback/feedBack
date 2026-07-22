@@ -104,6 +104,13 @@ def _bundled(venue_id):
     return (_bundled_venue_dir(venue_id) / "manifest.json").is_file()
 
 
+def _pack_published(pack):
+    """A remote pack is downloadable only once a publish has stamped its real
+    size — the committed manifest carries a 0-byte placeholder (and an all-zero
+    sha) until then, so don't offer a download that can't succeed yet."""
+    return bool(pack and (pack.get("bytes") or 0) > 0)
+
+
 def _stars():
     """(total, per-song dict, detail rows). Accuracy is a 0..1 fraction."""
     db = _state["meta_db"]
@@ -664,7 +671,7 @@ def setup(app, context):
                 "unlocked": stars_total >= v["star_threshold"],
                 "installed": _installed(v["id"]),
                 "bundled": _bundled(v["id"]),
-                "has_pack": _bundled(v["id"]) or bool(v.get("pack")),
+                "has_pack": _bundled(v["id"]) or _pack_published(v.get("pack")),
                 "download": dl,
             })
         return {
@@ -934,7 +941,7 @@ def setup(app, context):
         if venue is None:
             raise HTTPException(404, "Unknown venue.")
         pack = venue.get("pack")
-        if not pack:
+        if not _pack_published(pack):
             raise HTTPException(404, "No pack published for this venue yet.")
         stars_total, _, _ = _stars()
         if stars_total < venue["star_threshold"]:

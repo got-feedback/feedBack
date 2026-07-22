@@ -1,0 +1,90 @@
+name: Content packs
+
+# Build & publish opt-in career venue packs as per-pack, versioned, immutable
+# releases (convention: tag `venue-<id>-v<N>`, asset `<id>-pack-v<N>.zip`),
+# then open a PR bumping venues.json url/sha256/bytes. This is automation so
+# publishing packs is never a person's manual job (SLIM-NIGHTLY item 1b).
+#
+# Immutable tags → publishing is a deliberate, versioned act, so this runs on
+# manual dispatch (not push): a media change means a new version, a human call.
+on:
+  workflow_dispatch:
+    inputs:
+      venues:
+        description: "Space-separated venue ids to (re)publish, e.g. 'club arena'"
+        required: true
+        default: "club"
+      version:
+        description: "Pack version N (tag venue-<id>-vN). Bump for new media."
+        required: true
+        default: "1"
+
+concurrency:
+  group: content-packs
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # Media lives in-tree today; add `lfs: true` once SLIM-NIGHTLY item 4
+        # moves venue-packs/** to Git LFS.
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build & publish packs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Never interpolate dispatch inputs straight into the shell — a crafted
+          # value would execute on the runner with this job's write token. Pass
+          # via env, validate the formats, and use a Bash argument array.
+          VENUES: ${{ github.event.inputs.venues }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[1-9][0-9]*$ ]] || { echo "::error::version must be a positive integer"; exit 1; }
+          [[ "$VENUES" =~ ^[a-z0-9][a-z0-9-]*(\ [a-z0-9][a-z0-9-]*)*$ ]] || { echo "::error::venues must be space-separated venue ids"; exit 1; }
+          read -r -a venues <<< "$VENUES"
+          dirs=()
+          for v in "${venues[@]}"; do
+            dirs+=("plugins/career/venue-packs/$v")
+          done
+          python tools/content_packs.py "${dirs[@]}" \
+            --version "$VERSION" \
+            --publish \
+            --manifest /tmp/packs-manifest.json
+          cat /tmp/packs-manifest.json
+
+      - name: Apply url/sha256/bytes to venues.json
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          manifest = json.load(open("/tmp/packs-manifest.json"))
+          vpath = pathlib.Path("plugins/career/venues.json")
+          data = json.loads(vpath.read_text())
+          for v in data["venues"]:
+              m = manifest.get(v["id"])
+              if m and v.get("pack"):
+                  v["pack"].update(url=m["url"], sha256=m["sha256"], bytes=m["bytes"])
+          vpath.write_text(json.dumps(data, indent=4) + "\n")
+          PY
+
+      - name: Open manifest-bump PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "career: refresh venue pack manifest (v${{ github.event.inputs.version }})"
+          title: "career: refresh venue pack manifest (v${{ github.event.inputs.version }})"
+          body: |
+            Automated by the content-packs workflow after publishing
+            `${{ github.event.inputs.venues }}` v${{ github.event.inputs.version }}
+            to their `venue-<id>-v${{ github.event.inputs.version }}` releases.
+            Bumps `venues.json` pack url/sha256/bytes to match the uploaded zips.
+          branch: content-packs/manifest-bump
+          delete-branch: true

@@ -17,14 +17,22 @@
             "name": "Velvet Room",
             "description": "A proper club stage. People actually came to hear you.",
             "star_threshold": 50,
-            "pack": null
+            "pack": {
+                "url": "https://github.com/got-feedBack/feedBack/releases/download/venue-club-v1/club-pack-v1.zip",
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "bytes": 0
+            }
         },
         {
             "id": "arena",
             "name": "Feedback Arena",
             "description": "Ten thousand seats. Try not to think about it.",
             "star_threshold": 150,
-            "pack": null
+            "pack": {
+                "url": "https://github.com/got-feedBack/feedBack/releases/download/venue-arena-v1/arena-pack-v1.zip",
+                "sha256": "8898c7912c84123559ecfd8b0afd3be19da9a0a4b04aa9dbb5aa1e7f4e3e1669",
+                "bytes": 351284599
+            }
         }
     ]
 }

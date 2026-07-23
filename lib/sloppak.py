@@ -121,6 +121,41 @@ def partition_stems(stems: list[dict]) -> tuple[dict | None, list[dict]]:
     return full, [s for s in stems if str(s.get("id", "")) != FULL_MIX_STEM_ID]
 
 
+def _resolve_pack_path(source_dir: Path, rel: str, label: str) -> Path | None:
+    """Resolve a manifest-relative path, contained inside the pack. None if not.
+
+    Every manifest key that names a file routes through here. A crafted manifest
+    must not read outside the sloppak directory via path traversal
+    (e.g. `../../etc`), and a symlink loop or permission error on `.resolve()`
+    must disable that one file rather than abort the whole load — so both
+    failures are caught, and both are warnings rather than raises.
+
+    The two branches log differently on purpose: a `ValueError` means the path
+    resolved *outside* the pack (a crafted or broken manifest), an `OSError`
+    means it could not be resolved at all (symlink loop, permissions). Reading
+    "escapes source_dir" in the logs and reading "resolution failed" lead an
+    operator to very different places, so the distinction is worth two lines.
+
+    Returns the resolved path — **existence is NOT checked here**. Callers
+    differ on that deliberately: a missing optional side-file is silent, while a
+    missing arrangement skips an entry, so each caller keeps its own `.exists()`
+    (or `.is_file()`) test and its own control flow.
+
+    `label` names the manifest key in the log message ("keys", "song_timeline",
+    a drum part's id, …).
+    """
+    try:
+        p = (source_dir / rel).resolve()
+        p.relative_to(source_dir.resolve())
+    except ValueError:
+        log.warning("sloppak: %s path %r escapes source_dir — skipped", label, rel)
+        return None
+    except OSError as e:
+        log.warning("sloppak: %s path resolution failed (%s) — skipped", label, e)
+        return None
+    return p
+
+
 def _legacy_full_mix(manifest: dict, source_dir: Path) -> str | None:
     """Full mix from the DEPRECATED `original_audio:` manifest key, or None.
 
@@ -152,16 +187,8 @@ def _legacy_full_mix(manifest: dict, source_dir: Path) -> str | None:
     if not isinstance(rel_raw, str) or not rel_raw.strip():
         return None
     rel = rel_raw.strip()
-    try:
-        target = (source_dir / rel).resolve()
-        target.relative_to(source_dir.resolve())
-    except ValueError:
-        log.warning("sloppak: original_audio path %r escapes source_dir — skipped", rel)
-        return None
-    except OSError as e:
-        log.warning("sloppak: original_audio path resolution failed (%s) — skipped", e)
-        return None
-    if not target.is_file():
+    target = _resolve_pack_path(source_dir, rel, "original_audio")
+    if target is None or not target.is_file():
         return None
     log.info(
         "sloppak: pack uses the deprecated `original_audio:` key (%r) — the full mix "
@@ -749,20 +776,8 @@ def _load_drum_tab_file(source_dir: Path, rel: str, label: str) -> dict | None:
     permissive — a missing file disables that part silently; a traversal,
     parse, or validation failure disables it with a warning, never aborting
     the load."""
-    # Constrain to source_dir to prevent a crafted manifest from reading
-    # files outside the sloppak directory via path traversal (e.g. ../../etc).
-    # Wrap both resolve() calls in a broad handler: symlink loops and
-    # permission errors on .resolve() should disable drums, not abort load.
-    try:
-        dt_path = (source_dir / rel).resolve()
-        dt_path.relative_to(source_dir.resolve())
-    except ValueError:
-        log.warning("sloppak: %s path %r escapes source_dir — skipped", label, rel)
-        return None
-    except OSError as e:
-        log.warning("sloppak: %s path resolution failed (%s) — skipped", label, e)
-        return None
-    if not dt_path.exists():
+    dt_path = _resolve_pack_path(source_dir, rel, label)
+    if dt_path is None or not dt_path.exists():
         return None
     try:
         raw = load_json(dt_path)
@@ -909,16 +924,8 @@ def load_song(
             continue
         data = None
         if rel:
-            try:
-                arr_path = (source_dir / rel).resolve()
-                arr_path.relative_to(source_dir.resolve())
-            except ValueError:
-                log.warning("sloppak: arrangement path %r escapes source_dir — skipped", rel)
-                continue
-            except OSError as e:
-                log.warning("sloppak: arrangement path resolution failed (%s) — skipped", e)
-                continue
-            if not arr_path.exists():
+            arr_path = _resolve_pack_path(source_dir, rel, "arrangement")
+            if arr_path is None or not arr_path.exists():
                 continue
             try:
                 data = load_json(arr_path)
@@ -980,15 +987,7 @@ def load_song(
         notation_rel = notation_rel.strip()
         if not notation_rel:
             continue
-        try:
-            nt_path = (source_dir / notation_rel).resolve()
-            nt_path.relative_to(source_dir.resolve())
-        except ValueError:
-            log.warning("sloppak: notation path %r escapes source_dir — skipped", notation_rel)
-            nt_path = None
-        except OSError as e:
-            log.warning("sloppak: notation path resolution failed (%s) — skipped", e)
-            nt_path = None
+        nt_path = _resolve_pack_path(source_dir, notation_rel, "notation")
         raw_nt = None
         if nt_path is not None and nt_path.exists():
             try:
@@ -1061,15 +1060,7 @@ def load_song(
     time_sigs_data: list | None = None
     song_timeline_rel = manifest.get("song_timeline")
     if isinstance(song_timeline_rel, str) and song_timeline_rel:
-        try:
-            st_path = (source_dir / song_timeline_rel).resolve()
-            st_path.relative_to(source_dir.resolve())
-        except ValueError:
-            log.warning("sloppak: song_timeline path %r escapes source_dir — skipped", song_timeline_rel)
-            st_path = None
-        except OSError as e:
-            log.warning("sloppak: song_timeline path resolution failed (%s) — skipped", e)
-            st_path = None
+        st_path = _resolve_pack_path(source_dir, song_timeline_rel, "song_timeline")
         if st_path is not None and st_path.exists():
             try:
                 raw = load_json(st_path)
@@ -1159,15 +1150,7 @@ def load_song(
     # downstream through the WS path.
     lyrics_rel = manifest.get("lyrics")
     if isinstance(lyrics_rel, str) and lyrics_rel:
-        try:
-            lyr_path = (source_dir / lyrics_rel).resolve()
-            lyr_path.relative_to(source_dir.resolve())
-        except ValueError:
-            log.warning("sloppak: lyrics path %r escapes source_dir — skipped", lyrics_rel)
-            lyr_path = None
-        except OSError as e:
-            log.warning("sloppak: lyrics path resolution failed (%s) — skipped", e)
-            lyr_path = None
+        lyr_path = _resolve_pack_path(source_dir, lyrics_rel, "lyrics")
         if lyr_path is not None and lyr_path.exists():
             try:
                 raw = load_json(lyr_path)
@@ -1272,15 +1255,7 @@ def load_song(
     keys_data: dict | None = None
     keys_rel = manifest.get("keys")
     if isinstance(keys_rel, str) and keys_rel:
-        try:
-            k_path = (source_dir / keys_rel).resolve()
-            k_path.relative_to(source_dir.resolve())
-        except ValueError:
-            log.warning("sloppak: keys path %r escapes source_dir — skipped", keys_rel)
-            k_path = None
-        except OSError as e:
-            log.warning("sloppak: keys path resolution failed (%s) — skipped", e)
-            k_path = None
+        k_path = _resolve_pack_path(source_dir, keys_rel, "keys")
         if k_path is not None and k_path.exists():
             try:
                 raw = load_json(k_path)

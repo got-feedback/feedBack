@@ -1160,16 +1160,21 @@ def load_song(
         drum_tones_data,
     )
 
-    # Drum-only sloppak: every GP track was percussion, so it ships a
-    # drum_tab but no pitched arrangements. The highway WS rejects an empty
-    # arrangements list with "No arrangements found" *before* it serves the
-    # drum_tab, leaving the drums unplayable even in the drum highway.
-    # Synthesize a minimal placeholder arrangement so the stream proceeds and
-    # the drum_tab reaches the drum highway. It carries no notes (the guitar
-    # highway just shows an empty board) and, when the manifest omits a
+    # Drum sloppak: when a drum_tab is present but no existing arrangement is
+    # a drum part, synthesize a minimal placeholder so the drums appear in the
+    # arrangement picker and the drum_tab reaches the drum highway.  The editor
+    # strips drum arrangements out of the manifest (converting them to
+    # drum_tab), so without this a drum+bass sloppak would show only Bass in
+    # the picker with no way to reach the drums.  It carries no notes (the
+    # guitar highway just shows an empty board) and, when the manifest omits a
     # duration, derives a song length from the last drum hit so the timeline
     # isn't zero-length.
-    if not song.arrangements and drum_tab_data is not None:
+    _DRUM_KEYWORDS = ("drum", "percussion")
+    _has_drum_arr = any(
+        any(kw in (getattr(a, "name", "") or "").lower() for kw in _DRUM_KEYWORDS)
+        for a in song.arrangements
+    )
+    if not _has_drum_arr and drum_tab_data is not None:
         if song.song_length <= 0:
             # validate_drum_tab() intentionally does NOT type-check individual
             # hits (they're sanitized at WS-stream time), so a hit may carry a

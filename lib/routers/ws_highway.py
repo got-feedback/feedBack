@@ -490,12 +490,24 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             _evict_audio_cache()
 
         # Send song metadata
+        # For drum-only sloppaks the placeholder arrangement has 0 notes
+        # (drum_tab hits live separately).  Surface the real hit count so
+        # the UI shows e.g. "Drums (1922)" instead of "Drums (0)".
+        _DRUM_KEYWORDS = ("drum", "percussion")
+        _dt_hit_count = 0
+        if is_slop and loaded_slop is not None and loaded_slop.drum_tab is not None:
+            _dt_hit_count = len(loaded_slop.drum_tab.get("hits") or [])
         arr_list = [
             {
                 "index": i,
                 "name": a.name,
                 "smart_name": smart_names[i],
-                "notes": len(a.notes) + sum(len(c.notes) for c in a.chords),
+                "notes": (
+                    _dt_hit_count
+                    if (len(a.notes) == 0 and not a.chords and _dt_hit_count > 0
+                        and any(kw in (a.name or "").lower() for kw in _DRUM_KEYWORDS))
+                    else len(a.notes) + sum(len(c.notes) for c in a.chords)
+                ),
             }
             for i, a in enumerate(song.arrangements)
         ]

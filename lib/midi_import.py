@@ -1,6 +1,6 @@
 """MIDI file import — list tracks and convert tracks to sloppak payloads.
 
-Two parallel flows live here:
+Three parallel flows live here:
 
 - **Keys path** (`list_midi_tracks` + `convert_midi_track_to_keys_wire`):
   filters channel-9 out and emits a standard guitar-style arrangement that
@@ -11,12 +11,19 @@ Two parallel flows live here:
   `docs/sloppak-spec.md` §5.3, ready to drop alongside the sloppak
   manifest's `drum_tab:` key.
 
-The editor's track picker uses both for the +Drums and +Keys modals.
+- **Lyrics path** (`extract_midi_lyrics`): reads SMF Lyric (0x05) meta events
+  (with a Text-event fallback on vocal-ish tracks, covering karaoke `.kar`
+  files) and emits the `lyrics.json` / `vocal_pitch.json` sidecar payloads
+  documented in feedpak-spec §7.1 / §7.2, ready to drop alongside the
+  manifest's `lyrics:` / `lyrics_source:` / `vocal_pitch:` keys.
+
+The editor's track picker uses the first two for the +Drums and +Keys modals.
 """
 
 from __future__ import annotations
 
 import math
+import re
 from bisect import bisect_right
 from collections import deque
 from typing import Callable
@@ -776,4 +783,431 @@ def convert_drum_track_from_midi(
             for pid in seen_pieces
         ],
         "hits": out_hits,
+    }
+
+
+# ── Lyrics + vocal-melody extraction ─────────────────────────────────────────
+
+# Vocal-track detection, mirroring the idiom in `lib/gp2rs_gpx.py`'s
+# `_is_vocal_track` (GM voice/choir/lead-voice programs + name keywords).
+# Kept as a local copy because that helper consumes gp2rs_gpx's own GP track
+# dicts, not raw MIDI tracks. "melody" is added to the name hints: karaoke
+# MIDIs commonly label the sung line "Melody" rather than "Vocals".
+_VOCAL_MIDI_PROGRAMS = {52, 53, 54, 85, 86, 87}  # Choir Aahs, Voice Oohs, Synth Voice, Lead 5-7 (voice)
+_VOCAL_NAME_HINTS = ("vocal", "voice", "vox", "sing", "lyric", "choir", "melody")
+
+# A dedicated karaoke *text* track (SMF 0x01 Text events, `.kar` convention)
+# is usually noteless and named "Words" or "Soft Karaoke" — names the vocal
+# hints above don't catch. Only the Text-event fallback consults this wider
+# set; note-track detection sticks to the gp2rs_gpx idiom.
+_LYRIC_TEXT_TRACK_HINTS = _VOCAL_NAME_HINTS + ("words", "karaoke")
+
+# A lyric event pairs with a vocal note-on when their onsets sit within this
+# window. Karaoke files place the lyric event at (or a hair before) the
+# note-on tick, so real matches are ~0; the window only absorbs sloppy
+# authoring, and staying well under a typical syllable gap keeps a melisma's
+# extra notes from being stolen by the next syllable.
+_LYRIC_PAIR_TOLERANCE_S = 0.30
+
+# Duration bounds for lyric entries with no pairable note (spoken lines,
+# lyrics-only files). "Until the next lyric event" is the natural display
+# duration, capped so a verse-final syllable before a long instrumental
+# break doesn't linger on screen, and floored so simultaneous/out-of-order
+# events can't produce a zero or negative duration.
+_UNPAIRED_LYRIC_MAX_D = 2.0
+_UNPAIRED_LYRIC_MIN_D = 0.1
+
+# Leading/word/trailing whitespace splitter for lyric tokens. DOTALL so
+# embedded newlines land in a group rather than killing the match.
+_LYRIC_TOKEN_RE = re.compile(r"^(\s*)(.*?)(\s*)$", re.S)
+
+
+def _scan_tracks_for_lyrics(midi: mido.MidiFile) -> list[dict]:
+    """One pass per track collecting the raw material `extract_midi_lyrics`
+    needs: name, per-channel programs, melodic (non-drum) notes with their
+    on/off ticks, and Lyric/Text meta events.
+
+    Each item: {name, channel_programs: {ch: program}, notes:
+    [(start_tick, end_tick, pitch, channel)], lyric_events: [(tick, text)],
+    text_events: [(tick, text)]}. Note pairing uses the same FIFO
+    note_on/note_off matching as the keys converter so retriggers don't
+    cross-wire durations.
+    """
+    out: list[dict] = []
+    for track in midi.tracks:
+        name = ""
+        channel_programs: dict[int, int] = {}
+        lyric_events: list[tuple[int, str]] = []
+        text_events: list[tuple[int, str]] = []
+        notes: list[tuple[int, int, int, int]] = []
+        active: dict[tuple[int, int], deque[int]] = {}
+        abs_tick = 0
+        for msg in track:
+            abs_tick += msg.time
+            if msg.type == "track_name" and not name:
+                name = msg.name or ""
+            elif msg.type == "lyrics":
+                lyric_events.append((abs_tick, msg.text or ""))
+            elif msg.type == "text":
+                text_events.append((abs_tick, msg.text or ""))
+            elif msg.type == "program_change":
+                ch = int(getattr(msg, "channel", -1))
+                if ch != 9 and ch not in channel_programs:
+                    channel_programs[ch] = int(msg.program)
+            elif msg.type == "note_on" and int(getattr(msg, "velocity", 0)) > 0:
+                ch = int(getattr(msg, "channel", -1))
+                if ch == 9:
+                    continue
+                active.setdefault((ch, int(msg.note)), deque()).append(abs_tick)
+            elif msg.type == "note_off" or (
+                msg.type == "note_on" and int(getattr(msg, "velocity", 0)) == 0
+            ):
+                ch = int(getattr(msg, "channel", -1))
+                pitch = int(msg.note)
+                stack = active.get((ch, pitch))
+                if not stack:
+                    continue
+                start_tick = stack.popleft()
+                if not stack:
+                    active.pop((ch, pitch), None)
+                notes.append((start_tick, abs_tick, pitch, ch))
+        # Close anything left hanging at end-of-track, mirroring the keys
+        # converter's end-of-track sweep.
+        for (ch, pitch), starts in active.items():
+            for start_tick in starts:
+                notes.append((start_tick, abs_tick, pitch, ch))
+        notes.sort(key=lambda n: n[0])
+        out.append({
+            "name": name,
+            "channel_programs": channel_programs,
+            "notes": notes,
+            "lyric_events": lyric_events,
+            "text_events": text_events,
+        })
+    return out
+
+
+def _name_matches(name: str, hints: tuple[str, ...]) -> bool:
+    name_l = (name or "").lower()
+    return any(h in name_l for h in hints)
+
+
+def _normalize_lyric_tokens(events: list[tuple[int, str]]) -> list[dict]:
+    """Turn raw lyric/text meta events into clean syllable tokens.
+
+    Handles both encodings seen in the wild:
+
+    - **`.kar` / karaoke convention**: `/` prefix = new line, `\\` prefix =
+      new paragraph (both mean "the previous syllable ended a line"),
+      `-` suffix = syllable joins the next one, `@`-prefixed tokens are
+      file metadata (`@KMIDI`, `@T<title>`, ...) and are dropped.
+    - **Plain Lyric-event convention**: word boundaries carried by leading
+      or trailing spaces; line breaks carried by embedded CR/LF.
+
+    Each token: {tick, word, lead_ws, trail_ws, line_end}. Spacing-only and
+    newline-only events don't emit a token — they fold their meaning
+    (word-break / line-end) onto the previous one.
+    """
+    toks: list[dict] = []
+    for tick, raw in events:
+        text = "" if raw is None else str(raw)
+        if not text:
+            continue
+        if text.lstrip().startswith(("@", "%")):
+            # .kar metadata / sequencer directives, not sung text.
+            continue
+        kar_break = text[0] in ("/", "\\")
+        if kar_break:
+            text = text[1:]
+        m = _LYRIC_TOKEN_RE.match(text)
+        head, body, tail = m.group(1), m.group(2), m.group(3)
+        nl_before = ("\n" in head) or ("\r" in head)
+        nl_after = ("\n" in tail) or ("\r" in tail)
+        if "\n" in body or "\r" in body:
+            # Rare multi-line event: keep it one token, treat the break as
+            # trailing so the line ends after this token.
+            body = re.sub(r"[\r\n]+", " ", body).strip()
+            nl_after = True
+        if (kar_break or nl_before) and toks:
+            toks[-1]["line_end"] = True
+        if not body:
+            # Pure spacing/newline token: fold onto the previous syllable.
+            if nl_after and toks:
+                toks[-1]["line_end"] = True
+            if toks:
+                toks[-1]["trail_ws"] = True
+            continue
+        toks.append({
+            "tick": tick,
+            "word": body,
+            "lead_ws": bool(head),
+            "trail_ws": bool(tail),
+            "line_end": nl_after,
+        })
+    return toks
+
+
+def _apply_word_conventions(toks: list[dict]) -> list[str]:
+    """Map tokens to spec §7.1 `w` strings: trailing ``-`` joins to the next
+    syllable, trailing ``+`` ends a line.
+
+    Which join convention the source used is detected per stream:
+
+    - Any token already carrying a ``-`` suffix → the stream is
+      hyphen-delimited (`.kar` style); those suffixes are the spec's own
+      join marker and pass through untouched.
+    - Otherwise, if the stream carries any spacing at all → space-delimited:
+      a token with no trailing space followed by a token with no leading
+      space is a mid-word syllable and gains a ``-``.
+    - No hyphens and no spacing anywhere → the tokens are whole words
+      (common for Text-event lyrics); no joins are synthesized.
+    """
+    has_hyphens = any(t["word"].endswith("-") for t in toks)
+    has_spacing = any(t["lead_ws"] or t["trail_ws"] for t in toks)
+    words: list[str] = []
+    for i, tk in enumerate(toks):
+        w = tk["word"]
+        nxt = toks[i + 1] if i + 1 < len(toks) else None
+        if tk["line_end"]:
+            # A join can't cross a line break — the line marker wins.
+            if w.endswith("-"):
+                w = w[:-1]
+            if w and not w.endswith("+"):
+                w += "+"
+        elif nxt is not None and not has_hyphens and has_spacing:
+            if not tk["trail_ws"] and not nxt["lead_ws"] and not w.endswith("-"):
+                w += "-"
+        words.append(w)
+    return words
+
+
+def _select_vocal_notes(
+    scans: list[dict],
+    lyric_track_index: int,
+    midi_type: int,
+) -> tuple[int, list[tuple[int, int, int, int]]] | None:
+    """Pick the note pool the lyric syllables should be pitch-paired with.
+
+    Returns ``(track_index, notes)`` or ``None`` when no vocal melody is
+    identifiable (→ lyrics-only import). Selection order:
+
+    1. The lyric-carrying track itself, when it has notes:
+       - channels with a vocal GM program → only those channels' notes
+         (isolates the sung line inside a format-0 everything-in-one-track
+         file);
+       - vocal-ish track name → all its non-drum notes;
+       - SMF type 1/2 with neither → still trusted: a track that interleaves
+         per-syllable Lyric events with its own notes *is* the karaoke
+         melody by construction. Format-0 files don't get this benefit of
+         the doubt — there the single track holds every instrument, so
+         without a vocal program/name there is no way to isolate the melody
+         and we fall back to lyrics-only.
+    2. Otherwise (dedicated noteless "Words" track), the vocal-ish track —
+       by name hint or vocal GM program, mirroring gp2rs_gpx — with the
+       most notes; within it, vocal-program channels only when present.
+    """
+    def _vocal_channels(scan: dict) -> set[int]:
+        return {
+            ch for ch, prog in scan["channel_programs"].items()
+            if prog in _VOCAL_MIDI_PROGRAMS
+        }
+
+    def _pool(scan: dict) -> list[tuple[int, int, int, int]]:
+        chans = _vocal_channels(scan)
+        if chans:
+            return [n for n in scan["notes"] if n[3] in chans]
+        return scan["notes"]
+
+    src = scans[lyric_track_index]
+    if src["notes"]:
+        if _vocal_channels(src) or _name_matches(src["name"], _VOCAL_NAME_HINTS):
+            return lyric_track_index, _pool(src)
+        if midi_type != 0:
+            return lyric_track_index, src["notes"]
+        return None
+
+    best: tuple[int, list] | None = None
+    for i, scan in enumerate(scans):
+        if not scan["notes"]:
+            continue
+        if not (_vocal_channels(scan)
+                or _name_matches(scan["name"], _VOCAL_NAME_HINTS)):
+            continue
+        pool = _pool(scan)
+        if pool and (best is None or len(pool) > len(best[1])):
+            best = (i, pool)
+    return best
+
+
+def extract_midi_lyrics(midi_path: str, audio_offset: float = 0.0) -> dict | None:
+    """Extract lyrics (and, when pairable, the vocal melody) from a `.mid`.
+
+    Returns ``None`` when the file carries no usable lyric events — callers
+    then change nothing, leaving any existing manifest keys and sidecar
+    files untouched. Otherwise returns::
+
+        {
+            "lyrics": [{"t": float, "d": float, "w": str}, ...],
+            "lyrics_source": "authored",
+            "vocal_pitch": {"version": 1,
+                            "notes": [{"t", "d", "midi"}, ...]} | None,
+        }
+
+    ``lyrics`` is the feedpak `lyrics.json` payload (spec §7.1: flat list,
+    no version field; ``w`` uses trailing ``-`` for syllable joins and
+    trailing ``+`` for line ends). ``vocal_pitch`` is the `vocal_pitch.json`
+    payload (spec §7.2, same shape as gp2rs_gpx's
+    ``convert_vocal_track_to_pitch_sidecar`` and the lyrics-karaoke
+    plugin's ``_persist_pitch``) — ``None`` when no vocal note track could
+    be identified, in which case the caller writes `lyrics.json` only.
+    ``lyrics_source`` is always ``"authored"`` (spec §7.1 vocabulary):
+    lyric meta events are chart-author data, not machine transcription.
+
+    Callers assembling a pack write ``lyrics.json`` /
+    ``vocal_pitch.json`` and set the manifest ``lyrics`` /
+    ``lyrics_source`` / ``vocal_pitch`` keys — and should do so only for
+    keys not already present, so an import never clobbers lyrics that
+    arrived from another source.
+
+    Sourcing rules:
+
+    - Lyric text comes from SMF Lyric (0x05) meta events — the track with
+      the most of them wins when several carry some. When the file has
+      none at all, Text (0x01) events are accepted as a fallback, but only
+      from a vocal-ish track (gp2rs_gpx-style name/program detection,
+      widened with "words"/"karaoke" for `.kar` text tracks) — Text events
+      elsewhere are copyright notices / markers, not lyrics.
+    - `.kar` conventions are normalized (see ``_normalize_lyric_tokens`` /
+      ``_apply_word_conventions``): ``/`` and ``\\`` line-break prefixes
+      become the spec's ``+`` suffix on the previous syllable, ``@``
+      metadata tokens are dropped, ``-`` hyphen joins pass through.
+    - Each syllable is paired with the vocal note (see
+      ``_select_vocal_notes``) whose onset falls within
+      ``_LYRIC_PAIR_TOLERANCE_S`` of the lyric event, greedily in time
+      order, one note per syllable. Paired syllables snap ``t``/``d`` to
+      the note (the authored melody is timing-authoritative, and keeps
+      `lyrics.json` and `vocal_pitch.json` mirrored per §7.2); a melisma's
+      extra notes are skipped. Unpaired syllables (talkies) keep the lyric
+      event's own time and run until the next syllable, clamped to
+      [``_UNPAIRED_LYRIC_MIN_D``, ``_UNPAIRED_LYRIC_MAX_D``] — they appear
+      in ``lyrics`` only, which spec §7.2 explicitly allows
+      (`vocal_pitch.notes` MAY be shorter than `lyrics.json`).
+
+    ``audio_offset`` (seconds) shifts every emitted time, same handle as
+    the keys/drums converters. Tempo-map scope per SMF type also matches
+    them (type 2 reads only the involved track's tempo events).
+    """
+    offset = float(audio_offset)
+    if not math.isfinite(offset):
+        raise ValueError(f"audio_offset must be a finite number, got {audio_offset!r}")
+
+    midi = mido.MidiFile(midi_path)
+    midi_type = getattr(midi, "type", 1)
+    scans = _scan_tracks_for_lyrics(midi)
+
+    # ── choose the lyric event stream ────────────────────────────────────
+    lyric_idx = -1
+    best_count = 0
+    for i, scan in enumerate(scans):
+        if len(scan["lyric_events"]) > best_count:
+            lyric_idx = i
+            best_count = len(scan["lyric_events"])
+    if lyric_idx >= 0:
+        toks = _normalize_lyric_tokens(scans[lyric_idx]["lyric_events"])
+    else:
+        # Text-event fallback: vocal-ish tracks only (plus .kar "Words" /
+        # "Soft Karaoke" text tracks). Normalize before counting so a track
+        # of @-metadata can't outscore a real lyric track.
+        toks = []
+        for i, scan in enumerate(scans):
+            if not scan["text_events"]:
+                continue
+            vocal_prog = any(
+                p in _VOCAL_MIDI_PROGRAMS
+                for p in scan["channel_programs"].values()
+            )
+            if not (vocal_prog
+                    or _name_matches(scan["name"], _LYRIC_TEXT_TRACK_HINTS)):
+                continue
+            cand = _normalize_lyric_tokens(scan["text_events"])
+            if len(cand) > len(toks):
+                lyric_idx = i
+                toks = cand
+    if lyric_idx < 0 or not toks:
+        return None
+
+    words = _apply_word_conventions(toks)
+    lyric_tick_to_seconds = _build_tick_to_seconds(midi, lyric_idx)
+
+    # ── pick + time the vocal note pool ──────────────────────────────────
+    picked = _select_vocal_notes(scans, lyric_idx, midi_type)
+    vocal_notes: list[dict] = []
+    if picked is not None:
+        note_idx, pool = picked
+        # Type-2 tracks own independent timelines — time the notes through
+        # their own track's tempo scope (same map as the lyric track for
+        # type 0/1, where tempo is merged across tracks anyway).
+        note_tick_to_seconds = (
+            lyric_tick_to_seconds if note_idx == lyric_idx
+            else _build_tick_to_seconds(midi, note_idx)
+        )
+        for start_tick, end_tick, pitch, _ch in pool:
+            t = note_tick_to_seconds(start_tick)
+            vocal_notes.append({
+                "t": t,
+                "d": max(0.0, note_tick_to_seconds(end_tick) - t),
+                "midi": int(pitch),
+            })
+        vocal_notes.sort(key=lambda n: n["t"])
+
+    # ── pair syllables with notes (greedy, time-ordered) ─────────────────
+    entries: list[dict] = []  # {t, d (None until resolved), w, paired}
+    j = 0
+    for tk, w in zip(toks, words):
+        t_lyric = lyric_tick_to_seconds(tk["tick"])
+        while (j < len(vocal_notes)
+               and vocal_notes[j]["t"] < t_lyric - _LYRIC_PAIR_TOLERANCE_S):
+            j += 1
+        if (j < len(vocal_notes)
+                and vocal_notes[j]["t"] <= t_lyric + _LYRIC_PAIR_TOLERANCE_S):
+            note = vocal_notes[j]
+            j += 1
+            entries.append({
+                "t": note["t"], "d": note["d"], "w": w,
+                "midi": note["midi"], "paired": True,
+            })
+        else:
+            entries.append({"t": t_lyric, "d": None, "w": w, "paired": False})
+
+    # Snapping can nudge a paired syllable past an unpaired neighbour;
+    # sort so both sidecars stay chronological for downstream consumers.
+    entries.sort(key=lambda e: e["t"])
+
+    # Unpaired durations: until the next syllable, clamped. Resolved after
+    # the sort so "next" is the true chronological neighbour.
+    for i, e in enumerate(entries):
+        if e["d"] is None:
+            if i + 1 < len(entries):
+                gap = entries[i + 1]["t"] - e["t"]
+                d = min(gap, _UNPAIRED_LYRIC_MAX_D)
+            else:
+                d = _UNPAIRED_LYRIC_MAX_D
+            e["d"] = max(d, _UNPAIRED_LYRIC_MIN_D)
+
+    lyrics_out = [
+        {"t": round(e["t"] + offset, 3), "d": round(e["d"], 3), "w": e["w"]}
+        for e in entries
+    ]
+    pitch_notes = [
+        {"t": round(e["t"] + offset, 3), "d": round(e["d"], 3),
+         "midi": int(e["midi"])}
+        for e in entries if e["paired"]
+    ]
+
+    return {
+        "lyrics": lyrics_out,
+        "lyrics_source": "authored",
+        "vocal_pitch": (
+            {"version": 1, "notes": pitch_notes} if pitch_notes else None
+        ),
     }

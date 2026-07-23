@@ -735,10 +735,11 @@ function createFolderSurface(cfg) {
         var card = document.createElement('div');
         card.className = 'flex flex-col rounded-lg overflow-hidden cursor-pointer group transition-transform duration-100 hover:scale-105';
         card.style.background = '#1a1d2e';
-        card.dataset.filename  = song.filename;
+        card.dataset.fn = song.filename;   // data-fn (raw): song_preview's hover loop finds cards by this
 
         var artWrap = document.createElement('div');
         artWrap.style.cssText = 'position:relative; width:100%; padding-bottom:100%; background:#111827; overflow:hidden;';
+        artWrap.setAttribute('data-v3-play', '');   // the playable surface song_preview overlays its indicator on
         var img = document.createElement('img');
         img.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover;';
         img.alt = ''; img.loading = 'lazy';
@@ -804,10 +805,11 @@ function createFolderSurface(cfg) {
     function _songRow(song, folderName) {
         var row = document.createElement('div');
         row.className = 'flex items-center gap-3 px-3 py-2 rounded cursor-pointer hover:bg-dark-500 group transition-colors duration-100';
-        row.dataset.filename = song.filename;
+        row.dataset.fn = song.filename;   // data-fn (raw): song_preview's hover loop finds rows by this
 
         var thumb = document.createElement('div');
         thumb.style.cssText = 'width:36px; height:36px; border-radius:4px; overflow:hidden; background:#111827; flex-shrink:0; position:relative;';
+        thumb.setAttribute('data-v3-play', '');   // marks the row previewable for song_preview
         var tImg = document.createElement('img');
         tImg.loading = 'lazy';
         tImg.src = '/api/song/' + song.filename.split('/').map(encodeURIComponent).join('/') + '/art';
@@ -1707,8 +1709,16 @@ function createFolderSurface(cfg) {
         init: _init,
         onScreenChanged: _onScreenChanged,
         render: _render,
-        // Pure window arithmetic, exposed for tests (no DOM needed).
-        __test: { visibleWindow: _visibleWindow, VIRTUAL_MIN: VIRTUAL_MIN, VIRTUAL_BUFFER: VIRTUAL_BUFFER },
+        // Helpers exposed for tests. visibleWindow is pure; songCard/songRow
+        // need a DOM (the tests supply a minimal element mock) and pin the
+        // song_preview integration markup (data-fn + a data-v3-play surface).
+        __test: {
+            visibleWindow: _visibleWindow,
+            VIRTUAL_MIN: VIRTUAL_MIN,
+            VIRTUAL_BUFFER: VIRTUAL_BUFFER,
+            songCard: _songCard,
+            songRow: _songRow,
+        },
     };
 }
 

@@ -183,6 +183,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     spec shape (moves `original/full.ogg` → `stems/full.ogg`, adds the `full` stem
     at `default: off`, drops the key); the fallback and the aliases are removed once
     they are migrated (#945).
+- **Folder Library previews on hover, like the grid and list views.** The Folders
+  view's cards and rows now carry the standard `data-fn` / `data-v3-play` markup,
+  so the existing **Song Preview** plugin previews them on hover exactly like the
+  other views (same audio, same behaviour) — Folder Library ships no preview code
+  of its own.
 
 ### Added
 - **Genres fall back to MusicBrainz enrichment** — the effective genre now

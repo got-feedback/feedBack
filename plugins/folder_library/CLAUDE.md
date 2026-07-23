@@ -160,6 +160,7 @@ Each song object (built by `_meta()`):
 - `filename` is the full relative path from the DLC root — pass it directly to `window.playSong()`.
 - `added` is a Unix timestamp (float, seconds) from `stat().st_mtime` — convert with `new Date(added * 1000)`. Always recomputed fresh (it changes when a file moves), even on a metadata-cache hit.
 - `arrangements` / `stems` are flat lists of **strings**, even though `extract_meta()` returns them as objects.
+- Hover-preview isn't resolved here at all — the cards just carry `data-fn`/`data-v3-play` markup and the `song_preview` plugin handles it (see Preview on Hover).
 
 ### extract_meta returns arrangements/stems as objects, not strings
 
@@ -329,13 +330,21 @@ Drag-and-drop uses **pointer events** (mousedown/mousemove/mouseup), not the HTM
 - **Esc cancels** — resolves with `null`, same as Cancel (applies to rename, delete, create folder/subfolder, move song)
 - **Enter confirms** — submits, equivalent to OK
 
+## Preview on Hover
+
+The Folder Library does **not** implement hover-preview itself — the `song_preview` plugin does, for the whole app. Its hover loop finds song elements by the selector `#v3-songs [data-fn]` (with a `[data-v3-play]` playable surface) and its `MutationObserver` watches the `#v3-songs` subtree — and the folder view (`#lib-folder-tree`) renders **inside** `#v3-songs`. So all folder_library has to do is give each card/row the standard markup:
+
+- **`_songCard`** — `card.dataset.fn = song.filename` (raw filename) + `data-v3-play` on the art wrap (the surface `song_preview` overlays its indicator on).
+- **`_songRow`** — `row.dataset.fn = song.filename` + `data-v3-play` on the thumb.
+
+`song_preview` then previews folder view exactly like the grid/list — same audio (its `/audio` endpoint), same availability/404 handling, same indicator — with **zero preview code here**. If you change the card/row structure, keep `data-fn` (raw, not URL-encoded) and a `[data-v3-play]` descendant, or `song_preview` will stop recognising the cards.
+
 ## Roadmap
 
-Implemented since the original release: **nested subfolders** (recursive tree + create-inside-folder), drag-and-drop, sort, advanced filtering, server-side tree filtering synced to the host library, and the warm metadata cache.
+Implemented since the original release: **nested subfolders** (recursive tree + create-inside-folder), drag-and-drop, sort, advanced filtering, server-side tree filtering synced to the host library, and the warm metadata cache. Hover-preview is provided by the `song_preview` plugin via the `data-fn` markup above (not implemented here).
 
 Not yet implemented, in rough priority order:
 
-- **Auto-play on hover** — with an on/off toggle saved to localStorage.
 - **Bulk move** — multi-select songs and move them all at once.
 - **Thumbnail performance** — faster loading and smoother scrolling with large libraries.
 - **Adjustable thumbnail/row sizes** — user-resizable song cards and list rows.

@@ -30,6 +30,7 @@ A FeedBack (fee[dB]ack) plugin that organizes your `.sloppak` / `.feedpak` DLC s
 - **List & Grid views** — toggle between a compact list with thumbnails or a full album art card grid
 - **Album art** — pulls art automatically for every song in both views
 - **One-click playback** — click any song to start playing immediately
+- **Preview song on hover** — hover a song to hear a quick preview of its audio (powered by the Song Preview plugin, the same way the grid and list views work)
 - **Sort options** — sort songs by title, artist, duration, year, tuning, or recently added with an asc/desc toggle
 - **Advanced filters** — filter by arrangements, stems, lyrics, and tuning with include and exclude support
 - **Folder management** — create, rename, and delete folders without leaving the plugin
@@ -54,6 +55,7 @@ Folder Library ships bundled with FeedBack as a core plugin (`"bundled": true`),
 | Switch to grid view | Click the grid icon in the toolbar |
 | Switch to list view | Click the list icon in the toolbar |
 | Play a song | Click any song row or card |
+| Preview song on hover | Hover a song — the Song Preview plugin plays a quick clip (same as the grid/list views) |
 | Sort songs | Use the sort dropdown in the toolbar |
 | Toggle sort direction | Click the arrow button next to the sort dropdown |
 | Open filters | Click the filter icon in the toolbar |
@@ -80,7 +82,8 @@ Folder Library started life as a standalone plugin with its own version line, bu
 
 ## Roadmap
 
-- [ ] Auto play song on hover (with an on/off toggle)
+- [ ] Compatibility with core settings — respect Accessibility → Interface size
+- [ ] Core parity — Metadata, Unmatched, and Upload should work in the folder view too
 - [ ] Bulk move — select multiple songs and move them at once
 - [ ] Thumbnail performance — faster loading and smoother scrolling with large song libraries
 - [ ] Adjustable thumbnail and row sizes — resize song cards and list rows to suit your preference

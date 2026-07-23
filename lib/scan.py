@@ -268,7 +268,7 @@ def background_scan(force: bool = False):
         # Both are kept out of the scan; _resolve_dlc_path still loads them by
         # path for playback.
         def _is_excluded_from_library(p: Path) -> bool:
-            return "tutorials-builtin" in p.parts or "minigames-builtin" in p.parts
+            return "tutorials-builtin" in p.parts or "minigames-builtin" in p.parts or any(part.startswith(".") for part in p.relative_to(dlc).parts)
         # Sloppaks: match both file (zip) and directory form, across both the
         # `.feedpak` and legacy `.sloppak` suffixes.
         _cands = sorted(p for ext in sloppak_mod.SONG_EXTS for p in dlc.rglob(f"*{ext}"))

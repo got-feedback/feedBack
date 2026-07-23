@@ -188,6 +188,19 @@
         // Arrangement switch restarts scoring — treat as a fresh session.
         reset(d.filename || (cur && cur.filename), d.arrangement == null ? 0 : Number(d.arrangement));
     });
+    // Learn the actual arrangement the server loaded. The server may have
+    // applied instrument routing (e.g. bass vs guitar) that differs from
+    // whatever was passed at song:loading time, and the stats recorder must
+    // record against the real arrangement so downstream consumers ("Jump back
+    // in!", "Keep practicing", "Continue Playing") read back the correct index.
+    // highway.js fires song:loaded when it processes the song_info WS message,
+    // which carries arrangement_index from the server.
+    sm.on('song:loaded', (e) => {
+        const d = (e && e.detail) || {};
+        if (cur && Number.isFinite(d.arrangementIndex)) {
+            cur.arrangement = Number(d.arrangementIndex);
+        }
+    });
 
     // ── Per-note tally (from the note_detect plugin) ──────────────────────--
     sm.on('note:hit', () => {

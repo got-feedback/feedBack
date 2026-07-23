@@ -7,6 +7,7 @@ the PR; here we pin the input-validation guards and the conversion helpers
 that are easy to drive without a fixture.
 """
 
+import json
 import struct
 import xml.etree.ElementTree as ET
 
@@ -29,6 +30,10 @@ from gp2rs_gpx import (
     _GPX_MAX_DECOMPRESSED,
     _find_piano_pairs,
     convert_vocal_track_to_pitch_sidecar,
+    _vocals_xml_to_lyrics,
+    attach_vocal_sidecars_to_sloppak,
+    lyrics_sidecar_path,
+    vocal_pitch_sidecar_path,
     _collect_tone_events,
     _inject_tones,
     _resolve_pending_slides,
@@ -384,6 +389,192 @@ def test_vocal_pitch_sidecar_emits_lyric_note():
 def test_vocal_pitch_sidecar_skips_beat_without_lyric():
     out = convert_vocal_track_to_pitch_sidecar(**_vocal_sidecar_args(with_lyric=False))
     assert out == {"version": 1, "notes": []}
+
+
+def test_vocal_pitch_sidecar_require_lyric_false_emits_melody():
+    # Lyric-less vocal track: with the gate relaxed the authored pitch still
+    # ships (there are no lyric tokens to stay aligned with).
+    out = convert_vocal_track_to_pitch_sidecar(
+        **_vocal_sidecar_args(with_lyric=False), require_lyric=False)
+    assert out == {"version": 1, "notes": [{"t": 0.0, "d": 0.5, "midi": 60}]}
+
+
+# ── _vocals_xml_to_lyrics ───────────────────────────────────────────────────
+
+def test_vocals_xml_to_lyrics_shape_and_suffixes():
+    xml = (
+        '<vocals count="4">'
+        '<vocal time="0.000" note="60" length="0.500" lyric="Hel-"/>'
+        '<vocal time="0.500" note="62" length="0.500" lyric="lo"/>'
+        '<vocal time="1.000" note="64" length="0.250" lyric="sing+"/>'
+        '<vocal time="1.250" note="64" length="0.250" lyric="ing"/>'
+        '</vocals>'
+    )
+    out = _vocals_xml_to_lyrics(xml)
+    assert out == [
+        # "-" means the same join in both conventions — passed through.
+        {"t": 0.0, "d": 0.5, "w": "Hel-"},
+        {"t": 0.5, "d": 0.5, "w": "lo"},
+        # XML "+" is a JOIN; feedpak "+" is a LINE END — joins become "-".
+        {"t": 1.0, "d": 0.25, "w": "sing-"},
+        {"t": 1.25, "d": 0.25, "w": "ing"},
+    ]
+
+
+def test_vocals_xml_to_lyrics_skips_bare_joiners_and_bad_xml():
+    xml = (
+        '<vocals count="2">'
+        '<vocal time="0.000" note="0" length="0.500" lyric="+"/>'
+        '<vocal time="0.500" note="60" length="0.500" lyric="la"/>'
+        '</vocals>'
+    )
+    assert _vocals_xml_to_lyrics(xml) == [{"t": 0.5, "d": 0.5, "w": "la"}]
+    assert _vocals_xml_to_lyrics("not xml <<<") == []
+
+
+# ── convert_file end-to-end: vocal karaoke sidecars ─────────────────────────
+# A vocal track must emit `<stem>.lyrics.json` + `<stem>.vocal_pitch.json`
+# next to the vocals XML; non-vocal tracks must not; a lyric-less vocal track
+# emits the pitch sidecar only.
+
+_GPIF_VOCAL = """
+<GPIF>
+  <Score><Title>T</Title><Artist>A</Artist></Score>
+  <Tracks>
+    <Track id="0"><Name>Vocals</Name>
+      <Property name="Tuning"><Pitches>60</Pitches></Property></Track>
+  </Tracks>
+  <MasterBars><MasterBar><Time>4/4</Time><Bars>0</Bars></MasterBar></MasterBars>
+  <Bars><Bar id="0"><Voices>0</Voices></Bar></Bars>
+  <Voices><Voice id="0"><Beats>0 1</Beats></Voice></Voices>
+  <Beats>
+    <Beat id="0"><Rhythm ref="r0"/><Lyrics><Line>Hel-</Line></Lyrics><Notes>0</Notes></Beat>
+    <Beat id="1"><Rhythm ref="r0"/><Lyrics><Line>lo</Line></Lyrics><Notes>1</Notes></Beat>
+  </Beats>
+  <Notes>
+    <Note id="0">
+      <Property name="String"><String>0</String></Property>
+      <Property name="Fret"><Fret>0</Fret></Property></Note>
+    <Note id="1">
+      <Property name="String"><String>0</String></Property>
+      <Property name="Fret"><Fret>2</Fret></Property></Note>
+  </Notes>
+  <Rhythms><Rhythm id="r0"><NoteValue>Quarter</NoteValue></Rhythm></Rhythms>
+</GPIF>
+"""
+
+# Same melody, no <Lyrics> anywhere.
+_GPIF_VOCAL_NO_LYRICS = _GPIF_VOCAL.replace(
+    "<Lyrics><Line>Hel-</Line></Lyrics>", "").replace(
+    "<Lyrics><Line>lo</Line></Lyrics>", "")
+
+
+def test_convert_file_vocal_track_emits_both_sidecars(tmp_path, monkeypatch):
+    monkeypatch.setattr(gp2rs_gpx, "_load_gpif",
+                        lambda _p: ET.fromstring(_GPIF_VOCAL))
+    out_files = convert_file("dummy.gpx", str(tmp_path), track_indices=[0])
+    assert len(out_files) == 1
+    assert ET.parse(out_files[0]).getroot().tag == "vocals"
+
+    # lyrics.json sidecar: flat [{t, d, w}] (spec §7.1), timings from the XML.
+    lyr = json.loads(lyrics_sidecar_path(out_files[0]).read_text(encoding="utf-8"))
+    assert lyr == [
+        {"t": 0.0, "d": 0.5, "w": "Hel-"},
+        {"t": 0.5, "d": 0.5, "w": "lo"},
+    ]
+
+    # vocal_pitch.json sidecar: {version, notes:[{t, d, midi}]} (spec §7.2),
+    # lyric-aligned (one note per syllable) at the authored pitches.
+    pitch = json.loads(vocal_pitch_sidecar_path(out_files[0]).read_text(encoding="utf-8"))
+    assert pitch == {"version": 1, "notes": [
+        {"t": 0.0, "d": 0.5, "midi": 60},
+        {"t": 0.5, "d": 0.5, "midi": 62},
+    ]}
+
+
+def test_convert_file_no_vocal_track_no_sidecars(tmp_path, monkeypatch):
+    monkeypatch.setattr(gp2rs_gpx, "_load_gpif",
+                        lambda _p: ET.fromstring(_GPIF_GUITAR_ASCENDING))
+    convert_file("dummy.gp", str(tmp_path),
+                 track_indices=[0], arrangement_names={0: "Lead"})
+    assert not list(tmp_path.glob("*.lyrics.json"))
+    assert not list(tmp_path.glob("*.vocal_pitch.json"))
+
+
+def test_convert_file_lyricless_vocal_track_pitch_sidecar_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(gp2rs_gpx, "_load_gpif",
+                        lambda _p: ET.fromstring(_GPIF_VOCAL_NO_LYRICS))
+    out_files = convert_file("dummy.gpx", str(tmp_path), track_indices=[0])
+    assert len(out_files) == 1
+    # No lyric text anywhere -> no lyrics.json; the authored melody still
+    # ships as vocal_pitch.json (lyric gate relaxed for lyric-less tracks).
+    assert not lyrics_sidecar_path(out_files[0]).exists()
+    pitch = json.loads(vocal_pitch_sidecar_path(out_files[0]).read_text(encoding="utf-8"))
+    assert pitch == {"version": 1, "notes": [
+        {"t": 0.0, "d": 0.5, "midi": 60},
+        {"t": 0.5, "d": 0.5, "midi": 62},
+    ]}
+
+
+# ── attach_vocal_sidecars_to_sloppak ────────────────────────────────────────
+
+_LYRICS_PAYLOAD = [{"t": 0.0, "d": 0.5, "w": "Hel-"}, {"t": 0.5, "d": 0.5, "w": "lo"}]
+_PITCH_PAYLOAD = {"version": 1, "notes": [{"t": 0.0, "d": 0.5, "midi": 60}]}
+
+
+def _make_pak(tmp_path, manifest: dict):
+    import yaml
+    pak = tmp_path / "pak"
+    pak.mkdir()
+    (pak / "manifest.yaml").write_text(
+        yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    return pak
+
+
+def test_attach_vocal_sidecars_writes_files_and_manifest(tmp_path):
+    import yaml
+    pak = _make_pak(tmp_path, {"title": "T", "arrangements": []})
+    written = attach_vocal_sidecars_to_sloppak(
+        pak, lyrics=_LYRICS_PAYLOAD, vocal_pitch=_PITCH_PAYLOAD)
+    assert written == [pak / "lyrics.json", pak / "vocal_pitch.json"]
+    assert json.loads((pak / "lyrics.json").read_text(encoding="utf-8")) == _LYRICS_PAYLOAD
+    assert json.loads((pak / "vocal_pitch.json").read_text(encoding="utf-8")) == _PITCH_PAYLOAD
+    manifest = yaml.safe_load((pak / "manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["lyrics"] == "lyrics.json"
+    assert manifest["lyrics_source"] == "authored"      # GP tab = authored chart
+    assert manifest["vocal_pitch"] == "vocal_pitch.json"
+    # No automated-engine provenance for authored payloads (spec §7.1.1/§7.2.1).
+    assert "lyric_transcription" not in manifest
+    assert "pitch_extraction" not in manifest
+    assert "feedpak_version" in manifest
+
+
+def test_attach_vocal_sidecars_never_clobbers(tmp_path):
+    import yaml
+    pak = _make_pak(tmp_path, {
+        "title": "T",
+        "lyrics": "existing_lyrics.json",
+        "lyrics_source": "user",
+    })
+    written = attach_vocal_sidecars_to_sloppak(
+        pak, lyrics=_LYRICS_PAYLOAD, vocal_pitch=_PITCH_PAYLOAD)
+    # lyrics already claimed by the manifest -> skipped entirely; pitch is new.
+    assert written == [pak / "vocal_pitch.json"]
+    assert not (pak / "lyrics.json").exists()
+    manifest = yaml.safe_load((pak / "manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["lyrics"] == "existing_lyrics.json"
+    assert manifest["lyrics_source"] == "user"
+
+
+def test_attach_vocal_sidecars_rejects_bad_payloads(tmp_path):
+    pak = _make_pak(tmp_path, {"title": "T"})
+    with pytest.raises(ValueError):
+        attach_vocal_sidecars_to_sloppak(pak, lyrics=[{"t": 0.0}])   # missing d/w
+    with pytest.raises(ValueError):
+        attach_vocal_sidecars_to_sloppak(pak, vocal_pitch={"version": 1})  # no notes
+    with pytest.raises(ValueError):
+        attach_vocal_sidecars_to_sloppak(
+            pak, lyrics=_LYRICS_PAYLOAD, lyrics_source="whisperx")  # not spec enum
 
 
 # ── _collect_tone_events ────────────────────────────────────────────────────

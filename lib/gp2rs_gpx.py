@@ -12,6 +12,7 @@ Both are called transparently by gp2rs.py when the file extension is .gpx.
 Do not call this module directly; use gp2rs.list_tracks / gp2rs.convert_file.
 """
 
+import json
 import logging
 import re
 import struct
@@ -1186,6 +1187,7 @@ def convert_vocal_track_to_pitch_sidecar(
     *,
     tempo_bpm: float = 120.0,
     audio_offset: float = 0.0,
+    require_lyric: bool = True,
 ) -> dict:
     """
     Extract per-syllable pitch from a GPX vocal track as a vocal_pitch.json dict.
@@ -1196,14 +1198,17 @@ def convert_vocal_track_to_pitch_sidecar(
 
         {"version": 1, "notes": [{"t": float, "d": float, "midi": int}, ...]}
 
-    This is complementary to convert_vocal_track() which produces arrangement XML.
-    NOTE: nothing in this module calls this helper yet — convert_file() does not
-    invoke it, so no vocal_pitch.json is emitted automatically. A caller wanting
-    the pitch ribbon must call this itself and persist the returned dict (e.g.
-    write it as vocal_pitch.json into the sloppak). When wiring vocals into a
-    sloppak, call both:
-        - convert_vocal_track() → vocals arrangement XML (karaoke highway)
-        - convert_vocal_track_to_pitch_sidecar() → vocal_pitch.json (pitch ribbon)
+    This is complementary to convert_vocal_track() which produces arrangement
+    XML. convert_file() calls both for every vocal track and writes the result
+    as a ``<stem>.vocal_pitch.json`` sidecar next to the vocals XML (see
+    _emit_vocal_sidecars); the sloppak assembly step then attaches it via
+    attach_vocal_sidecars_to_sloppak.
+
+    ``require_lyric`` (default True) keeps the feedpak-spec §7.2 alignment:
+    only beats carrying a lyric emit a note, so the pitch ribbon mirrors
+    lyrics.json token-for-token. Pass False for a lyric-less vocal track
+    (authored melody, no lyric text) to emit every pitched beat instead —
+    there are no lyric tokens to stay aligned with.
 
     Pitch source is the tab author's authored notes (exact), not AI audio
     analysis — so this is more accurate than pYIN/CREPE for well-authored tabs.
@@ -1258,13 +1263,15 @@ def convert_vocal_track_to_pitch_sidecar(
                         # Only emit notes that have a lyric — unvoiced beats
                         # (rests, instrumental fills) are excluded so the
                         # pitch ribbon stays aligned with lyric tokens.
+                        # (Relaxed via require_lyric=False for lyric-less
+                        # vocal tracks, where every pitched beat counts.)
                         lyric_el = beat_el.find('Lyrics')
                         has_lyric = (
                             lyric_el is not None
                             and lyric_el.find('Line') is not None
                             and (lyric_el.find('Line').text or '').strip()
                         )
-                        if not has_lyric:
+                        if require_lyric and not has_lyric:
                             voice_time += dur
                             continue
 
@@ -1682,6 +1689,26 @@ def convert_file(
                 raise ValueError(f"unsafe output filename from track name: {track['name']!r}")
             filepath.write_text(xml_str, encoding="utf-8")
             output_files.append(str(filepath))
+
+            # Vocal tracks additionally get karaoke sidecars next to the XML
+            # (`<stem>.lyrics.json` + `<stem>.vocal_pitch.json`, feedpak spec
+            # §7.1/§7.2) so the sloppak assembly step can attach the `lyrics` /
+            # `vocal_pitch` manifest keys without re-walking the GP file —
+            # same pattern as the keys notation sidecar below. Best-effort: a
+            # sidecar bug must never break the vocals XML conversion itself.
+            try:
+                _emit_vocal_sidecars(
+                    filepath, xml_str,
+                    root, track, raw_idx,
+                    masterbars, bars_by_id, voices_dict, beats_dict,
+                    notes_dict, rhythms_dict,
+                    tempo_bpm=tempo_bpm, audio_offset=audio_offset,
+                )
+            except Exception:
+                _log.exception(
+                    "gp2rs_gpx: vocal sidecar emission failed for track %r "
+                    "— vocals XML is unaffected", track['name'],
+                )
             continue
 
         # Iterate all masterbars and collect notes for this track
@@ -2401,6 +2428,195 @@ def _build_vocals_xml(
     xml_str = ET.tostring(root, encoding='unicode')
     dom = minidom.parseString(xml_str)
     return dom.toprettyxml(indent='  ', encoding=None)
+
+
+# ---------------------------------------------------------------------------
+# Vocal karaoke sidecars + manifest wiring (feedpak spec §7.1/§7.2)
+# Mirrors the gp2notation sidecar pattern: convert_file writes the payloads
+# next to the vocals XML (arrangement ids / the pak don't exist yet at convert
+# time), and the sloppak assembly step moves them into the pak root + manifest
+# via attach_vocal_sidecars_to_sloppak.
+# ---------------------------------------------------------------------------
+
+def lyrics_sidecar_path(xml_path: str | Path) -> Path:
+    """``Voice_Vocals.xml`` → ``Voice_Vocals.lyrics.json`` (next to the XML)."""
+    p = Path(xml_path)
+    return p.with_name(p.stem + ".lyrics.json")
+
+
+def vocal_pitch_sidecar_path(xml_path: str | Path) -> Path:
+    """``Voice_Vocals.xml`` → ``Voice_Vocals.vocal_pitch.json`` (next to the XML)."""
+    p = Path(xml_path)
+    return p.with_name(p.stem + ".vocal_pitch.json")
+
+
+def _vocals_xml_to_lyrics(xml_str: str) -> list[dict]:
+    """Project a ``<vocals>`` arrangement XML into the flat lyrics.json shape
+    (feedpak spec §7.1): ``[{"t": float, "d": float, "w": str}, ...]``.
+
+    Deriving from the XML (rather than re-walking the GP tree) guarantees the
+    two stay in lockstep — same tie extension, same rounding, same beats.
+
+    Suffix conversion: the XML lyric convention and feedpak disagree on ``+``.
+    In the vocals XML a trailing ``+`` means "connect to next token" (a join),
+    while feedpak ``+`` marks the last syllable of a LINE — so a pass-through
+    would turn every joined syllable into a line break. Joins map to feedpak's
+    trailing ``-`` instead; a trailing ``-`` already means the same thing in
+    both. Line-end ``+`` markers are never emitted: GP stores lyrics per beat
+    with no line structure, so there is nothing to derive them from.
+    """
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError:
+        return []
+    lyrics: list[dict] = []
+    for v in root.iter('vocal'):
+        w = (v.get('lyric') or '').strip()
+        if w.endswith('+'):
+            w = w[:-1] + '-'
+        # A bare joiner token isn't a syllable (spec: suffixes ride on real
+        # syllables, never standalone entries) — skip it.
+        if not w or w in ('-', '+'):
+            continue
+        try:
+            t = float(v.get('time', ''))
+            d = float(v.get('length', ''))
+        except (TypeError, ValueError):
+            continue
+        lyrics.append({'t': round(t, 3), 'd': round(d, 3), 'w': w})
+    return lyrics
+
+
+def _emit_vocal_sidecars(
+    xml_path: Path,
+    xml_str: str,
+    root: ET.Element,
+    track: dict,
+    raw_idx: int,
+    masterbars: list,
+    bars_by_id: dict,
+    voices_dict: dict,
+    beats_dict: dict,
+    notes_dict: dict,
+    rhythms_dict: dict,
+    *,
+    tempo_bpm: float = 120.0,
+    audio_offset: float = 0.0,
+) -> list[Path]:
+    """Write the karaoke sidecars for one converted vocal track.
+
+    ``<stem>.lyrics.json`` — only when the track actually carries lyric text
+    (derived from the vocals XML just built, so timings match exactly).
+    ``<stem>.vocal_pitch.json`` — whenever the track has pitched beats. With
+    lyrics present the notes stay lyric-aligned (spec §7.2: one entry per
+    syllable); for a lyric-less melody track the lyric gate is dropped so the
+    authored pitch still ships.
+
+    Returns the sidecar paths written (possibly empty).
+    """
+    written: list[Path] = []
+
+    lyrics = _vocals_xml_to_lyrics(xml_str)
+    if lyrics:
+        side = lyrics_sidecar_path(xml_path)
+        side.write_text(json.dumps(lyrics, separators=(",", ":")),
+                        encoding="utf-8")
+        written.append(side)
+
+    pitch = convert_vocal_track_to_pitch_sidecar(
+        root, track, raw_idx,
+        masterbars, bars_by_id, voices_dict, beats_dict,
+        notes_dict, rhythms_dict,
+        tempo_bpm=tempo_bpm, audio_offset=audio_offset,
+        require_lyric=bool(lyrics),
+    )
+    if pitch.get('notes'):
+        side = vocal_pitch_sidecar_path(xml_path)
+        side.write_text(json.dumps(pitch, separators=(",", ":")),
+                        encoding="utf-8")
+        written.append(side)
+
+    return written
+
+
+def attach_vocal_sidecars_to_sloppak(
+    sloppak_dir: str | Path,
+    *,
+    lyrics: list | None = None,
+    vocal_pitch: dict | None = None,
+    lyrics_source: str = "authored",
+) -> list[Path]:
+    """Write ``lyrics.json`` / ``vocal_pitch.json`` into a directory-form
+    sloppak and point the top-level manifest ``lyrics`` / ``lyrics_source`` /
+    ``vocal_pitch`` keys at them (feedpak spec §7.1/§7.2).
+
+    Vocal companion to gp2notation.attach_notation_to_sloppak, with the same
+    manifest round-trip caveat (PyYAML ``safe_load`` + ``safe_dump`` — key
+    order survives, comments don't). GP-derived payloads are ``authored``
+    provenance, so no ``lyric_transcription`` / ``pitch_extraction`` blocks
+    are written (the spec reserves those for automated engines).
+
+    Never clobbers: a payload whose manifest key is already set (or whose
+    target file already exists) is skipped, so a pak that already carries
+    lyrics/pitch — hand-edited or machine-extracted — is left alone.
+    Raises ``ValueError`` on a malformed payload, an unknown
+    ``lyrics_source``, or a manifest that isn't a mapping. Returns the paths
+    actually written.
+    """
+    import yaml
+
+    if lyrics_source not in ("authored", "transcribed", "user"):
+        raise ValueError(
+            f"lyrics_source must be authored/transcribed/user, got {lyrics_source!r}")
+    if lyrics is not None and not (
+        isinstance(lyrics, list) and all(
+            isinstance(e, dict)
+            and isinstance(e.get('w'), str)
+            and isinstance(e.get('t'), (int, float))
+            and isinstance(e.get('d'), (int, float))
+            for e in lyrics
+        )
+    ):
+        raise ValueError("lyrics must be a list of {t, d, w} syllable dicts")
+    if vocal_pitch is not None and not (
+        isinstance(vocal_pitch, dict)
+        and isinstance(vocal_pitch.get('notes'), list)
+    ):
+        raise ValueError("vocal_pitch must be a dict with a `notes` list")
+
+    pak = Path(sloppak_dir)
+    manifest_path = pak / "manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError(f"{manifest_path} is not a mapping")
+
+    written: list[Path] = []
+
+    if lyrics and not manifest.get("lyrics") and not (pak / "lyrics.json").exists():
+        (pak / "lyrics.json").write_text(
+            json.dumps(lyrics, separators=(",", ":")), encoding="utf-8")
+        manifest["lyrics"] = "lyrics.json"
+        manifest["lyrics_source"] = lyrics_source
+        written.append(pak / "lyrics.json")
+
+    if (vocal_pitch and vocal_pitch.get("notes")
+            and not manifest.get("vocal_pitch")
+            and not (pak / "vocal_pitch.json").exists()):
+        (pak / "vocal_pitch.json").write_text(
+            json.dumps(vocal_pitch, separators=(",", ":")), encoding="utf-8")
+        manifest["vocal_pitch"] = "vocal_pitch.json"
+        written.append(pak / "vocal_pitch.json")
+
+    if written:
+        # Stamp the format version while we're rewriting the manifest (spec
+        # §4), without downgrading an existing declared version.
+        from sloppak import FEEDPAK_VERSION
+        manifest.setdefault("feedpak_version", FEEDPAK_VERSION)
+        manifest_path.write_text(
+            yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+    return written
 
 
 def _gpx_tuning(track: dict) -> list[int]:

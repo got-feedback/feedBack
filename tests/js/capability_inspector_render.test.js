@@ -542,6 +542,35 @@ test('capability inspector links library legacy command surfaces to canonical en
     assert.match(libraryContent, /title="2 participants"/);
 });
 
+test('capability inspector does not render descriptive compatibility shims as commands', () => {
+    const snapshot = {
+        pipelines: [
+            { name: 'visualization', review: { lifecycle: 'active', label: 'Active contract', tone: 'clean', summary: 'Visualization surface.' }, participants: [
+                { pluginId: 'core.visualization', roles: ['owner'], commands: ['inspect', 'list-providers', 'select-renderer', 'clear-renderer'], operations: ['renderer.create', 'renderer.destroy'], events: [], runtime: true, availability: 'available', ownership: 'multi-provider', safety: 'safe' },
+            ], conflicts: [] },
+        ],
+        participants: [{ pluginId: 'core.visualization' }],
+        compatibilityShims: [
+            { shimId: 'visualization:window.slopsmithViz_*', source: 'core.visualization', capability: 'visualization', legacySurface: 'window.slopsmithViz_* factory globals', status: 'used', hitCount: 1 },
+            { shimId: 'visualization:type-visualization-manifest', source: 'core.visualization', capability: 'visualization', legacySurface: 'plugin.json type: "visualization"', status: 'used', hitCount: 1 },
+        ],
+        expectedCompatibilityShims: [],
+    };
+    const { window, elements } = loadInspector(snapshot);
+    const filter = elements.get('capability-inspector-filter');
+
+    filter.value = 'visualization';
+    window.__slopsmithCapabilityInspector.render();
+    const content = elements.get('capability-inspector-content').innerHTML;
+
+    assert.match(content, /data-capability-node="command:inspect"/);
+    assert.match(content, /data-capability-node="operation:renderer\.create"/);
+    assert.doesNotMatch(content, /data-capability-node="command:window\.slopsmithViz_\* factory globals"/);
+    assert.doesNotMatch(content, /data-capability-node="command:plugin\.json type: &quot;visualization&quot;"/);
+    assert.doesNotMatch(content, /data-link-kind="shimmed"[^>]*>window\.slopsmithViz_\* factory globals<\/span>/);
+    assert.doesNotMatch(content, /data-link-kind="shimmed"[^>]*>plugin\.json type: (?:&quot;|")visualization(?:&quot;|")<\/span>/);
+});
+
 test('capability inspector clears provider hover without a graph hover target', () => {
     const snapshot = {
         pipelines: [

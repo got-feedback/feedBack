@@ -383,7 +383,7 @@
         if (attributionOnly && attributionOnly.has(String(surface || ''))) return null;
         const mapped = (LEGACY_SURFACE_ENDPOINTS[String(capability || '')] || {})[String(surface || '')];
         if (mapped) return mapped;
-        return { type: 'command', label: String(surface || '').trim() };
+        return null;
     }
 
     function shimEndpoints(shims, type, onlyHits) {

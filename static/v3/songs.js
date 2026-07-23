@@ -43,8 +43,110 @@
         ['difficulty', 'Difficulty (easiest first)'], ['difficulty-desc', 'Difficulty (hardest first)'],
     ];
     const FORMATS = [['', 'All formats'], ['sloppak', 'Feedpak'], ['loose', 'Folder']];
-    const ARRANGEMENTS = ['Lead', 'Rhythm', 'Bass', 'Combo', 'Vocals'];
-    const STEMS = ['guitar', 'bass', 'drums', 'vocals', 'other'];
+    function _arrangementOptions() {
+        // Derive filter pill labels from instrument registry role names.
+        // When new instrument plugins are added, their arrangement type labels
+        // appear in the library filter drawer automatically.
+        var insts = sm && sm._instruments;
+        if (Array.isArray(insts) && insts.length) {
+            var out = [];
+            for (var i = 0; i < insts.length; i++) {
+                var roles = insts[i].roles || [];
+                for (var j = 0; j < roles.length; j++) {
+                    var label = roles[j].label;
+                    if (label && out.indexOf(label) < 0) out.push(label);
+                }
+            }
+            if (out.length) return out;
+        }
+        return ['Lead', 'Rhythm', 'Bass', 'Combo', 'Vocals'];
+    }
+
+    function _roleIcon(arrName) {
+        var insts = window.feedBack && window.feedBack._instruments;
+        if (!Array.isArray(insts)) return '\u25cf';
+        var name = (arrName || '').toLowerCase();
+        for (var i = 0; i < insts.length; i++) {
+            var inst = insts[i];
+            var roles = inst.roles || [];
+            for (var j = 0; j < roles.length; j++) {
+                var r = roles[j];
+                if (name === r.label.toLowerCase()) {
+                    if (inst.roles.length > 1) {
+                        return (inst.id[0] || '?').toUpperCase() + '<span class="text-[0.5rem]">' + (r.label[0] || '?').toUpperCase() + '</span>';
+                    }
+                    return (inst.id[0] || (r.label[0] || '?')).toUpperCase();
+                }
+                var names = r.arrangement_names || [];
+                for (var k = 0; k < names.length; k++) {
+                    if (name === names[k]) {
+                        if (inst.roles.length > 1) {
+                            return (inst.id[0] || '?').toUpperCase() + '<span class="text-[0.5rem]">' + (r.label[0] || '?').toUpperCase() + '</span>';
+                        }
+                        return (inst.id[0] || (r.label[0] || '?')).toUpperCase();
+                    }
+                }
+            }
+        }
+        return '\u25cf';
+    }
+
+    function _isPitchedArrangement(arrName) {
+        var insts = window.feedBack && window.feedBack._instruments;
+        if (!Array.isArray(insts)) return true;
+        var name = (arrName || '').toLowerCase();
+        for (var i = 0; i < insts.length; i++) {
+            var inst = insts[i];
+            var roles = inst.roles || [];
+            for (var j = 0; j < roles.length; j++) {
+                var r = roles[j];
+                if (name === r.label.toLowerCase()) return inst.detect_strategy === 'pitch';
+                var names = r.arrangement_names || [];
+                for (var k = 0; k < names.length; k++) {
+                    if (name === names[k]) return inst.detect_strategy === 'pitch';
+                }
+            }
+        }
+        return true;
+    }
+
+    function _instrumentArrangementNames(instrumentId) {
+        var insts = sm && sm._instruments;
+        if (!Array.isArray(insts)) return null;
+        for (var i = 0; i < insts.length; i++) {
+            if (insts[i].id === instrumentId && insts[i].roles) {
+                var names = [];
+                for (var j = 0; j < insts[i].roles.length; j++) {
+                    var label = insts[i].roles[j].label;
+                    if (label && names.indexOf(label) < 0) names.push(label);
+                }
+                return names.length ? names : null;
+            }
+        }
+        return null;
+    }
+
+    function _applyArrangementAutoFilter(instrumentId) {
+        var names = _instrumentArrangementNames(instrumentId);
+        if (!names) return false;
+        _arrAutoInstrument = instrumentId;
+        state.filters.arr_has = names.slice();
+        state.filters.arr_lacks = [];
+        return true;
+    }
+
+    function _activeInstrument() {
+        var id = sm && sm._activeInstrumentProfile;
+        if (!id) return null;
+        var insts = window.feedBack && window.feedBack._instruments;
+        if (!Array.isArray(insts)) return null;
+        for (var i = 0; i < insts.length; i++) {
+            if (id.indexOf(insts[i].id) === 0) return insts[i];
+        }
+        return null;
+    }
+
+    const STEMS = ['guitar', 'bass', 'drums', 'vocals', 'piano', 'other'];
     const PAGE_SIZE = 24;
     // Extra rows rendered above/below the viewport so a fast scroll doesn't flash
     // blank before the next window render lands.
@@ -62,8 +164,8 @@
         artist: '', album: '',
         grouping: true,     // one card per song (multi-chart grouping); persisted
 
-        filters: { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [] },
-        page: 0, total: 0, loading: false, built: false, accuracy: {}, tuningNames: [], genres: [],
+        filters: { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [], tuningMatch: 'exact' },
+        page: 0, total: 0, loading: false, built: false, accuracy: {}, arrangementAccuracy: {}, tuningNames: [], genres: [],
         artistCatalog: [], renderedHash: '',
         scrollBound: false,
         songsById: {}, selectMode: false, selected: new Set(),
@@ -120,7 +222,7 @@
     function activeFilterCount() {
         const f = state.filters;
         return f.arr_has.length + f.arr_lacks.length + f.stem_has.length + f.stem_lacks.length +
-            (f.lyrics ? 1 : 0) + f.tunings.length + (f.mastery ? f.mastery.length : 0) +
+            (f.lyrics ? 1 : 0) + (f.tuningMatch === 'playable' ? 1 : f.tunings.length) + (f.mastery ? f.mastery.length : 0) +
             (f.match ? f.match.length : 0) + (f.genre ? f.genre.length : 0) +
             (state.artist ? 1 : 0) + (state.album ? 1 : 0);
     }
@@ -280,7 +382,21 @@
         if (f.stem_has.length) p.set('stems_has', f.stem_has.join(','));
         if (f.stem_lacks.length) p.set('stems_lacks', f.stem_lacks.join(','));
         if (f.lyrics) p.set('has_lyrics', f.lyrics);
-        if (f.tunings.length) p.set('tunings', f.tunings.join(','));
+        // The two modes answer different questions, so only one filters at a
+        // time: sending both would silently intersect them.
+        if (f.tunings.length && f.tuningMatch !== 'playable') p.set('tunings', f.tunings.join(','));
+        // Tell the server which instrument perspective to use for tuning
+        // columns (bass_tuning_name vs tuning_name, etc.).
+        var instId = sm && sm._activeInstrumentProfile;
+        // Which perspective the `tunings` filter + the tuning sort read.
+        // Uses the 3-perspective model (guitar-lead, guitar-rhythm, bass) from
+        // the active instrument profile. Drums/piano/keys fall through to the
+        // default guitar-lead perspective.
+        if (libInstrument() !== 'guitar-lead') p.set('instrument', libInstrument());
+        // "Playable without retuning": send the player's LIVE tuning and let the
+        // server do the pitch maths (the pitch tables live in lib/tunings.py —
+        // duplicating them here is how the two drift apart).
+        applyPlayableParams(p, f);
         if (f.mastery && f.mastery.length) p.set('mastery', f.mastery.join(','));
         if (f.match && f.match.length) p.set('match', f.match.join(','));
         if (f.genre && f.genre.length) p.set('genre', f.genre.join(','));
@@ -475,23 +591,108 @@
         if (window.syncLibrarySong && sid) window.syncLibrarySong(state.provider, sid, { playWhenReady: true });
     }
 
-    // Accuracy badge markup. `variant` is 'grid' (overlay pill on the card art,
-    // default) or 'tree' (inline percentage in the list row). Both carry the
-    // .fb-acc-badge class so a post-play refresh (repaintAccuracy) can find and
-    // replace them in place without re-rendering the whole list.
-    function accuracyBadge(filename, variant) {
-        const acc = state.accuracy[filename];
-        if (acc == null) return '';
-        // Floor, never round: 100% must mean every note hit.
-        const pct = Math.floor(acc * 100);
-        if (variant === 'tree') {
-            const color = acc >= MASTERY_ACCURACY ? 'text-fb-good' : acc >= 0.5 ? 'text-fb-mid' : 'text-fb-low';
-            return '<span class="fb-acc-badge text-xs font-bold ' + color + '">' + pct + '%</span>';
+    // Per-role accuracy helpers — find the arrangement matching the active
+    // instrument role and read its per-arrangement accuracy.
+    function _matchingArrangementIndex(song) {
+        if (!song || !song.arrangements || !song.arrangements.length) return null;
+        var want = state.filters.arr_has;
+        var activeProfileId = (sm && sm._activeInstrumentProfile) || '';
+        var activeRoleLabel = null;
+        if (activeProfileId) {
+            var insts = window.feedBack && window.feedBack._instruments;
+            if (Array.isArray(insts)) {
+                for (var ii = 0; ii < insts.length; ii++) {
+                    var ir = insts[ii].roles || [];
+                    for (var ij = 0; ij < ir.length; ij++) {
+                        if (activeProfileId === insts[ii].id + '-' + ir[ij].id) {
+                            activeRoleLabel = ir[ij].label;
+                            break;
+                        }
+                    }
+                    if (activeRoleLabel) break;
+                }
+            }
         }
-        const color = acc >= MASTERY_ACCURACY ? 'bg-fb-good' : (acc >= 0.5 ? 'bg-fb-mid' : 'bg-fb-low');
-        const text = acc >= 0.5 && acc < MASTERY_ACCURACY ? 'text-black' : 'text-white';
-        return '<span class="fb-acc-badge absolute bottom-0 right-0 ' + color + '/90 ' + text + ' px-2 py-0.5 rounded-tl-md text-xs font-bold flex items-center gap-1">' +
-            '<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>' + pct + '%</span>';
+        if (activeRoleLabel) {
+            for (var i = 0; i < song.arrangements.length; i++) {
+                var a = song.arrangements[i];
+                var sn = a.smart_name || a.name || '';
+                if (sn === activeRoleLabel) return a.index != null ? a.index : i;
+            }
+            return null;
+        }
+        if (!want.length) return null;
+        for (var i = 0; i < song.arrangements.length; i++) {
+            var a2 = song.arrangements[i];
+            var sn2 = a2.smart_name || a2.name || '';
+            for (var j = 0; j < want.length; j++) {
+                if (sn2 === want[j]) return a2.index != null ? a2.index : i;
+            }
+        }
+        return null;
+    }
+
+    function _perArrangementAccuracy(filename, arrIndex) {
+        var map = state.arrangementAccuracy[filename];
+        if (!map) return null;
+        return typeof map[arrIndex] === 'number' ? map[arrIndex] : null;
+    }
+
+    // Accuracy badge markup. `variant` is 'grid' (overlay pill on the card art,
+    // positioned `absolute bottom-0 right-0`) or 'tree' (inline `<span>`).
+    // Cards show per-role accuracy: the arrangement matching the current
+    // instrument role determines the displayed percentage, not the song-wide max.
+    // A hover overlay reveals all arrangements with their individual accuracies.
+    function accuracyBadge(filename, variant, song) {
+        if (!song && state.songsById) song = state.songsById[filename];
+        var acc = null;
+        var arrIdx = song ? _matchingArrangementIndex(song) : null;
+        var hasMatchingArrangement = arrIdx != null;
+        if (hasMatchingArrangement) {
+            acc = _perArrangementAccuracy(filename, arrIdx);
+        }
+        var hasArr = song && song.arrangements && song.arrangements.length > 0;
+        if (acc == null && !hasArr) return '';
+
+        var pct = acc != null ? Math.floor(acc * 100) : null;
+        var displayLabel;
+        if (pct != null) {
+            displayLabel = pct + '%';
+        } else if (!state.filters.arr_has.length && !hasMatchingArrangement) {
+            displayLabel = 'n/a';
+        } else {
+            displayLabel = '\u2014 %';
+        }
+        if (variant === 'tree') {
+            var color = acc != null && acc >= MASTERY_ACCURACY ? 'text-fb-good' : acc != null && acc >= 0.5 ? 'text-fb-mid' : 'text-fb-low';
+            return '<span class="fb-acc-badge text-xs font-bold ' + color + '">' + displayLabel + '</span>';
+        }
+
+        var hoverOverlay = '';
+        if (song && song.arrangements && song.arrangements.length > 0) {
+            var songTuning = song.tuning_name || '';
+            var items = '';
+            for (var ai = 0; ai < song.arrangements.length; ai++) {
+                var a = song.arrangements[ai];
+                var aiIdx = a.index != null ? a.index : ai;
+                var aAcc = _perArrangementAccuracy(filename, aiIdx);
+                var aName = a.smart_name || a.name || ('#' + aiIdx);
+                var aLabel = aAcc != null ? Math.floor(aAcc * 100) + '%' : '\u2014';
+                var aColor = aAcc != null
+                    ? (aAcc >= MASTERY_ACCURACY ? 'text-fb-good' : aAcc >= 0.5 ? 'text-fb-mid' : 'text-fb-low')
+                    : 'text-gray-600';
+                var isPitched = _isPitchedArrangement(aName);
+                var tuningPart = isPitched && songTuning ? ' \u00b7 ' + esc(songTuning) : '';
+                items += '<div class="flex items-center gap-1 px-2 py-0.5"><span class="text-xs text-fb-textDim flex-1">' + esc(aName) + tuningPart + '</span><span class="text-xs font-bold ' + aColor + '">' + aLabel + '</span></div>';
+            }
+            hoverOverlay = '<div class="opacity-0 group-hover:opacity-100 transition" style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.8);border-radius:0 0 0.5rem 0.5rem;z-index:20;pointer-events:none">' + items + '</div>';
+        }
+
+        var badgeColor = acc != null ? (acc >= MASTERY_ACCURACY ? 'rgba(34,197,94,0.9)' : (acc >= 0.5 ? 'rgba(234,179,8,0.9)' : 'rgba(239,68,68,0.9)')) : 'rgba(75,85,99,0.9)';
+        var badgeText = acc != null && acc >= 0.5 && acc < MASTERY_ACCURACY ? 'text-black' : 'text-white';
+        var borderColor = acc != null ? (acc >= MASTERY_ACCURACY ? '#22c55e' : (acc >= 0.5 ? '#eab308' : '#ef4444')) : '#4b5563';
+        return '<span class="fb-acc-badge absolute bottom-0 right-0 px-2 py-0.5 rounded-tl-md text-xs font-bold flex items-center gap-1 opacity-100 group-hover:opacity-0 transition border-l-2 border-t-2 ' + badgeText + '" style="background:' + badgeColor + ';border-color:' + borderColor + '">' +
+            displayLabel + '</span>' + hoverOverlay;
     }
 
     // ── Metadata-refresh per-tile state (the "Refresh Metadata" batch) ─────────
@@ -548,12 +749,14 @@
     // snapshot would otherwise survive a sidebar return, so we force a full
     // re-fetch on the next entry. (feedBack — "No DLC until restart".)
     let _libraryDirty = false;
+    let _arrAutoInstrument = null;
+    let _autoFilterEnabled = true;
 
     function repaintAccuracy(key) {
         const apply = (el, variant) => {
             if (el.getAttribute('data-fn') !== key) return;
             const old = el.querySelector('.fb-acc-badge');
-            const html = accuracyBadge(key, variant);
+            const html = accuracyBadge(key, variant, state.songsById[key]);
             if (variant === 'grid') {
                 const art = el.querySelector('[data-v3-play]');
                 if (!art) return;
@@ -576,14 +779,13 @@
     async function applyScoreRefresh() {
         if (!_dirtyScores.size) return;
         const fresh = await jget('/api/stats/best');
-        // Fetch failed — keep the entries dirty so the next trigger (or screen
-        // enter) retries rather than silently dropping the badge update.
+        const freshArr = await jget('/api/stats/best-by-arrangement');
         if (!fresh) return;
         state.accuracy = fresh;
+        if (freshArr) state.arrangementAccuracy = freshArr;
         const keys = Array.from(_dirtyScores);
         _dirtyScores.clear();
         keys.forEach(repaintAccuracy);
-        // A new score shifts the repertoire meter + the keep-practicing shelf.
         renderLibraryHome();
     }
 
@@ -681,7 +883,7 @@
                 '<button class="v3-kp-card group text-left" data-kp="' + esc(r.filename) + '" data-arr="' + esc(r.arrangement != null ? r.arrangement : '') + '" title="' + esc(r.title) + '">' +
                 '<div class="relative aspect-square rounded-lg overflow-hidden bg-fb-card">' +
                 '<img src="' + esc(r.art_url) + '" alt="" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" onerror="this.style.visibility=\'hidden\'">' +
-                accuracyBadge(r.filename) +
+                accuracyBadge(r.filename, 'grid') +
                 '</div>' +
                 '<div class="mt-1 text-sm text-fb-text truncate">' + esc(r.title) + '</div>' +
                 '<div class="text-xs text-fb-textDim truncate">' + esc(r.artist) + '</div>' +
@@ -786,6 +988,10 @@
     // so without them the chips render exactly as before. Decoration runs AFTER the
     // (sync) window paint so scrolling stays snappy; a token cancels a superseded pass.
     let _tuningDecorToken = 0;
+    // The instrument the current grid was queried/painted for, so a
+    // working-tuning change can tell a guitar<->bass SWITCH (re-query) from a
+    // retune within the same instrument (re-colour only).
+    let _lastRenderInstrument = null;
     function _applyChipMatch(chip, stateName) {
         chip.classList.remove('bg-fb-mid', 'bg-emerald-500', 'bg-amber-400');
         chip.classList.add(stateName === 'match' ? 'bg-emerald-500'
@@ -805,10 +1011,11 @@
         for (const chip of chips) {
             const offs = chip.getAttribute('data-tuning-offsets').split(',').map(Number);
             if (!offs.length || offs.some((n) => !isFinite(n))) continue;
-            // Pass the instrument so coverage uses the right base pitches (bass vs guitar).
+            // Pass the instrument so coverage uses the right base pitches.
             const arrangement = chip.dataset.tuningBass === '1' ? 'Bass' : 'Lead';
+            const instId = chip.dataset.tuningInstrument || (chip.dataset.tuningBass === '1' ? 'bass' : 'guitar');
             let rep = null;
-            try { rep = await cov({ tuning: offs, stringCount: offs.length, arrangement: arrangement }); } catch (_) { rep = null; }
+            try { rep = await cov({ tuning: offs, stringCount: offs.length, arrangement: arrangement, instrument: instId }); } catch (_) { rep = null; }
             if (token !== _tuningDecorToken) return;   // superseded by a re-paint / tuning change
             if (rep) _applyChipMatch(chip, rep.covered ? 'match' : 'retune');
         }
@@ -825,39 +1032,64 @@
         const shown = song.display_chart ? Object.assign({}, song, song.display_chart) : song;
         // In select mode the checkbox occupies top-2 left-2, so shift the
         // tuning chip right (left-9) to avoid overlapping it.
+        // Bass players see the bass chart's tuning (guitar fallback) — the card
+        // must agree with the facet/filter or the grid contradicts the pills.
+        const shownTuning = shownTuningName(shown);
         const tuningLabel = (typeof window.displayTuningName === 'function')
-            ? window.displayTuningName(shown.tuning_name || shown.tuning)
-            : (shown.tuning_name || '');
+            ? window.displayTuningName(shownTuning)
+            : (shownTuning || '');
         let tuning = '';
         if (tuningLabel) {
             const rawOffsets = (typeof window.parseRawTuningOffsets === 'function')
                 ? (window.parseRawTuningOffsets(shown.tuning_offsets)
-                    || window.parseRawTuningOffsets(shown.tuning_name || shown.tuning))
+                    || window.parseRawTuningOffsets(shownTuningOffsets(shown))
+                    || window.parseRawTuningOffsets(shownTuning)
+                    || window.parseRawTuningOffsets(shown.tuning))
                 : null;
             const targetNotes = (tuningLabel === 'Custom Tuning' && rawOffsets
                 && typeof window.displayTuningTargets === 'function')
                 ? window.displayTuningTargets(rawOffsets, { tuningName: tuningLabel })
                 : '';
-            const badgeTitle = targetNotes
+            // Mark a tuning we INFERRED from the guitar chart (this song has no
+            // bass arrangement) so a bass player isn't shown a borrowed tuning
+            // as if it were their part's. `~` keeps the chip compact; the title
+            // spells it out.
+            const inferred = shown.tuning_inferred === true;
+            const badgeTitle = (targetNotes
                 ? ('Custom Tuning: ' + targetNotes)
-                : tuningLabel;
-            const pos = 'absolute top-2 ' + (state.selectMode ? 'left-9' : 'left-2');
+                : tuningLabel)
+                + (inferred ? ' — from the guitar chart (no bass arrangement)' : '');
+            const pos = 'absolute top-0 rounded-br-md ' + (state.selectMode ? 'left-9' : 'left-0');
             // Tag the chip with its offsets so decorateTuningChips() can colour it
             // green (matches your current tuning) / amber (needs a retune) after paint.
             // Also flag a bass-only song (every arrangement is a bass part) so coverage
             // scores its bass tuning against the bass base pitches, not guitar — otherwise
             // a 4-string bass tuning read as guitar can false-match a guitar player.
             const chipArrs = shown.arrangements || [];
-            const chipIsBass = chipArrs.length > 0
-                && chipArrs.every((a) => /\bbass\b/i.test((a && a.name) || ''));
-            const matchAttr = (rawOffsets && rawOffsets.length)
-                ? ' data-tuning-chip data-tuning-offsets="' + esc(rawOffsets.join(',')) + '"'
-                    + (chipIsBass ? ' data-tuning-bass="1"' : '') : '';
+            // Bass either because the chip is SHOWING the bass chart's tuning
+            // Which instrument this chip represents — read from the active
+            // instrument profile in the registry, falling back to the
+            // 3-perspective bass/lead detection for the tuner plugin's coverage
+            // checker (which only knows 'Bass' and 'Lead' arrangement labels).
+            const inst = _activeInstrument();
+            const instId = inst ? inst.id : (libInstrument() === 'bass' ? 'bass' : 'guitar');
+            const isBass = instId === 'bass'
+                || (chipArrs.length > 0
+                    && chipArrs.every((a) => /\bbass\b/i.test((a && a.name) || '')));
+            const stringCount = inst && inst.string_count ? inst.string_count : (isBass ? 4 : 6);
+            // Truncate offsets to the instrument's string count so the
+            // coverage checker compares the right number of strings.
+            let chipOffsets = rawOffsets;
+            if (chipOffsets && chipOffsets.length > stringCount) chipOffsets = chipOffsets.slice(0, stringCount);
+            const matchAttr = (chipOffsets && chipOffsets.length)
+                ? ' data-tuning-chip data-tuning-offsets="' + esc(chipOffsets.join(',')) + '"'
+                    + ' data-tuning-instrument="' + esc(instId) + '"'
+                    + (isBass ? ' data-tuning-bass="1"' : '') : '';
             if (targetNotes) {
-                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.5625rem] font-bold px-1.5 py-0.5 rounded-sm leading-tight max-w-[5.5rem] text-center"' + matchAttr + ' title="' + esc(badgeTitle) + '">'
+                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.5625rem] font-bold px-1.5 py-0.5 rounded-sm leading-tight max-w-[5.5rem] text-center opacity-100 group-hover:opacity-0 transition"' + matchAttr + ' title="' + esc(badgeTitle) + '">'
                     + esc('Custom Tuning') + '<br><span class="font-semibold tracking-wide">' + esc(targetNotes) + '</span></span>';
             } else {
-                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.625rem] font-bold px-1.5 py-0.5 rounded-sm"' + matchAttr + ' title="' + esc(badgeTitle) + '">' + esc(tuningLabel) + '</span>';
+                tuning = '<span class="' + pos + ' bg-fb-mid text-black text-[0.625rem] font-bold px-1.5 py-0.5 rounded-sm opacity-100 group-hover:opacity-0 transition"' + matchAttr + ' title="' + esc(badgeTitle) + '">' + esc(tuningLabel) + (inferred ? '<span class="opacity-60"> ~</span>' : '') + '</span>';
             }
         }
         // Display-only (pointer-events-none) so a click falls through to the
@@ -892,7 +1124,7 @@
         return '<div class="group relative" data-fn="' + esc(key) + '" data-letter="' + esc(songBucket(song)) + '" data-library-song="' + esc(songId(song)) + '" data-library-provider="' + esc(state.provider) + '">' +
             '<div class="relative aspect-square rounded-lg overflow-hidden bg-fb-card cursor-pointer' + selRing + '" data-v3-play>' +
             '<img src="' + esc(artUrl(shown)) + '" alt="" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" onerror="this.style.visibility=\'hidden\'">' +
-            tuning + checkbox + accuracyBadge(key) + fmtBadge(shown) + personalBadges(song) + enrichBadge(key, song.unmatched) + overlay +
+            tuning + checkbox + accuracyBadge(key, 'grid', song) + fmtBadge(shown) + personalBadges(song) + enrichBadge(key, song.unmatched) + overlay +
             '<div class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">' +
             inlineBtns +
             '<button data-fav data-fav-idle="text-white" title="Favorite" aria-label="Favorite" aria-pressed="' + (fav ? 'true' : 'false') + '" class="w-7 h-7 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-sm ' + (fav ? 'text-fb-accent' : 'text-white') + '">' + (fav ? '♥' : '♡') + '</button>' +
@@ -2467,7 +2699,7 @@
         '<span class="flex-1 min-w-0 cursor-pointer" data-v3-play><span class="block text-sm text-fb-text truncate">' + esc(s.title) + '</span></span>' +
         (chips ? '<span class="hidden sm:flex items-center gap-1 shrink-0">' + chips + '</span>' : '') +
         (fl ? '<span class="text-[0.5625rem] font-bold px-1 py-0.5 rounded shrink-0 ' + (fl === 'FEEDPAK' ? 'bg-fb-primary/20 text-fb-primary' : 'bg-fb-card text-fb-textDim') + '">' + fl + '</span>' : '') +
-        accuracyBadge(k, 'tree') +
+        accuracyBadge(k, 'tree', s) +
         // Same fav / save-for-later / overflow-menu cluster as the grid
         // card. Always shown (like the arrangement chips), not hover-
         // revealed. wireCards() binds all three for any [data-fn].
@@ -2489,6 +2721,91 @@
 
     function _artistHostEl() { return document.getElementById('v3-songs-artistpage'); }
 
+    // ── Instrument-aware tuning (the bass-player tuning-filter report) ────────
+    // A song's bass chart is often in a different tuning from its guitar chart,
+    // so the tuning facet/filter/sort and the card chip must speak for the
+    // instrument the player actually plays. The host's working-tuning
+    // capability already holds the live selection (seeded from /api/settings on
+    // boot, updated when the player switches) — read it rather than adding
+    // another settings fetch. `state.settingsInstrument` is the fallback for
+    // hosts where the capability isn't mounted.
+    // Three perspectives, matching `active_instrument_profile`: lead and rhythm
+    // guitar charts can be tuned differently too, so a rhythm player hits the
+    // same bug a bassist did. The PROFILE is the only three-valued source (the
+    // working-tuning capability knows guitar-vs-bass but not lead-vs-rhythm),
+    // so it wins; the capability is the live fallback for hosts where the
+    // profile hasn't loaded.
+    const PERSPECTIVES = ['guitar-lead', 'guitar-rhythm', 'bass'];
+    function libInstrument() {
+        if (PERSPECTIVES.indexOf(state.settingsProfile) >= 0) return state.settingsProfile;
+        try {
+            const wt = window.feedBack && window.feedBack.workingTuning;
+            if (wt && typeof wt.get === 'function') {
+                const cur = wt.get();
+                if (cur && cur.instrument === 'bass') return 'bass';
+            }
+        } catch (_) { /* capability absent/erroring — fall through to settings */ }
+        return state.settingsInstrument === 'bass' ? 'bass' : 'guitar-lead';
+    }
+
+    // "Playable without retuning" mode reads the player's CURRENT tuning from
+    // the working-tuning capability (the live session state the tuner writes),
+    // not a separate setting. No capability => we cannot know the current
+    // tuning, so the mode is unavailable rather than guessed.
+    function currentWorkingTuning() {
+        try {
+            const wt = window.feedBack && window.feedBack.workingTuning;
+            if (!wt || typeof wt.get !== 'function') return null;
+            const cur = wt.get();
+            if (!cur || !Array.isArray(cur.offsets) || !cur.offsets.length) return null;
+            return cur;
+        } catch (_) { return null; }
+    }
+
+    function playableAvailable() { return !!currentWorkingTuning(); }
+
+    function applyPlayableParams(p, f) {
+        if (f.tuningMatch !== 'playable') return;
+        const cur = currentWorkingTuning();
+        if (!cur) return;
+        p.set('tuning_match', 'playable');
+        p.set('playable_offsets', cur.offsets.join(','));
+        p.set('playable_instrument', cur.instrument === 'bass' ? 'bass' : 'guitar');
+        p.set('playable_string_count', String(cur.stringCount || cur.offsets.length));
+    }
+
+    // Short human label for the perspective, for the facet/sort headers.
+    function libInstrumentLabel() {
+        const p = libInstrument();
+        return p === 'bass' ? 'bass' : p === 'guitar-rhythm' ? 'rhythm' : 'lead';
+    }
+
+    // The column a row's tuning lives in for the active perspective.
+    function perspectiveTuningField() {
+        const p = libInstrument();
+        return p === 'bass' ? 'bass_tuning_name'
+            : p === 'guitar-rhythm' ? 'rhythm_tuning_name' : '';
+    }
+
+    // The tuning a card should SHOW: bass players see the bass chart's tuning,
+    // falling back to the song (guitar-derived) tuning when the song has no
+    // bass arrangement — the common case, so the fallback is not an edge path.
+    function shownTuningName(song) {
+        const f = perspectiveTuningField();
+        if (f && song[f]) return song[f];
+        return song.tuning_name || song.tuning;
+    }
+
+    function shownTuningOffsets(song) {
+        const f = perspectiveTuningField();
+        if (f) {
+            const offKey = f.replace('_name', '_offsets');
+            if (song[offKey]) return song[offKey];
+            return song.tuning_offsets;
+        }
+        return song.tuning_offsets;
+    }
+
     // Sync the two Settings gates into module state (fire-and-forget — the
     // cached flags gate entry-point rendering; openArtistPage re-checks).
     function refreshArtistPageGates() {
@@ -2496,6 +2813,13 @@
             if (!cfg) return;
             state.artistPagesEnabled = cfg.artist_pages_enabled !== false;
             state.artistLinksEnabled = cfg.artist_external_links === true;
+            // Fallback instrument for hosts without the working-tuning capability.
+            state.settingsInstrument = cfg.instrument === 'bass' ? 'bass' : 'guitar';
+            // The three-valued perspective source (lead / rhythm / bass).
+            state.settingsProfile = cfg.active_instrument_profile || '';
+            if (cfg && typeof cfg.auto_filter_instrument === 'boolean') {
+                _autoFilterEnabled = cfg.auto_filter_instrument;
+            }
         });
     }
 
@@ -2809,12 +3133,17 @@
         else if (s === 'has') lacksArr.push(value);
         // 'lacks' → cycles back to any (already removed)
     }
-    function triPill(group, value, label, st) {
+    function triPill(group, value, label, st, title) {
         const cls = st === 'has' ? 'bg-fb-good/30 text-fb-good border-fb-good/40'
             : st === 'lacks' ? 'bg-fb-low/30 text-fb-low border-fb-low/40'
                 : 'bg-gray-800/50 text-fb-textDim border-gray-700';
         const mark = st === 'has' ? '✓ ' : st === 'lacks' ? '✕ ' : '';
-        return '<button data-tri="' + group + '" data-val="' + esc(value) + '" class="px-2 py-1 rounded-md text-xs border ' + cls + '">' + mark + esc(label) + '</button>';
+        const tip = title ? ' title="' + esc(title) + '"' : '';
+        return '<button data-tri="' + group + '" data-val="' + esc(value) + '" class="px-2 py-1 rounded-md text-xs border ' + cls + '"' + tip + '>' + mark + esc(label) + '</button>';
+    }
+    function renderDrawerIfOpen() {
+        const d = document.getElementById('v3-songs-drawer');
+        if (d && !d.classList.contains('hidden') && d.innerHTML.trim()) renderDrawer();
     }
     function renderDrawer() {
         const d = document.getElementById('v3-songs-drawer');
@@ -2824,8 +3153,18 @@
             '<div class="p-5 space-y-5">' +
             '<div class="flex items-center justify-between"><h3 class="text-lg font-semibold text-fb-text">Filters</h3>' +
             '<button data-drawer-close class="text-fb-textDim hover:text-fb-text">✕</button></div>' +
-            section('Arrangements', ARRANGEMENTS.map((a) => triPill('arr', a, a, triState(f.arr_has, f.arr_lacks, a))).join('')) +
-            section('Stems (feedpak)', STEMS.map((s) => triPill('stem', s, s, triState(f.stem_has, f.stem_lacks, s))).join('')) +
+            section('Arrangements', _arrangementOptions().map((a) => triPill('arr', a, a, triState(f.arr_has, f.arr_lacks, a))).join('')) +
+            section('Stems (feedpak)', STEMS.map((s) => triPill('stem', s, s, triState(f.stem_has, f.stem_lacks, s))).join('') +
+                (() => {
+                    // One-click "which songs still need splitting": lacks EVERY
+                    // instrument stem — the same query Stem Splitter's own
+                    // missing-stems view runs. Toggles off if already active.
+                    const on = STEMS.every((s) => f.stem_lacks.includes(s)) && !f.stem_has.length;
+                    return '<button data-stem-unsplit class="px-2 py-1 rounded-md text-xs border '
+                        + (on ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700')
+                        + '" title="Songs with no instrument stems — not yet split">'
+                        + (on ? '✕ ' : '') + 'Not split</button>';
+                })()) +
             section('Lyrics', ['', '1', '0'].map((v) => '<button data-lyrics="' + v + '" class="px-2 py-1 rounded-md text-xs border ' + (f.lyrics === v ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + (v === '' ? 'Any' : v === '1' ? 'Has lyrics' : 'No lyrics') + '</button>').join('')) +
             // Progress (mastery bands) — multi-select; server filters via song_stats.
             section('Progress', [['mastered', 'Mastered'], ['in_progress', 'In progress'], ['not_started', 'Not started']].map((it) => '<button data-mastery="' + it[0] + '" class="px-2 py-1 rounded-md text-xs border ' + (f.mastery.includes(it[0]) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + it[1] + '</button>').join('')) +
@@ -2834,7 +3173,32 @@
             section('Match', [['review', 'To review'], ['matched', 'Matched'], ['unmatched', 'Unmatched'], ['pending', 'Not scanned']].map((it) => '<button data-match="' + it[0] + '" class="px-2 py-1 rounded-md text-xs border ' + (f.match.includes(it[0]) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + it[1] + '</button>').join('')) +
             // Genre facet — dynamic list from /api/library/genres (primary genre).
             (state.genres && state.genres.length ? section('Genre', state.genres.map((g) => '<button data-genre="' + esc(g) + '" class="px-2 py-1 rounded-md text-xs border ' + (f.genre.includes(g) ? 'bg-fb-primary text-white border-fb-primary' : 'bg-gray-800/50 text-fb-textDim border-gray-700') + '">' + esc(g) + '</button>').join('')) : '') +
-            section('Tuning', (state.tuningNames || []).map((t) => {
+            // The facet header NAMES the perspective. Silent instrument-following
+            // is the original bug in a new place: the user must be able to tell
+            // which instrument these tunings describe.
+            section('Tuning (' + libInstrumentLabel() + ')',
+                // MODE toggle. Exact match answers "which tuning is this
+                // labelled"; Playable answers "will this cost me a retune" —
+                // which is what a player actually wants. Both are offered;
+                // exact stays the default so nothing changes unasked.
+                '<div class="flex gap-1 mb-2">'
+                + [['exact', 'Exact tuning'], ['playable', 'Playable without retuning']].map((m) => {
+                    const on = (f.tuningMatch || 'exact') === m[0];
+                    const dis = m[0] === 'playable' && !playableAvailable();
+                    return '<button data-tuning-match="' + m[0] + '"'
+                        + (dis ? ' disabled' : '')
+                        + (dis ? ' title="Needs your current tuning — open the tuner first"' : '')
+                        + ' class="px-2 py-1 rounded-md text-xs border '
+                        + (on ? 'bg-fb-primary text-white border-fb-primary'
+                            : 'bg-gray-800/50 text-fb-textDim border-gray-700')
+                        + (dis ? ' opacity-40 cursor-not-allowed' : '') + '">'
+                        + esc(m[1]) + '</button>';
+                }).join('')
+                + '</div>'
+                + (f.tuningMatch === 'playable'
+                    ? '<div class="text-xs text-fb-textDim mb-2">Charts you can play in your current tuning, no retune. Songs whose lowest string sits below yours are excluded.</div>'
+                    : '')
+                + ((state.tuningNames || []).map((t) => {
                 // Filter on the server's grouping key (raw offsets for customs)
                 // so two "Custom Tuning" entries are distinct; show their target
                 // notes in the label so they're distinguishable.
@@ -2847,8 +3211,17 @@
                     const notes = offs ? window.displayTuningTargets(offs, { tuningName: t.name }) : '';
                     if (notes) label = 'Custom · ' + notes;
                 }
-                return triPill('tuning', val, label + ' (' + t.count + ')', f.tunings.includes(val) ? 'has' : 'any');
-            }).join('') || '<span class="text-xs text-fb-textDim">No tunings</span>') +
+                // Be honest about the fallback: when some of a row's songs have
+                // no bass chart and are borrowing the guitar tuning, say so
+                // rather than presenting a borrowed tuning as a measured one.
+                const inf = t.inferred_count || 0;
+                const title = inf
+                    ? inf + ' of ' + t.count + ' inferred from the guitar chart (no bass arrangement)'
+                    : '';
+                const countLabel = inf ? t.count + ', ' + inf + ' inferred' : String(t.count);
+                return triPill('tuning', val, label + ' (' + countLabel + ')',
+                    f.tunings.includes(val) ? 'has' : 'any', title);
+            }).join('') || '<span class="text-xs text-fb-textDim">No tunings</span>')) +
             // Multi-chart grouping toggle (P5e) — a VIEW mode, not a filter
             // (never counted in the badge, never saved into collection rules).
             // Local provider only: it's the one that implements group=.
@@ -2878,6 +3251,18 @@
             else if (g === 'tuning') { const i = f.tunings.indexOf(v); if (i >= 0) f.tunings.splice(i, 1); else f.tunings.push(v); }
             renderDrawer();
         }));
+        d.querySelectorAll('[data-tuning-match]').forEach((b) => b.addEventListener('click', () => {
+            if (b.disabled) return;
+            f.tuningMatch = b.getAttribute('data-tuning-match');
+            renderDrawer();
+        }));
+        d.querySelector('[data-stem-unsplit]')?.addEventListener('click', () => {
+            const on = STEMS.every((s) => f.stem_lacks.includes(s)) && !f.stem_has.length;
+            f.stem_has.length = 0;
+            f.stem_lacks.length = 0;
+            if (!on) f.stem_lacks.push(...STEMS);
+            renderDrawer();
+        });
         d.querySelectorAll('[data-lyrics]').forEach((b) => b.addEventListener('click', () => { f.lyrics = b.getAttribute('data-lyrics'); renderDrawer(); }));
         d.querySelectorAll('[data-mastery]').forEach((b) => b.addEventListener('click', () => { const v = b.getAttribute('data-mastery'); const i = f.mastery.indexOf(v); if (i >= 0) f.mastery.splice(i, 1); else f.mastery.push(v); renderDrawer(); }));
         d.querySelector('[data-grouping]')?.addEventListener('click', () => {
@@ -2891,7 +3276,7 @@
         d.querySelector('[data-drawer-tidy]')?.addEventListener('click', openArtistTidyUp);
         d.querySelector('[data-drawer-close]')?.addEventListener('click', closeDrawer);
         d.querySelector('[data-drawer-clear]')?.addEventListener('click', async () => {
-            state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [] };
+            state.filters = { arr_has: [], arr_lacks: [], stem_has: [], stem_lacks: [], lyrics: '', tunings: [], mastery: [], match: [], genre: [], tuningMatch: 'exact' };
             state.artist = '';
             state.album = '';
             renderDrawer();
@@ -3478,13 +3863,15 @@
         const providers = await loadProviders();
         const [, tn] = await Promise.all([
             (async () => { state.accuracy = (await jget('/api/stats/best')) || {}; })(),
-            jget('/api/library/tuning-names?provider=' + enc(state.provider)),
+            jget('/api/library/tuning-names?provider=' + enc(state.provider)
+                + '&instrument=' + enc(libInstrument())),
             loadArtistCatalog(),
             // Artist-page gates (PR-B) ride the initial fetch batch so the
             // first card paint already knows whether artist lines are links.
             refreshArtistPageGates(),
         ]);
         state.tuningNames = (tn && tn.tunings) || [];
+        _lastRenderInstrument = libInstrument();
         try { const _g = await jget('/api/library/genres?provider=' + enc(state.provider)); state.genres = (_g && _g.genres) || []; } catch (e) { state.genres = []; }
 
         const opt = (arr, sel) => arr.map(([v, l]) => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(l) + '</option>').join('');
@@ -3512,7 +3899,13 @@
             '<select id="v3-songs-artist" class="' + ctrl + ' max-w-[11rem]" aria-label="Artist">' + artistSelectHtml() + '</select>' +
             '<select id="v3-songs-album" class="' + ctrl + ' max-w-[11rem]" aria-label="Album"' + (state.artist ? '' : ' disabled') + '>' + albumSelectHtml() + '</select>' +
             '<div class="flex rounded-md overflow-hidden border border-gray-700"><button id="v3-songs-grid-btn" class="px-3 py-2 text-sm">▦</button><button id="v3-songs-tree-btn" class="px-3 py-2 text-sm">≣</button><button id="v3-songs-albums-btn" title="Albums" class="px-3 py-2 text-sm">💿</button><button id="v3-songs-folder-btn" class="px-3 py-2 text-sm" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:2.25rem"><svg fill="currentColor" viewBox="0 0 16 16" style="width:12px;height:12px;flex-shrink:0"><path d="M1 3.5A1.5 1.5 0 012.5 2h3.086a1.5 1.5 0 011.06.44l.915.914H13.5A1.5 1.5 0 0115 4.914V12.5a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 12.5v-9z"/></svg></button></div>' +
-            '<select id="v3-songs-sort" class="' + ctrl + '">' + opt(SORTS, state.sort) + '</select>' +
+            // Name the perspective on the SORT too, not just the filter: tuning
+            // sort orders by musical distance from standard, and for a bass
+            // player that distance is measured on the bass tuning. Unlabelled,
+            // the grid silently reorders with no visible cause.
+            '<select id="v3-songs-sort" class="' + ctrl + '">' + opt(
+                SORTS.map(([v, l]) => [v, v === 'tuning' ? l + ' (' + libInstrumentLabel() + ')' : l]),
+                state.sort) + '</select>' +
             '<select id="v3-songs-format" class="' + ctrl + '">' + opt(FORMATS, state.format) + '</select>' +
             '<button id="v3-songs-filters" class="relative ' + ctrl + ' flex items-center gap-2">Filters<span id="v3-songs-filter-count" class="hidden bg-fb-primary text-white text-xs rounded-full px-1.5">0</span></button>' +
             '<button id="v3-songs-select" class="' + ctrl + (state.selectMode ? ' bg-fb-primary text-white' : '') + '">Select</button>' +
@@ -4080,7 +4473,141 @@
         },
     };
 
+    // ── Grid cursor navigation (arrow keys / gamepad d-pad) ─────────────────
+    // shortcuts.js's generic library arrow-nav (_handleLibArrowNav) can't reach
+    // this screen: it assumes every navigable item is already a DOM node, but
+    // this grid is windowed — most of the library isn't in the DOM at any given
+    // scroll position. Cursor state here is an absolute index into state.songs,
+    // and moving it may need to fetch a page and/or scroll the window before the
+    // target card exists to highlight or activate.
+    let _gpIdx = null;
+
+    function _gpCardEl(idx) {
+        return document.querySelector('#v3-songs-grid [data-idx="' + idx + '"]');
+    }
+
+    function _gpApplyHighlight() {
+        const prev = document.querySelector('#v3-songs-grid [data-gp-cursor]');
+        if (prev) {
+            prev.removeAttribute('data-gp-cursor');
+            prev.querySelector('[data-v3-play]')?.classList.remove('ring-2', 'ring-fb-primary');
+        }
+        if (_gpIdx == null) return;
+        const el = _gpCardEl(_gpIdx);
+        if (!el) return;
+        el.setAttribute('data-gp-cursor', '1');
+        el.querySelector('[data-v3-play]')?.classList.add('ring-2', 'ring-fb-primary');
+    }
+
+    async function _gpEnsureVisible(idx) {
+        const main = document.getElementById('v3-main'), sizer = _sizerEl();
+        if (!main || !sizer) return;
+        const { cols, rowH } = measureGeom();
+        const row = Math.floor(idx / Math.max(1, cols));
+        const sizerTop = _sizerTopInScroller(main, sizer);
+        const rowTop = sizerTop + row * rowH;
+        const rowBottom = rowTop + rowH;
+        const viewTop = main.scrollTop, viewBottom = viewTop + main.clientHeight;
+        if (rowTop < viewTop) main.scrollTop = rowTop;
+        else if (rowBottom > viewBottom) main.scrollTop = rowBottom - main.clientHeight;
+        await renderWindow();
+
+        // #v3-songs-toolbar is sticky, but only pins to the top once scrolled
+        // PAST its natural in-flow position — before that point it isn't
+        // covering anything, after it covers a fixed band. That makes its
+        // occlusion scroll-dependent in a way no single precomputed offset
+        // captures, so measure the real rendered overlap and correct for it,
+        // rather than assuming the toolbar's height is always "lost" space.
+        const toolbar = document.getElementById('v3-songs-toolbar');
+        const cardEl = _gpCardEl(idx);
+        if (toolbar && cardEl) {
+            const overlap = toolbar.getBoundingClientRect().bottom - cardEl.getBoundingClientRect().top;
+            if (overlap > 0) {
+                // Push the row DOWN the screen to clear the toolbar — that means
+                // scrolling the content back UP, i.e. decreasing scrollTop (screen
+                // position = content position - scrollTop).
+                main.scrollTop -= overlap;
+                await renderWindow();
+            }
+        }
+    }
+
+    async function _gpMove(delta) {
+        if (!state.total) return;
+        if (_gpIdx == null) {
+            // Nothing selected yet — land on the first card and stop, same as
+            // shortcuts.js's legacy _handleLibArrowNav does for an empty
+            // selection: the first press establishes a cursor, it doesn't also
+            // move it (Right/Down previously skipped straight past row 0).
+            _gpIdx = 0;
+        } else {
+            const next = Math.max(0, Math.min(state.total - 1, _gpIdx + delta));
+            if (next === _gpIdx) return;
+            _gpIdx = next;
+        }
+        await ensureWindow(Math.max(0, _gpIdx - 1), Math.min(state.total, _gpIdx + 2));
+        await _gpEnsureVisible(_gpIdx);
+        _gpApplyHighlight();
+    }
+
+    function _gpActivate() {
+        if (_gpIdx == null) return;
+        _gpCardEl(_gpIdx)?.querySelector('[data-v3-play]')?.click();
+    }
+
+    // Bails on focus inside anything with its own keyboard semantics — form
+    // controls, buttons, and dialog/drawer overlays — same intent as
+    // shortcuts.js's _isInsideInteractiveControl, reimplemented locally since
+    // this is a plain script (not an ES module) and can't import it.
+    //
+    // The form-control/button check requires the element to be VISIBLE, not
+    // merely present: screens stay in the DOM (hidden, not removed) when you
+    // navigate away, so a real <button> focused on some OTHER now-hidden
+    // screen (dashboard, etc.) can leave document.activeElement pointing at
+    // it — an el.closest('#v3-songs') scope check would let that stale focus
+    // through fine, but would ALSO wrongly stop blocking genuinely-focused
+    // shared chrome like the topbar search input (#v3-search lives outside
+    // #v3-songs's DOM subtree even while v3-songs is the active screen).
+    // Visibility is the actual distinction that matters here, not DOM
+    // nesting. The dialog/drawer-overlay and contentEditable checks stay as
+    // they were — overlay-level concerns regardless of which screen sits
+    // underneath.
+    function _gpBlockedTarget(el) {
+        if (!el) return false;
+        if (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(el.tagName) && el.offsetParent !== null) return true;
+        if (el.isContentEditable) return true;
+        if (el.closest && el.closest('[role="dialog"], .feedBack-modal, #lib-filter-drawer')) return true;
+        return false;
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (!songsActive() || state.view !== 'grid') return;
+        if (_gpBlockedTarget(document.activeElement)) return;
+        const isActivate = e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar';
+        if (!isActivate && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+        e.preventDefault();
+        if (isActivate) { _gpActivate(); return; }
+        const { cols } = measureGeom();
+        if (e.key === 'ArrowRight') _gpMove(1);
+        else if (e.key === 'ArrowLeft') _gpMove(-1);
+        else if (e.key === 'ArrowDown') _gpMove(cols);
+        else if (e.key === 'ArrowUp') _gpMove(-cols);
+    });
+
     if (sm && typeof sm.on === 'function') {
+        sm.on('instrument:changed', function (e) {
+            var instId = e && e.detail && e.detail.instrument;
+            if (!instId || !_autoFilterEnabled) return;
+            // Record the new instrument so working-tuning-changed skips its
+            // reload path — this handler already handles the reload.
+            _lastRenderInstrument = libInstrument();
+            state.filters.tunings = [];
+            if (_applyArrangementAutoFilter(instId)) {
+                reload();
+                renderDrawerIfOpen();
+            }
+        });
+
         sm.on('screen:changed', (e) => {
             const id = e && e.detail && e.detail.id;
             if (id === 'v3-songs') { onV3SongsScreenEnter(); return; }
@@ -4130,6 +4657,23 @@
         // visible tuning chips against the new tuning. Cheap: re-decorates in place,
         // no re-fetch or re-paint. No-op off the Songs grid or without the capability.
         sm.on('working-tuning-changed', () => {
+            // A guitar<->bass SWITCH changes which tuning the facet, the filter,
+            // the sort and the card chip speak for, so the grid must re-query —
+            // re-colouring chips would leave the guitar tuning on screen and a
+            // guitar-keyed filter applied. A retune within one instrument still
+            // takes the cheap in-place path below.
+            const inst = libInstrument();
+            if (inst !== _lastRenderInstrument) {
+                _lastRenderInstrument = inst;
+                // A tuning selection keyed to the old instrument means nothing
+                // for the new one; clearing avoids an empty grid the user can't
+                // explain (the pills are re-rendered from the new facet).
+                state.filters.tunings = [];
+                const active = document.querySelector('.screen.active');
+                if (active && active.id === 'v3-songs') reload();
+                else _libraryDirty = true;
+                return;
+            }
             if (typeof songsActive === 'function' && !songsActive()) return;
             if (state.view !== 'grid') return;
             decorateTuningChips(_gridEl());
